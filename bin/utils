@@ -1,0 +1,212 @@
+#!/bin/bash
+
+###########################################
+# Utility functions def
+#
+###########################################
+# Print source info
+hline="-----------------------------------------------------------------------------------------------------------------------"
+
+# unicode characters
+hor_dash="\xe2\x94\x80"
+tab_vert_nocross="\xe2\x94\x82${hor_dash}"
+tab_vert_crossright="\xe2\x94\x9c${hor_dash}"
+tab_vert_cornerright="\xe2\x94\x94${hor_dash}"
+tab_cross_down="\xe2\x94\xac${hor_dash}"
+arc_upright="\xe2\x95\xb0${hor_dash}"
+arc_downright="\xe2\x95\xad${hor_dash}"
+arrowhead_right="\xe2\x95\xbc"
+arrowhead_left="\xe2\x9e\xa4"
+quad0="\xe2\x96\x9b"
+quad1="\xe2\x96\x9a"
+
+uni_hline=$(printf '\xe2\x94\x80%.0s' {1..2})
+
+
+function cprintf() {
+    a=$(echo "$*" | sed 's/÷bold÷/\\033[1m/g; s/÷light÷/\\033[2m/g; s/÷underline÷/\\033[4m/g; s/÷blink÷/\\033[5m/g; s/÷invert÷/\\033[7m/g;')
+    b=$(echo "$a" | sed 's/÷black÷/\\033[30m/g; s/÷red÷/\\033[31m/g; s/÷green÷/\\033[32m/g; s/÷yellow÷/\\033[33m/g; s/÷blue÷/\\033[34m/g; s/÷purple÷/\\033[35m/g; s/÷cyan÷/\\033[36m/g; s/÷white÷/\\033[37m/g;')
+    c=$(echo "$b" | sed 's/÷Black÷/\\033[40m/g; s/÷Red÷/\\033[41m/g; s/÷Green÷/\\033[42m/g; s/÷Yellow÷/\\033[43m/g; s/÷Blue÷/\\033[44m/g; s/÷Purple÷/\\033[45m/g; s/÷Cyan÷/\\033[46m/g; s/÷White÷/\\033[47m/g;')
+    d=$(echo "$c" | sed 's/÷÷/\\033[0m/g;')
+    printf "$d"
+}
+
+_wolf_error () {
+	str="$*"
+	cprintf "÷bold÷÷red÷ [ERROR]÷÷ ÷white÷- "
+	cprintf "$*"
+	cprintf "÷÷\n"
+}
+
+_wolf_info () {
+	str="$*"
+	cprintf "÷bold÷÷yellow÷ ${arrowhead_left} [INFO]÷÷ ÷white÷- "
+	cprintf "$*"
+	cprintf "÷÷\n"
+}
+
+_wolf_ok () {
+	str="$*"
+	cprintf "÷bold÷÷green÷ ${arrowhead_left} [OK]÷÷ ÷white÷- "
+	cprintf "$*"
+	cprintf "÷÷\n"
+}
+
+_wolf_entry () {
+	str="$*"
+	cprintf "÷bold÷${arrowhead_left}÷white÷ "
+	cprintf "$*"
+	cprintf "÷÷\n"
+}
+
+function printVars () {
+    if [ -z "$1" ]; then
+        #printf "\r${purple} ${hline}-${reset}\n"
+        echo 
+    else
+        title="$1"
+        cprintf "\r÷purple÷${arc_downright}÷Purple÷ ÷white÷$title ÷÷ \n"
+    fi
+    i=0
+    for key in "${@:2}";
+    do  
+        cmd="echo \$$key"
+        val=$(eval $cmd)
+        if [[ $i -eq 0 ]]; then
+            if [[ $key != "${@: -1}" ]]; then
+                cprintf "÷purple÷${arc_upright}${uni_hline}${tab_cross_down}${arrowhead_right} ÷blue÷$key÷white÷: $val\n"
+            else 
+                cprintf "÷purple÷${arc_upright}${uni_hline}${hor_dash}${arrowhead_right} ÷blue÷$key÷white÷: $val\n\n"
+            fi
+        elif [[ $key != "${@: -1}" ]]; then
+            cprintf "÷purple÷    ${tab_vert_crossright}${arrowhead_right} ÷blue÷$key÷white÷: $val\n"
+        else
+            cprintf "÷purple÷    ${tab_vert_cornerright}${arrowhead_right} ÷blue÷$key÷white÷: $val\n\n"
+        fi
+        let i++
+    done
+}
+
+#######################################
+# Find next index of a folder/file to be created
+######################################
+function get_next_indexed_file() {
+    cmd="$1"
+    file="$2"
+    max_index=`eval "$cmd"`
+    if [[ -z $max_index ]]; then
+        if [[ -f "${file}${max_index}" || -L "${file}${max_index}" ]]; then
+            exists=true
+        else
+            exists=false
+        fi
+    else
+        if [[ -d "${file}.${max_index}" || -L "${file}.${max_index}" ]]; then
+            exists=true
+        else
+            exists=false
+        fi
+    fi
+    if $exists; then
+        if [[ -z $max_index ]]; then
+            max_index=0
+        fi
+        let max_index++
+        printf "${file}.${max_index}"
+    else
+        if [[ -z $max_index ]]; then
+            printf "${file}"
+        else
+            printf "${file}.${max_index}"
+        fi
+    fi
+}
+
+function get_next_indexed_dir() {
+    cmd="$1"
+    dir="$2"
+    max_index=`eval "$cmd"`
+    if [[ -z $max_index ]]; then
+        if [[ -d "${dir}${max_index}" || -L "${dir}${max_index}" ]]; then
+            exists=true
+        else
+            exists=false
+        fi
+    else
+        if [[ -d "${dir}.${max_index}" || -L "${dir}.${max_index}" ]]; then
+            exists=true
+        else
+            exists=false
+        fi
+    fi
+    if $exists; then
+        if [[ -z $max_index ]]; then
+            max_index=0
+        fi
+        let max_index++
+        printf "${dir}.${max_index}"
+    else
+        if [[ -z $max_index ]]; then
+            printf "${dir}"
+        else
+            printf "${dir}.${max_index}"
+        fi
+    fi
+
+}
+
+
+function get_max_indexed_dir() {
+    cmd="$1"
+    dir="$2"
+    max_index=`eval "$cmd"`
+    if [[ -z $max_index ]]; then
+        if [[ -d "${dir}${max_index}" || -L "${dir}${max_index}" ]]; then
+            exists=true
+        else
+            exists=false
+        fi
+    else
+        if [[ -d "${dir}.${max_index}" || -L "${dir}.${max_index}" ]]; then
+            exists=true
+        else
+            exists=false
+        fi
+    fi
+    if $exists; then
+        if [[ -z $max_index ]]; then
+            max_index=0
+            printf "${dir}"
+        else
+            printf "${dir}.${max_index}"
+        fi
+        #let max_index++
+        
+    fi
+
+}
+
+
+#####################################
+# FUNCTION USED TO TRANSFORM A SET OF WHITE-SPACE SEPARATED STRINGS INTO AN ARRAY
+####################################
+function vectorize {
+    VAR=($(echo "$@" | xargs))
+    VAR_CAT=""
+    num="${#VAR[@]}"
+    for ((i=0; i<num; i++)); do
+
+        if [[ $num -gt 1 ]]; then
+            if [[ $i -eq 0 ]]; then
+                VAR_CAT="'[list"
+            fi
+            VAR_CAT="$VAR_CAT $(echo ${VAR[$i]} | xargs)"
+            if [[ $i -eq $((num-1)) ]]; then
+                VAR_CAT="$VAR_CAT]'"
+            fi
+        else
+            VAR_CAT="$(echo ${VAR[$i]} | xargs)"
+        fi
+    done
+    echo "$VAR_CAT"
+}

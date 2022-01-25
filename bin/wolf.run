@@ -1,0 +1,511 @@
+#!/bin/bash
+
+#####################################################################################
+# MAKE SURE WE HAVE ALL SOURCE CODE WE NEED
+#####################################################################################
+WOLF_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+WOLF_DIR=`dirname "$WOLF_DIR"`
+WOLF_BIN="${WOLF_DIR}/bin"
+if [[ ! -d ${WOLF_BIN} || ! -f "${WOLF_BIN}/utils" || ! -f "${WOLF_BIN}/wolf.run" ]]; then
+    printf "\033[1;7;31m [ERROR] - Invalid installation. Some binary files required to run wolf are either missing or unaccessible. Contact your cadadmin to fix this."
+fi
+#####################################################################################
+# Source utils
+#####################################################################################
+source "${WOLF_BIN}/utils"
+
+######################################################################################
+# Print header
+#   Generated using: https://fsymbols.com/generators/carty/
+#####################################################################################
+cprintf "$wolf_run_header\n"
+
+###########################################
+# Init vars to default values
+#
+##########################################
+CLEAN=false
+SKIP=false
+PROCESS="TSMC65"
+DESIGN=
+RUNTAG=
+FEATURES=()
+YAML_TEMPLATE_FILE=
+YAML_SETUP_FILE=
+TIMESTAMP=$(date '+%d/%m/%Y %H:%M:%S');
+
+
+###########################################
+# Parse flags
+#
+##########################################
+POSITIONAL=()
+while [[ $# -gt 0 ]]; do
+      key="$1"
+        case $key in
+            -h|--help)
+                # Help dialog
+                echo -e "Usage $(basename $BASH_SOURCE) [OPTIONS]... [EXTRA_ARGUMENTS]..."
+                echo "Runs the digital flow using a specified process for the specified design using Cadence's flowtool and passing EXTRA_ARGUMENTS to flowtool."
+                echo ""
+                echo "Main arguments taken $(basename $BASH_SOURCE):"
+                echo -e "\t-h, --help\t\tInvokes this dialog.\n"
+                echo "Flow behavior arguments:"
+                echo -e "\t-c, --clean\t\tIf set to true, the flow will be run from scratch, ignoring any previous runs, in a new folder.\n\t\t\t\t    DEFAULT: false"
+                echo -e "\t-y, --yes \t\tIf this flag is present, the script will skip user confirmation at its end, and proceed running the flow.\n\t\t\t\t    DEFAULT: false"
+                echo -e "\t-t, --runtag\t\tManually sets the runtag to a specific value, instead of automatically setting it according to previous runs.\n\t\t\t\t    DEFAULT: Obtained automatically by script."
+                echo "Project-specific arguments:"
+                echo -e "\t-p, --process \t\tSpecification of process to be used while running the flow. Must be one of \"TSCM65\", \"GF22\"\n\t\t\t\t    DEFAULT: TSCM65"
+                echo -e "\t-d, --design \t\tSpecification of the design to be synthesized. Must be one of \"tdsp_core\"\n\t\t\t\t    DEFAULT: tdsp_core"
+                echo -e "\t-f, --conf\t\tSpecify the full path of the template yaml file used to generate the final setup final that will be passed to flowtool.\n\t\t\t\t    DEFAULT: "
+                exit 0
+                ;;
+            -p|--process)
+                PROCESS="$2"
+                shift
+                shift
+                ;;
+            -t|--runtag)
+                RUNTAG="$2"
+                shift
+                shift
+                ;;
+            -y|--yes)
+                SKIP=true
+                shift
+                ;;
+            -c|--clean)
+                CLEAN=true
+                shift # pass argument
+                ;;
+            -f|--conf)
+                if [[ -f "$2" || -L "$2" ]]; then
+                    YAML_TEMPLATE_FILE="$2"
+                fi
+                shift
+                shift
+                ;;
+            -d|--design)
+                DESIGN="$2"
+                shift # pass argument
+                shift # pass value
+                ;;
+        *)    # unknown option
+         POSITIONAL+=("$1") # save it in an array for later
+         POSITIONAL+=("$2")
+         shift # past argument
+         shift # past value
+         ;;
+    esac
+done
+set -- "${POSITIONAL[@]}" # restore positional parameters
+
+
+#############################################
+# Setup vars according to PROCESS
+#
+############################################
+cprintf "\r÷Blue÷÷bold÷ ÷white÷Pre-tasks                                                                                 ÷÷ \n\n"
+case $PROCESS in
+    TSMC65)
+        export PROCESS_TECH="TSMC65"
+        export PROCESS_SIZE="65nm"
+        # Source env vars
+        source "/asic/Library/TSMC/TSMC65_LP/TSMC65nmBashProfile.csh" > /dev/null
+        PROCESS_SCRIPTS="$TSMC65_PROCESS_SCRIPTS"
+        PROCESS_FLOW_TEMPLATE="${TSMC65_STYLUS_FLOW_TEMPLATE}"
+        PROCESS_SETUP_TEMPLATE="${TSMC65_STYLUS_SETUP_TEMPLATE}"
+        ;;
+    *)
+        echo "Unknown process option. Valid options are: TSMC65"
+        exit 1
+        ;;
+esac
+
+
+###########################################
+# Setup vars according to DESIGN
+#
+##########################################
+#case $DESIGN in
+#    flora_top|digTest|pixelArray_full_readout)
+#        # Design name
+#        case $DESIGN in
+#            flora_top)
+#                export DESIGN_NAME="flora_top"
+#                ;;
+#            digTest)
+#                export DESIGN_NAME="digTest"
+#                ;;
+#            pixelArray_full_readout)
+#                export DESIGN_NAME="pixelArray_full_readout"                
+#        esac
+#
+#        # Source var definitions
+#        _wolf_info "Sourcing ÷yellow÷\"/home/manuelbv/xray_imaging/src/inputs/env/FLORA_env.csh\"÷÷"
+#        source "/home/manuelbv/xray_imaging/src/inputs/env/FLORA_env.csh" > /dev/null
+#        
+#        THRESHOLD_VOLTAGES="${VTHS}"
+#        YAML_SETUP_FILE="setup.${DESIGN_NAME}.yaml"
+#        # Make sure we evaluate the PDK_DIR (to pick up the right metal_stack dir and everything)
+#        PDK_DIR=`eval echo "$PDK_DIR"`
+#        TECHDIR_DRC=`eval echo "$TECHDIR_DRC"`
+#        TECHDIR_LVS=`eval echo "$TECHDIR_LVS"`
+#        ;;
+#    
+#    *)
+#        _error "Unknown design option. Exiting now"
+#        exit 1
+#        ;;
+#esac
+
+###############################################################################
+# Check if this design was ran before. If it was, detect the latest index.
+###############################################################################
+cmd="find ${WORKSPACE_DIR}/${DESIGN_NAME}/${DESIGN_NAME}.${PROCESS} -maxdepth 1 -regextype posix-extended -regex '^.*${DESIGN_NAME}\.([0-9])*$' -exec basename {} \; 2>/dev/null | grep -o "[0-9]*" | sort -n | tail -1"
+max_index=`eval "$cmd"`
+if [[ -z $RUNTAG ]]; then
+    RUNTAG=${DESIGN_NAME}
+else
+    if [[ ! -d ${WORKSPACE_DIR}/${DESIGN_NAME}/${DESIGN_NAME}.${PROCESS}/$RUNTAG && ! -L ${WORKSPACE_DIR}/${DESIGN_NAME}/${DESIGN_NAME}.${PROCESS}/$RUNTAG ]] ; then 
+        CLEAN=true
+    fi
+fi
+STATUS=
+
+# In case we only ran the design once, max_index will be empty, although it should actually be "0". 
+if ! [[ $max_index ]]; then
+    if [[ -d ${WORKSPACE_DIR}/${DESIGN_NAME}/${DESIGN_NAME}.${PROCESS}/$RUNTAG || -L ${WORKSPACE_DIR}/${DESIGN_NAME}/${DESIGN_NAME}.${PROCESS}/$RUNTAG ]] ; then 
+        max_index=0
+    else
+        # Max_index is empty and runtag file doesn't exist, so we can say with certainty
+        # that this design was never ran before.
+        CLEAN=true
+    fi
+fi
+
+
+###############################################################################
+# Fix RUNTAG according to CLEAN flag
+###############################################################################
+if $CLEAN ; then
+    let max_index++
+    if [[ $max_index -gt 0 ]] ; then
+        RUNTAG=$RUNTAG.$max_index
+    fi   
+      
+    _wolf_info "Creating ÷blue÷flow run ÷white÷from scratch ÷yellow÷\"${WORKSPACE_DIR}/${DESIGN_NAME}/${DESIGN_NAME}.${PROCESS}/$RUNTAG\" "
+    STATUS="÷green÷Flow run session does not exist. Creating RUNDIR from scratch.÷÷"
+
+    #ln -s ${FLOORPLANS_DIR}/$DESIGN_NAME.fp ${WORKSPACE_DIR}/${DESIGN_NAME}/$RUNTAG/$DESIGN_NAME.fp
+    #ln -s ${FLOORPLANS_DIR}/$DESIGN_NAME.fp.spr ${WORKSPACE_DIR}/${DESIGN_NAME}/$RUNTAG/$DESIGN_NAME.fp.spr
+else
+    if [[ $max_index -gt 0 ]] ; then
+        RUNTAG=$RUNTAG.$max_index
+    fi    
+    _wolf_info "Picking previously defined ÷blue÷flow run ÷yellow÷\"${WORKSPACE_DIR}/${DESIGN_NAME}/${DESIGN_NAME}.${PROCESS}/$RUNTAG\" "
+    STATUS="÷red÷Flow run session exists. Linking to old RUNDIR and appending runs to dir.÷÷"
+fi
+
+######################################################
+# SETUP OUTDIR VARS FOR PRACTICITY
+######################################################
+RUNDIR="${WORKSPACE_DIR}/${DESIGN_NAME}/${DESIGN_NAME}.${PROCESS}/$RUNTAG"
+
+
+###############################################################################
+# SCRIPTS_DIR
+#   We will keep a local copy of the scripts inside each rundir, so let's check
+#   which max_index we have to append to the scripts_dir.
+###############################################################################
+cmd="find ${RUNDIR} -type d -regextype posix-extended -regex '^.*scripts.([0-9])*$' -exec basename {} \; 2>/dev/null  | grep -o "[0-9]*" | sort -n | tail -1"
+SCRIPTS_DIR=$(get_next_indexed_dir "$cmd" "${RUNDIR}/scripts")
+
+# Get now previous scripts dir (so we can check if the scripts have actually changed or not, cause 
+# if not, there's no point in re-copying them over again)
+cmd="find ${RUNDIR} -type d -regextype posix-extended -regex '^.*scripts.([0-9])*$' -exec basename {} \; 2>/dev/null  | grep -o "[0-9]*" | sort -n | tail -1"
+OLD_SCRIPTS_DIR=$(get_max_indexed_dir "$cmd" "${RUNDIR}/scripts")
+
+# Now compare 
+if [[ ! -z $OLD_SCRIPTS_DIR ]]; then
+    diffs=$(diff -r "${OLD_SCRIPTS_DIR}" "${PROCESS_SCRIPTS}")
+    if [[ ! -z $diffs ]]; then
+        # There are differences, so we have to copy the scripts over 
+        COPY_SCRIPTS_OVER=true
+    else 
+        # There are no differences, so we can just point to the old scripts
+        SCRIPTS_DIR="$OLD_SCRIPTS_DIR"
+        COPY_SCRIPTS_OVER=false
+    fi
+fi
+
+
+
+#######################################################
+# INIT LOGFILE
+#   flowtool will append the index automatically.
+######################################################
+_LOGFILE="${RUNDIR}/flows.run"
+LOGFILE="÷white÷$RUNDIR÷÷/÷yellow÷"$(basename ${_LOGFILE})"÷÷"
+
+
+#######################################################
+# READ SOURCES.YAML FILE AND PARSE
+######################################################
+# Read srcs.yaml file and set RTL var according to design
+RTL_CONF=
+
+## RTL SYSTEMVERILOG FILES
+RTL_SV_FILES_ARGS=""
+RTL_SV_FILES=""
+
+RTL_VHDL_FILES_ARGS=""
+RTL_VHDL_FILES=""
+
+re_args_rtl='\s+(.*)\:\s+(.*)\s+'
+
+# Loop through keys
+while read -r key
+do
+    # Access key
+    if [[ "$key" =~ ^(init_hdl_search_path).*$ ]]; then
+        INIT_HDL_SEARCH_PATH=$(cat $RTL_YAML_FILE | shyaml get-values RTL.${DESIGN_NAME}.init_hdl_search_path 2>/dev/null )
+        INIT_HDL_SEARCH_PATH=`eval echo $INIT_HDL_SEARCH_PATH`
+    elif [[ "$key" =~ ^(systemverilog).*$ ]]; then
+        RTL_SV_FILES=$(cat $RTL_YAML_FILE | shyaml get-values RTL.${DESIGN_NAME}.${key}.files 2>/dev/null )
+        RTL_SV_FILES=`eval echo $RTL_SV_FILES`
+        RTL_SV_FILES_ARGS=$(cat $RTL_YAML_FILE | shyaml get-values RTL.${DESIGN_NAME}.${key}.args 2>/dev/null )
+        RTL_SV_FILES_ARGS=`eval echo $RTL_SV_FILES_ARGS`
+    elif [[ "$key" =~ ^(vhdl).*$ ]]; then
+        RTL_VHDL_FILES=$(cat $RTL_YAML_FILE | shyaml get-values RTL.${DESIGN_NAME}.${key}.files 2>/dev/null )
+        RTL_VHDL_FILES=`eval echo $RTL_VHDL_FILES`
+        RTL_VHDL_FILES_ARGS=$(cat $RTL_YAML_FILE | shyaml get-values RTL.${DESIGN_NAME}.${key}.args 2>/dev/null )
+        RTL_VHDL_FILES_ARGS=`eval echo $RTL_VHDL_FILES_ARGS`
+    fi
+done < <(cat $RTL_YAML_FILE | shyaml keys RTL.${DESIGN_NAME} )
+
+INIT_HDL_SEARCH_PATH=$INIT_HDL_SEARCH_PATH
+RTL_SV_FILES_ARGS="${RTL_SV_FILES_ARGS[@]}"
+RTL_SV_FILES="${RTL_SV_FILES[@]}"
+RTL_VHDL_FILES_ARGS="${RTL_VHDL_FILES_ARGS[@]}"
+RTL_VHDL_FILES="${RTL_VHDL_FILES[@]}"
+
+# Vectorize
+RTL_VHDL_FILES_CAT=$(vectorize "$RTL_VHDL_FILES")
+RTL_SV_FILES_CAT=$(vectorize "$RTL_SV_FILES")
+INIT_HDL_SEARCH_PATH_CAT=$(vectorize "$INIT_HDL_SEARCH_PATH")
+CONSTRAINTS_FILE_CAT=$(vectorize "$CONSTRAINTS_FILE")
+
+# Prepare vars for user confirmation printing
+HDL_SEARCH_PATH="$INIT_HDL_SEARCH_PATH_CAT"
+HDL_SEARCH_PATH="${HDL_SEARCH_PATH//${DATA_DIR}/÷yellow÷\$DATA_DIR÷÷}"
+RTL_FILES="${RTL_SV_FILES_CAT} ${RTL_VHDL_FILES_CAT}"
+RTL_FILES="${RTL_FILES//${INIT_HDL_SEARCH_PATH_CAT}\//}"
+RTL_FILES="÷yellow÷${RTL_FILES}÷÷"
+_FLOORPLAN_FILE="$FLOORPLAN_FILE"
+FLOORPLAN_FILE="${FLOORPLAN_FILE//${DATA_DIR}/÷yellow÷\$DATA_DIR÷÷}"
+FLOORPLAN_FILE="$(dirname ${FLOORPLAN_FILE})""÷yellow÷/""$(basename $FLOORPLAN_FILE)""÷÷"
+
+_FLOORPLAN_IO_FILE="$FLOORPLAN_IO_FILE"
+FLOORPLAN_IO_FILE="${FLOORPLAN_IO_FILE//${DATA_DIR}/÷yellow÷\$DATA_DIR÷÷}"
+FLOORPLAN_IO_FILE="$(dirname ${FLOORPLAN_IO_FILE})""÷yellow÷/""$(basename $FLOORPLAN_IO_FILE)""÷÷"
+
+_CONSTRAINTS_FILE="$CONSTRAINTS_FILE"
+CONSTRAINTS_FILE="${CONSTRAINTS_FILE//${DATA_DIR}/÷yellow÷\$DATA_DIR÷÷}"
+CONSTRAINTS_FILE="$(dirname ${CONSTRAINTS_FILE})""÷yellow÷/""$(basename $CONSTRAINTS_FILE)""÷÷"
+
+
+###########################################
+# IF FLOORPLAN DOESN'T EXIST, SET 
+#   "CREATE_FLOORPLAN" FEATURE TO TRUE
+##########################################
+if [[ ! -f ${FLOORPLAN_FILE} && ! -L ${FLOORPLAN_FILE} ]]; then 
+    FEATURES+=( "-create_floorplan_flag" )
+fi
+
+
+###########################################
+# SETUP.YAML
+##########################################
+# We must now create the setup.yaml file for this configuration and link it so that flowtool can pick it up
+cmd="find ${SCRIPTS_DIR} -type f -maxdepth 1 -regextype posix-extended -regex '^.*${YAML_SETUP_FILE}.([0-9])$' -exec basename {} \; 2>/dev/null | grep -o "[0-9]*" | sort -n | tail -1"
+YAML_SETUP_OUT_FILE=$(get_next_indexed_file "$cmd" "${SCRIPTS_DIR}/${YAML_SETUP_FILE}")
+SETUP_YAML="÷white÷${SCRIPTS_DIR}÷÷/÷yellow÷"$(basename ${YAML_SETUP_OUT_FILE})"÷÷"
+
+
+###########################################
+# FLOW.YAML
+##########################################
+# We must now create the flow.yaml file for this configuration and link it so that flowtool can pick it up
+cmd="find ${SCRIPTS_DIR} -type f -maxdepth 1 -regextype posix-extended -regex '^.*$flow.${DESIGN_NAME}.yaml.([0-9])$' -exec basename {} \; 2>/dev/null | grep -o "[0-9]*" | sort -n | tail -1"
+FLOW_SETUP_OUT_FILE=$(get_next_indexed_file "$cmd" "${SCRIPTS_DIR}/flow.${DESIGN_NAME}.yaml")
+FLOW_YAML="÷white÷${SCRIPTS_DIR}÷÷/÷yellow÷"$(basename ${FLOW_SETUP_OUT_FILE})"÷÷"
+
+
+## Now let's print the configuration
+cprintf "\n÷Blue÷÷bold÷ ÷white÷Pre-run summary                                                                           ÷÷ \n"
+
+printVars ""
+vars_to_print=( "DESIGN_NAME" "USER" "TIMESTAMP" )
+printVars "Design options" "${vars_to_print[@]}"
+
+vars_to_print=("PROCESS" "LIB_DIR" "IO_LIB_DIR" "PDK_DIR" "METAL_STACK" "TECHDIR_DRC" "TECHDIR_LVS" "THRESHOLD_VOLTAGES" "PROCESS_SCRIPTS" "PROCESS_SETUP_TEMPLATE" "PROCESS_FLOW_TEMPLATE" )
+printVars "Technology specification" "${vars_to_print[@]}"
+
+vars_to_print=( "WORKSPACE_DIR" "SCRIPTS_DIR" )
+printVars "Flow workspace" "${vars_to_print[@]}"
+
+vars_to_print=("DATA_DIR" "HDL_SEARCH_PATH" "RTL_FILES" "FLOORPLAN_FILE" "FLOORPLAN_IO_FILE" "CONSTRAINTS_FILE"  )
+printVars "Inputs" "${vars_to_print[@]}"
+
+vars_to_print=( "RUNTAG" "RUNDIR" "FEATURES" "SETUP_YAML" "FLOW_YAML" "LOGFILE" "CLEAN" "STATUS" )
+printVars "Flow configurations" "${vars_to_print[@]}"
+
+## ASK USER IF EVERYTHING LOOKS OKAY, IN CASE -y FLAG WAS NOT PASSED.
+if $SKIP; then
+    REPLY="Y"
+else
+    cprintf "÷Red÷ Proceed with previous configuration and run flowtool? ÷÷"
+    read -p "[y/N]:" -n 1 -r
+    printf "\n"  # (optional) move to a new line
+fi
+if [[ $REPLY =~ ^[Yy]$ ]]; then
+
+    cprintf "÷Blue÷÷bold÷ ÷white÷Preparing flowtool                                                                        ÷÷ \n\n"
+
+    #####################################################################
+    # CREATE DIRS
+    #####################################################################
+    # Make sure RUNTAG DIR EXISTS
+    if [[ ! -d ${RUNDIR} ]]; then
+        _wolf_info "Creating ÷blue÷run directory tree÷÷."
+    fi
+    mkdir -p ${RUNDIR}
+
+    #####################################################################
+    # SCRIPTS MANAGEMENT
+    #   We will only copy the scripts over if we detect that the scripts
+    #   were changed. If not, skip. We keep track of this by checking a
+    #   file called "scripts.sha512checksum" and using "diff" function
+    #####################################################################
+    if $COPY_SCRIPTS_OVER; then
+        _wolf_info "Copying ÷blue÷process scripts÷÷ templates over to ÷yellow÷\"$SCRIPTS_DIR\"."
+        cp -r ${PROCESS_SCRIPTS} ${SCRIPTS_DIR}
+        # Now create sha checksum
+        rm -f "${SCRIPTS_DIR}/scripts.sha512checksum"
+        find "${SCRIPTS_DIR}" -type f ! -iname "${SCRIPTS_DIR}/scripts.sha512checksum" -exec sha512sum "{}" + > "${SCRIPTS_DIR}/scripts.sha512checksum" 2&> /dev/null
+
+    else 
+        # No need to copy scripts over, however warn the user.
+        _wolf_info "Scripts have not changed since last run. Pointing to old dir ÷yellow÷\"$SCRIPTS_DIR\"."
+
+        #_wolf_info "Performing diff in old scripts folder \"\$RUNDIR/scripts${max_index}\"."
+        #find "${RUNDIR}/scripts" -type f ! -iname "${RUNDIR}/scripts/scripts.sha512checksum" -exec sha512sum "{}" + > "${RUNDIR}/scripts/scripts.sha512checksum"
+        #sha512sum -c "${RUNDIR}/scripts${max_index}" 2> sha512errors 1>/dev/null
+        #if [ -s sha512errors ]; then
+        #    echo The following errors where found while checking:
+        #    more sha512errors
+        #    rm -f sha512errors
+        #else
+        #    echo All files are ok.
+        #    rm -f sha512errors
+        #fi  
+    fi
+    
+
+    ###########################################
+    # Delete previous trash logs/outs/cmds (except run.log)
+    ##########################################
+    _wolf_info "Deleting previous trash files."
+    find *.out -exec rm {} + &> /dev/null
+    find *.cmd* -exec rm {} + &> /dev/null
+    find *.log -exec rm {} + &> /dev/null
+
+    ##########################
+    # YAML FILES CREATION/COPYING
+    ##########################
+    _wolf_info "Creating ÷blue÷setup.yaml÷÷ file at ÷yellow÷\"$YAML_SETUP_OUT_FILE\"."
+    cp "$PROCESS_SETUP_TEMPLATE" "$YAML_SETUP_OUT_FILE"
+    # Merge with project template
+    tail -n +3 "$YAML_TEMPLATE_FILE" >> "$YAML_SETUP_OUT_FILE"
+
+    _wolf_info "Creating ÷blue÷flow.yaml÷÷ file at ÷yellow÷\"$FLOW_SETUP_OUT_FILE\"."
+    cp "$PROCESS_FLOW_TEMPLATE" "$FLOW_SETUP_OUT_FILE"
+
+    #######################
+    # YAML FILES SUBSTITUTION
+    #######################
+    # Setup.yaml
+    declare -A flow_maps
+    flow_maps=( ["RTL_VHDL_FILES"]="$RTL_VHDL_FILES_CAT" \
+                ["RTL_VHDL_FILES_ARGS"]="$RTL_VHDL_FILES_ARGS" \
+                ["RTL_SV_FILES"]="$RTL_SV_FILES_CAT" \
+                ["RTL_SV_FILES_ARGS"]="$RTL_SV_FILES_ARGS" \
+                ["INIT_HDL_SEARCH_PATH"]="$INIT_HDL_SEARCH_PATH_CAT" \
+                ["FLOW_YAML_FILE"]="$FLOW_SETUP_OUT_FILE" \
+                ["CONSTRAINTS_FILES"]="$CONSTRAINTS_FILE_CAT" \
+                ["SCRIPTS_DIR"]="$SCRIPTS_DIR" \
+                ["DATA_DIR"]="$DATA_DIR" \
+                ["LIB_DIR"]="$LIB_DIR" \
+                ["IO_LIB_DIR"]="$IO_LIB_DIR" \
+                ["METAL_STACK"]="$METAL_STACK" \
+                ["METAL_STACK_DIR"]="$METAL_STACK_DIR" \
+                ["PDK_DIR"]="$PDK_DIR" \
+                ["DESIGN_NAME"]="$DESIGN_NAME" \
+                ["FLOORPLAN_FILE"]="$_FLOORPLAN_FILE" \
+                ["FLOORPLAN_IO_FILE"]="$_FLOORPLAN_IO_FILE" \
+                ["VTHS"]="${VTHS}"
+    )
+
+    file="$YAML_SETUP_OUT_FILE"
+    for subt in "${!flow_maps[@]}"; do 
+        sed -i -e "s;\${$subt};${flow_maps[$subt]};g" "$file"
+    done
+
+    declare -A setup_maps
+    setup_maps=(["DESIGN_YAML"]="${YAML_SETUP_OUT_FILE}" \
+                ["SCRIPTS_DIR"]="${SCRIPTS_DIR}" 
+                ["FEATURES"]="${FEATURES[@]}"
+    )
+
+    file="$FLOW_SETUP_OUT_FILE"
+    for subt in "${!setup_maps[@]}"; do 
+        sed -i -e "s;\${$subt};${setup_maps[$subt]};g" "$file"
+    done
+
+    #######################
+    # PERFORM FILE LINKING
+    #######################
+    # Link runtag folder to the latest dir
+    if [[ -d ${WORKSPACE_DIR}/${DESIGN_NAME}/${DESIGN_NAME}.${PROCESS}/${DESIGN_NAME}.latest || -L ${WORKSPACE_DIR}/${DESIGN_NAME}/${DESIGN_NAME}.${PROCESS}/${DESIGN_NAME}.latest ]] ; then
+        rm -rf ${WORKSPACE_DIR}/${DESIGN_NAME}/${DESIGN_NAME}.${PROCESS}/${DESIGN_NAME}.latest
+    fi
+    ln -sf "${RUNDIR}" "${WORKSPACE_DIR}/${DESIGN_NAME}/${DESIGN_NAME}.${PROCESS}/${DESIGN_NAME}.latest"
+    _wolf_info "Linking latest ÷green÷\"${DESIGN_NAME}.latest\"÷÷ to ÷green÷\"$RUNTAG\"÷÷"
+
+    # Link latest scripts dir
+    rm -f "${RUNDIR}/scripts.latest"
+    ln -sf "$SCRIPTS_DIR" "${RUNDIR}/scripts.latest" 
+    _wolf_info "Linking latest ÷green÷\"scripts.latest\"÷÷ dir to ÷green÷\"$(basename $SCRIPTS_DIR)\"÷÷."
+
+    # Link latest setup.yaml file
+    ln -sf "$YAML_SETUP_OUT_FILE" "${RUNDIR}/$YAML_SETUP_FILE.latest" 
+    _wolf_info "Linking latest ÷green÷\"$YAML_SETUP_FILE.latest\"÷÷ file to ÷green÷\"$(basename $YAML_SETUP_OUT_FILE)\"÷÷."
+
+    # Link latest flow.yaml
+    ln -sf "$FLOW_SETUP_OUT_FILE" "${RUNDIR}/flow.yaml.latest" 
+    _wolf_info "Linking latest ÷green÷\"flow.yaml.latest\"÷÷ file to ÷green÷\"$(basename $FLOW_SETUP_OUT_FILE)\"÷÷."
+
+    #######################
+    # CALL FLOWTOOL
+    #######################
+    cprintf "\n÷Blue÷÷bold÷ ÷white÷Invoking flowtool with previous configs                                                   ÷÷ \n\n"
+    flowtool -files "${FLOW_SETUP_OUT_FILE}" \
+        -run_tag ${RUNTAG} \
+        -simple_output \
+        ${POSITIONAL[@]} \
+        -no_gui \
+        -directory ${WORKSPACE_DIR}/${DESIGN_NAME}/${DESIGN_NAME}.${PROCESS} \
+        -log $_LOGFILE
+fi
+
