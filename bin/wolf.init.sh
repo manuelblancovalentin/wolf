@@ -3,27 +3,27 @@
 #####################################################################################
 # MAKE SURE WE HAVE ALL SOURCE CODE WE NEED
 #####################################################################################
-WOLF_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
-WOLF_DIR=`dirname "$WOLF_DIR"`
-WOLF_BIN="${WOLF_DIR}/bin"
-if [[ ! -d ${WOLF_BIN} || ! -f "${WOLF_BIN}/utils" || ! -f "${WOLF_BIN}/wolf.run" ]]; then
+_WOLF_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+_WOLF_DIR=`dirname "$_WOLF_DIR"`
+_WOLF_BIN="${_WOLF_DIR}/bin"
+if [[ ! -d ${_WOLF_BIN} || ! -f "${_WOLF_BIN}/utils" || ! -f "${_WOLF_BIN}/wolf.run" ]]; then
     printf "\033[1;7;31m [ERROR] - Invalid installation. Some binary files required to run wolf are either missing or unaccessible. Contact your cadadmin to fix this."
 fi
 
 ######################################################################################
 # Source definitions
 #####################################################################################
-source "${WOLF_BIN}/defs"
+source "${_WOLF_BIN}/defs"
 
 #####################################################################################
 # Source utilities
 #####################################################################################
-source "${WOLF_BIN}/utils"
+source "${_WOLF_BIN}/utils"
 
 ######################################################################################
 # Source wolf.env
 #####################################################################################
-source "${WOLF_BIN}/wolf.env"
+source "${_WOLF_BIN}/wolf.env"
 
 #####################################################################################
 # MAIN WOLF ALIAS
@@ -32,22 +32,21 @@ wolf () {
 
     ###########################################
     # Init vars to default values
-    #
     ##########################################
-    COMMAND=
+    _WOLF_INIT_ARGS_COMMAND=
 
     ###########################################
     # Parse flags
     #
     ##########################################
-    POSITIONAL=()
-    index=1
+    _WOLF_INIT_ARGS_POSITIONAL=()
+    _WOLF_INIT_ARGS_INDEX=1
     while [[ $# -gt 0 ]]; do
-        key="$1"
-        case $key in
+        _WOLF_INIT_ARGS_KEY="$1"
+        case $_WOLF_INIT_ARGS_KEY in
             -h|--help)
-                if [[ $index -eq 1 ]]; then
-                    cprintf "$h\n"
+                if [[ $_WOLF_INIT_ARGS_INDEX -eq 1 ]]; then
+                    cprintf "$_WOLF_HEADER\n"
                     # Help dialog
                     echo -e "Usage $(basename $BASH_SOURCE) [COMMANDS]... [EXTRA_ARGUMENTS]..."
                     echo "Wolf utility for digital flow management."
@@ -57,81 +56,81 @@ wolf () {
                     echo "Commands:"
                     echo -e "\trun\t\tInvokes wolf.run (old flows.run) to run a specific digital flow."
                 else
-                    POSITIONAL+=("$1")
+                    _WOLF_INIT_ARGS_POSITIONAL+=("$1")
                 fi
                 shift
                 ;;
             run|env|create|remove|activate|deactivate|update|reload)
-                COMMAND="${key^^}"
+                _WOLF_INIT_ARGS_COMMAND="${_WOLF_INIT_ARGS_KEY^^}"
                 shift
                 ;;
         *)    # unknown option
-            POSITIONAL+=("$1") # save it in an array for later
-            POSITIONAL+=("$2")
+            _WOLF_INIT_ARGS_POSITIONAL+=("$1") # save it in an array for later
+            _WOLF_INIT_ARGS_POSITIONAL+=("$2")
             shift # past argument
             shift # past value
             ;;
         esac
-        let index++
+        let _WOLF_INIT_ARGS_INDEX++
     done
-    set -- "${POSITIONAL[@]}" # restore positional parameters
+    set -- "${_WOLF_INIT_ARGS_POSITIONAL[@]}" # restore positional parameters
 
     #############################################
-    # Invoke COMMAND
+    # Invoke _WOLF_INIT_ARGS_COMMAND
     #
     ############################################
-    case $COMMAND in
+    case $_WOLF_INIT_ARGS_COMMAND in
         RUN)
             # Parse all the variables that have to be passed to wolf.run; in case they exist in the current environment.
-            DEDUCED_ENV_VARS=()
+            _WOLF_INIT_ARGS_DEDUCED_ENV_VARS=()
             if [[ ! -z $WOLF_ENV_NAME ]]; then 
-                if [[ -v PROCESS ]]; then DEDUCED_ENV_VARS+=("--process"); DEDUCED_ENV_VARS+=("$PROCESS"); fi
-                if [[ -v DESIGN_NAME ]]; then DEDUCED_ENV_VARS+=("--design"); DEDUCED_ENV_VARS+=("$DESIGN_NAME"); fi
-                if [[ -v RUNTAG ]]; then DEDUCED_ENV_VARS+=("--runtag"); DEDUCED_ENV_VARS+=("$RUNTAG"); fi
-                if [[ -v YAML_TEMPLATE_FILE ]]; then DEDUCED_ENV_VARS+=("--conf"); DEDUCED_ENV_VARS+=("$YAML_TEMPLATE_FILE"); fi
+                if [[ -v PROCESS ]]; then _WOLF_INIT_ARGS_DEDUCED_ENV_VARS+=("--process"); _WOLF_INIT_ARGS_DEDUCED_ENV_VARS+=("$PROCESS"); fi
+                if [[ -v DESIGN_NAME ]]; then _WOLF_INIT_ARGS_DEDUCED_ENV_VARS+=("--design"); _WOLF_INIT_ARGS_DEDUCED_ENV_VARS+=("$DESIGN_NAME"); fi
+                if [[ -v RUNTAG ]]; then _WOLF_INIT_ARGS_DEDUCED_ENV_VARS+=("--runtag"); _WOLF_INIT_ARGS_DEDUCED_ENV_VARS+=("$RUNTAG"); fi
+                if [[ -v YAML_TEMPLATE_FILE ]]; then _WOLF_INIT_ARGS_DEDUCED_ENV_VARS+=("--conf"); _WOLF_INIT_ARGS_DEDUCED_ENV_VARS+=("$YAML_TEMPLATE_FILE"); fi
             fi
             if [[ -v WOLF_ENV_DIR && -f "$WOLF_ENV_DIR/vars.env" ]]; then 
-                cmd=`grep -v '#.*' $WOLF_ENV_DIR/vars.env | xargs`
-                cmd="${cmd} ${WOLF_BIN}/wolf.run "
-                for v in "${DEDUCED_ENV_VARS[@]}"; do 
-                    cmd="${cmd} $v"
+                _WOLF_INIT_ARGS_CMD=`grep -v '#.*' $WOLF_ENV_DIR/vars.env | xargs`
+                _WOLF_INIT_ARGS_CMD="${_WOLF_INIT_ARGS_CMD} ${_WOLF_BIN}/wolf.run "
+                for v in "${_WOLF_INIT_ARGS_DEDUCED_ENV_VARS[@]}"; do 
+                    _WOLF_INIT_ARGS_CMD="${_WOLF_INIT_ARGS_CMD} $v"
                 done
-                for v in "${POSITIONAL[@]}"; do 
-                    cmd="${cmd} $v"
+                for v in "${_WOLF_INIT_ARGS_POSITIONAL[@]}"; do 
+                    _WOLF_INIT_ARGS_CMD="${_WOLF_INIT_ARGS_CMD} $v"
                 done
-                echo "$cmd"
-                eval $cmd
+                echo "$_WOLF_INIT_ARGS_CMD"
+                eval $_WOLF_INIT_ARGS_CMD
             else
-                ${WOLF_BIN}/wolf.run "$DEDUCED_ENV_VARS[@]" "${POSITIONAL[@]}"
+                ${_WOLF_BIN}/wolf.run "$_WOLF_INIT_ARGS_DEDUCED_ENV_VARS[@]" "${_WOLF_INIT_ARGS_POSITIONAL[@]}"
             fi
             ;;
         ENV)
             # Call wolf env 
-            _wolf_env "${POSITIONAL[@]}"
+            _wolf_env "${_WOLF_INIT_ARGS_POSITIONAL[@]}"
             ;;
         CREATE)
             # Call wolf env 
-            _wolf_env create "${POSITIONAL[@]}"
+            _wolf_env create "${_WOLF_INIT_ARGS_POSITIONAL[@]}"
             ;;
         REMOVE)
             # Call wolf env 
-            _wolf_env remove "${POSITIONAL[@]}"
+            _wolf_env remove "${_WOLF_INIT_ARGS_POSITIONAL[@]}"
             ;;
         ACTIVATE)
             # Call wolf env 
-            _wolf_env activate "${POSITIONAL[@]}"
+            _wolf_env activate "${_WOLF_INIT_ARGS_POSITIONAL[@]}"
             ;;
         DEACTIVATE)
             # Call wolf env 
-            _wolf_env deactivate "$WOLF_ENV_NAME" "${POSITIONAL[@]}"
+            _wolf_env deactivate "$WOLF_ENV_NAME" "${_WOLF_INIT_ARGS_POSITIONAL[@]}"
             ;;
         UPDATE)
             # Call wolf env 
-            _wolf_env update "$WOLF_ENV_NAME" "${POSITIONAL[@]}"
+            _wolf_env update "$WOLF_ENV_NAME" "${_WOLF_INIT_ARGS_POSITIONAL[@]}"
             ;;
         RELOAD)
             # Call wolf env 
-            _wolf_env reload "$WOLF_ENV_NAME" "${POSITIONAL[@]}"
+            _wolf_env reload "$WOLF_ENV_NAME" "${_WOLF_INIT_ARGS_POSITIONAL[@]}"
             ;;
         *)
             _wolf_error "Invalid command passed to wolf. Wolf requires at least 1 command to be executed. Valid commands are: \"run\", \"env\""

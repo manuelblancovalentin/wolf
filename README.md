@@ -13,7 +13,7 @@
 </pre>
 </span>
 
-#Wolf: A tool for digital flow automation and management.
+# WOLF: A tool for digital flow automation and management.
 
 ## 1. Introduction
 ```bash

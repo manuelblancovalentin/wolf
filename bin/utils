@@ -5,22 +5,22 @@
 #
 ###########################################
 # Print source info
-hline="-----------------------------------------------------------------------------------------------------------------------"
+_WOLF_HLINE="-----------------------------------------------------------------------------------------------------------------------"
 
 # unicode characters
-hor_dash="\xe2\x94\x80"
-tab_vert_nocross="\xe2\x94\x82${hor_dash}"
-tab_vert_crossright="\xe2\x94\x9c${hor_dash}"
-tab_vert_cornerright="\xe2\x94\x94${hor_dash}"
-tab_cross_down="\xe2\x94\xac${hor_dash}"
-arc_upright="\xe2\x95\xb0${hor_dash}"
-arc_downright="\xe2\x95\xad${hor_dash}"
-arrowhead_right="\xe2\x95\xbc"
-arrowhead_left="\xe2\x9e\xa4"
-quad0="\xe2\x96\x9b"
-quad1="\xe2\x96\x9a"
+_WOLF_HOR_DASH="\xe2\x94\x80"
+_WOLF_TAB_VERT_NOCROSS="\xe2\x94\x82${_WOLF_HOR_DASH}"
+_WOLF_TAB_VERT_CROSSRIGHT="\xe2\x94\x9c${_WOLF_HOR_DASH}"
+_WOLF_TAB_VERT_CORNERRIGHT="\xe2\x94\x94${_WOLF_HOR_DASH}"
+_WOLF_TAB_CROSS_DOWN="\xe2\x94\xac${_WOLF_HOR_DASH}"
+_WOLF_ARC_UPRIGHT="\xe2\x95\xb0${_WOLF_HOR_DASH}"
+_WOLF_ARC_DOWNRIGHT="\xe2\x95\xad${_WOLF_HOR_DASH}"
+_WOLF_ARROWHEAD_RIGHT="\xe2\x95\xbc"
+_WOLF_ARROWHEAD_LEFT="\xe2\x9e\xa4"
+_WOLF_QUAD0="\xe2\x96\x9b"
+_WOLF_QUAD1="\xe2\x96\x9a"
 
-uni_hline=$(printf '\xe2\x94\x80%.0s' {1..2})
+_WOLF_UNI_HLINE=$(printf '\xe2\x94\x80%.0s' {1..2})
 
 
 function cprintf() {
@@ -40,32 +40,32 @@ _wolf_error () {
 
 _wolf_info () {
 	str="$*"
-	cprintf "÷bold÷÷yellow÷ ${arrowhead_left} [INFO]÷÷ ÷white÷- "
+	cprintf "÷bold÷÷yellow÷ ${_WOLF_ARROWHEAD_LEFT} [INFO]÷÷ ÷white÷- "
 	cprintf "$*"
 	cprintf "÷÷\n"
 }
 
 _wolf_ok () {
 	str="$*"
-	cprintf "÷bold÷÷green÷ ${arrowhead_left} [OK]÷÷ ÷white÷- "
+	cprintf "÷bold÷÷green÷ ${_WOLF_ARROWHEAD_LEFT} [OK]÷÷ ÷white÷- "
 	cprintf "$*"
 	cprintf "÷÷\n"
 }
 
 _wolf_entry () {
 	str="$*"
-	cprintf "÷bold÷${arrowhead_left}÷white÷ "
+	cprintf "÷bold÷${_WOLF_ARROWHEAD_LEFT}÷white÷ "
 	cprintf "$*"
 	cprintf "÷÷\n"
 }
 
 function printVars () {
     if [ -z "$1" ]; then
-        #printf "\r${purple} ${hline}-${reset}\n"
+        #printf "\r${purple} ${_WOLF_HLINE}-${reset}\n"
         echo 
     else
         title="$1"
-        cprintf "\r÷purple÷${arc_downright}÷Purple÷ ÷white÷$title ÷÷ \n"
+        cprintf "\r÷purple÷${_WOLF_ARC_DOWNRIGHT}÷Purple÷ ÷white÷$title ÷÷ \n"
     fi
     i=0
     for key in "${@:2}";
@@ -74,18 +74,19 @@ function printVars () {
         val=$(eval $cmd)
         if [[ $i -eq 0 ]]; then
             if [[ $key != "${@: -1}" ]]; then
-                cprintf "÷purple÷${arc_upright}${uni_hline}${tab_cross_down}${arrowhead_right} ÷blue÷$key÷white÷: $val\n"
+                cprintf "÷purple÷${_WOLF_ARC_UPRIGHT}${_WOLF_UNI_HLINE}${_WOLF_TAB_CROSS_DOWN}${_WOLF_ARROWHEAD_RIGHT} ÷blue÷$key÷white÷: $val\n"
             else 
-                cprintf "÷purple÷${arc_upright}${uni_hline}${hor_dash}${arrowhead_right} ÷blue÷$key÷white÷: $val\n\n"
+                cprintf "÷purple÷${_WOLF_ARC_UPRIGHT}${_WOLF_UNI_HLINE}${_WOLF_HOR_DASH}${_WOLF_ARROWHEAD_RIGHT} ÷blue÷$key÷white÷: $val\n\n"
             fi
         elif [[ $key != "${@: -1}" ]]; then
-            cprintf "÷purple÷    ${tab_vert_crossright}${arrowhead_right} ÷blue÷$key÷white÷: $val\n"
+            cprintf "÷purple÷    ${_WOLF_TAB_VERT_CROSSRIGHT}${_WOLF_ARROWHEAD_RIGHT} ÷blue÷$key÷white÷: $val\n"
         else
-            cprintf "÷purple÷    ${tab_vert_cornerright}${arrowhead_right} ÷blue÷$key÷white÷: $val\n\n"
+            cprintf "÷purple÷    ${_WOLF_TAB_VERT_CORNERRIGHT}${_WOLF_ARROWHEAD_RIGHT} ÷blue÷$key÷white÷: $val\n\n"
         fi
         let i++
     done
 }
+
 
 #######################################
 # Find next index of a folder/file to be created
@@ -155,7 +156,6 @@ function get_next_indexed_dir() {
 
 }
 
-
 function get_max_indexed_dir() {
     cmd="$1"
     dir="$2"
@@ -185,7 +185,6 @@ function get_max_indexed_dir() {
     fi
 
 }
-
 
 #####################################
 # FUNCTION USED TO TRANSFORM A SET OF WHITE-SPACE SEPARATED STRINGS INTO AN ARRAY

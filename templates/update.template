@@ -1,0 +1,11 @@
+# Only add vars we modified, load it
+if [[ -f "$WOLF_ENV_DIR/backup.env" ]]; then
+  set | grep -v "$_WOLF_VARS_TO_IGNORE" > "$WOLF_ENV_DIR/vars.tmp.env"
+  grep -v -F -f"$WOLF_ENV_DIR/backup.env" "$WOLF_ENV_DIR/vars.tmp.env" | grep -v "$_WOLF_VARS_TO_IGNORE" | grep -v "_=" > "$WOLF_ENV_DIR/vars.env"
+  rm "$WOLF_ENV_DIR/vars.tmp.env"
+else
+  set | grep -v "$_WOLF_VARS_TO_IGNORE" > "$WOLF_ENV_DIR/vars.env"
+fi
+
+
+

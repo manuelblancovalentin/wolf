@@ -18,7 +18,7 @@ source "${WOLF_BIN}/utils"
 # Print header
 #   Generated using: https://fsymbols.com/generators/carty/
 #####################################################################################
-cprintf "$wolf_run_header\n"
+cprintf "$_WOLF_RUN_HEADER\n"
 
 ###########################################
 # Init vars to default values
@@ -211,6 +211,9 @@ fi
 # SETUP OUTDIR VARS FOR PRACTICITY
 ######################################################
 RUNDIR="${WORKSPACE_DIR}/${DESIGN_NAME}/${DESIGN_NAME}.${PROCESS}/$RUNTAG"
+
+echo "THIS IS A TEST"
+exit 0
 
 
 ###############################################################################
