@@ -212,10 +212,6 @@ fi
 ######################################################
 RUNDIR="${WORKSPACE_DIR}/${DESIGN_NAME}/${DESIGN_NAME}.${PROCESS}/$RUNTAG"
 
-echo "THIS IS A TEST"
-exit 0
-
-
 ###############################################################################
 # SCRIPTS_DIR
 #   We will keep a local copy of the scripts inside each rundir, so let's check
@@ -331,6 +327,7 @@ fi
 # SETUP.YAML
 ##########################################
 # We must now create the setup.yaml file for this configuration and link it so that flowtool can pick it up
+YAML_SETUP_FILE="setup.${DESIGN_NAME}.yaml"
 cmd="find ${SCRIPTS_DIR} -type f -maxdepth 1 -regextype posix-extended -regex '^.*${YAML_SETUP_FILE}.([0-9])$' -exec basename {} \; 2>/dev/null | grep -o "[0-9]*" | sort -n | tail -1"
 YAML_SETUP_OUT_FILE=$(get_next_indexed_file "$cmd" "${SCRIPTS_DIR}/${YAML_SETUP_FILE}")
 SETUP_YAML="÷white÷${SCRIPTS_DIR}÷÷/÷yellow÷"$(basename ${YAML_SETUP_OUT_FILE})"÷÷"
@@ -462,7 +459,8 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
 
     file="$YAML_SETUP_OUT_FILE"
     for subt in "${!flow_maps[@]}"; do 
-        sed -i -e "s;\${$subt};${flow_maps[$subt]};g" "$file"
+        ssv=`eval echo "${flow_maps[$subt]}"`
+        sed -i -e "s;\${$subt};${ssv};g" "$file"
     done
 
     declare -A setup_maps
@@ -473,7 +471,8 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
 
     file="$FLOW_SETUP_OUT_FILE"
     for subt in "${!setup_maps[@]}"; do 
-        sed -i -e "s;\${$subt};${setup_maps[$subt]};g" "$file"
+        ssv=`eval echo "${setup_maps[$subt]}"`
+        sed -i -e "s;\${$subt};${ssv};g" "$file"
     done
 
     #######################
