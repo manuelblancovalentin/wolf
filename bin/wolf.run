@@ -502,11 +502,34 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
     # CALL FLOWTOOL
     #######################
     cprintf "\n÷Blue÷÷bold÷ ÷white÷Invoking flowtool with previous configs                                                   ÷÷ \n\n"
-    flowtool -files "${FLOW_SETUP_OUT_FILE}" \
-        -run_tag ${RUNTAG} \
-        -simple_output \
-        ${POSITIONAL[@]} \
-        -directory ${WORKSPACE_DIR}/${DESIGN_NAME}/${DESIGN_NAME}.${PROCESS} \
-        -log $_LOGFILE
+    # Build command
+    FLOWTOOL_CMD="flowtool -files "${FLOW_SETUP_OUT_FILE}" -run_tag ${RUNTAG} ${POSITIONAL[@]} -directory ${WORKSPACE_DIR}/${DESIGN_NAME}/${DESIGN_NAME}.${PROCESS} -log $_LOGFILE"
+    
+    # Build unique id for this run
+    FLOWTOOL_RUN_UUID=$(cat /proc/sys/kernel/random/uuid)
+    FLOWTOOL_RUN_UUID=${FLOWTOOL_RUN_UUID,,}
+
+    # Populate history
+    if [[ ! -f "$WOLF_ENV_DIR/history" ]]; then 
+        touch "$WOLF_ENV_DIR/history"
+        echo "---" > "$WOLF_ENV_DIR/history"
+        echo "# This file was automatically created using wolf tool on $(date)" >> "$WOLF_ENV_DIR/history"
+        echo "# This is a yaml file containing a history of every digital flow " >> "$WOLF_ENV_DIR/history"
+        echo "# for wolf environment \"$WOLF_ENV_NAME\". " >> "$WOLF_ENV_DIR/history"
+    fi
+    printf "$FLOWTOOL_RUN_UUID:\n" >> "$WOLF_ENV_DIR/history"
+    printf "  cmd: \"$FLOWTOOL_CMD\"\n" >> "$WOLF_ENV_DIR/history"
+    printf "  date: \"%s\"\n" "$(date)" >> "$WOLF_ENV_DIR/history"
+
+    # Link uuid folder to runtag
+    mkdir -p "$WOLF_ENV_DIR/runs"
+    ln -sf "${WORKSPACE_DIR}/${DESIGN_NAME}/${DESIGN_NAME}.${PROCESS}/${RUNTAG}" "$WOLF_ENV_DIR/runs/$FLOWTOOL_RUN_UUID"
+
+    # Finally, call flowtool
+    eval "$FLOWTOOL_CMD"
+
+    unset FLOWTOOL_RUN_UUID
+    unset FLOWTOOL_CMD
+
 fi
 

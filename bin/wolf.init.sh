@@ -60,7 +60,7 @@ wolf () {
                 fi
                 shift
                 ;;
-            run|env|create|remove|activate|deactivate|update|reload)
+            run|env|create|remove|activate|deactivate|update|reload|history)
                 _WOLF_INIT_ARGS_COMMAND="${_WOLF_INIT_ARGS_KEY^^}"
                 shift
                 ;;
@@ -99,7 +99,7 @@ wolf () {
                     _WOLF_INIT_ARGS_CMD="${_WOLF_INIT_ARGS_CMD} $v"
                 done
                 echo "$_WOLF_INIT_ARGS_CMD"
-                eval $_WOLF_INIT_ARGS_CMD
+                eval "$_WOLF_INIT_ARGS_CMD"
             else
                 ${_WOLF_BIN}/wolf.run "$_WOLF_INIT_ARGS_DEDUCED_ENV_VARS[@]" "${_WOLF_INIT_ARGS_POSITIONAL[@]}"
             fi
@@ -131,6 +131,10 @@ wolf () {
         RELOAD)
             # Call wolf env 
             _wolf_env reload "$WOLF_ENV_NAME" "${_WOLF_INIT_ARGS_POSITIONAL[@]}"
+            ;;
+        HISTORY)
+             # Call wolf env 
+            _wolf_env "history" "$WOLF_ENV_NAME" "${_WOLF_INIT_ARGS_POSITIONAL[@]}"
             ;;
         *)
             _wolf_error "Invalid command passed to wolf. Wolf requires at least 1 command to be executed. Valid commands are: \"run\", \"env\""
