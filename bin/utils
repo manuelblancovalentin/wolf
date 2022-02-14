@@ -197,7 +197,7 @@ function vectorize {
 
         if [[ $num -gt 1 ]]; then
             if [[ $i -eq 0 ]]; then
-                VAR_CAT="'[list"
+                VAR_CAT="'["
             fi
             VAR_CAT="$VAR_CAT $(echo ${VAR[$i]} | xargs)"
             if [[ $i -eq $((num-1)) ]]; then

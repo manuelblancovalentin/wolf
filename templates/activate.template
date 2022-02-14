@@ -1,12 +1,11 @@
 export WOLF_PS1_BACKUP="$PS1"
-export PS1="\[\033[38;2;173;76;229m|wolf:$WOLF_ENV_NAME|\[\033[0m $WOLF_PS1_BACKUP" 
-
-# Save env variables backup
-set > "$WOLF_ENV_DIR/backup.env"
+export PS1="\[\033[01;38;02;173;76;229m\]«$WOLF_ENV_NAME»\[\033[00m\] $WOLF_PS1_BACKUP" 
+# Save env variables backup (no functions here)
+comm -3 <(declare | sort) <(declare -f | sort) > "$WOLF_ENV_DIR/backup.env"
 
 # If env file exists, load it
 if [[ -f "$WOLF_ENV_DIR/vars.env" ]]; then
-  export $(cat "$WOLF_ENV_DIR/vars.env") 
+  export $(cat "$WOLF_ENV_DIR/vars.env") &> /dev/null
 fi
 
 # If bucket exists, source it

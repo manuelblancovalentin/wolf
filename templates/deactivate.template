@@ -1,13 +1,16 @@
 
 # If backup env file exists, load it
 if [[ -f "$WOLF_ENV_DIR/backup.env" ]]; then
-  set > "$WOLF_ENV_DIR/post.env"
-  grep -v -F -f"$WOLF_ENV_DIR/backup.env" "$WOLF_ENV_DIR/post.env" | grep -v "$_WOLF_VARS_TO_IGNORE"  > "$WOLF_ENV_DIR/tmp.env" 
+  comm -3 <(declare | sort) <(declare -f | sort) > "$WOLF_ENV_DIR/post.env"
+  comm -3 <(cat "$WOLF_ENV_DIR/post.env") <(cat "$WOLF_ENV_DIR/backup.env") | grep -v "$_WOLF_VARS_TO_IGNORE" | grep -v "_=" > "$WOLF_ENV_DIR/tmp.env" 
+  #grep -v -F -f"$WOLF_ENV_DIR/backup.env" "$WOLF_ENV_DIR/post.env" | grep -v "$_WOLF_VARS_TO_IGNORE"  > "$WOLF_ENV_DIR/tmp.env" 
   eval $(cat "$WOLF_ENV_DIR/tmp.env") 
   # We also need to unset the variables we set in this session/env
-  wolf_vars_to_delete=$(grep -v -F -f"$WOLF_ENV_DIR/backup.env" "$WOLF_ENV_DIR/post.env" | grep -v "BASH_" | grep -Po "^\w+(?=\=)")
-  for v in "${wolf_vars_to_delete[@]}"; do
-    unset $v
+  wolf_vars_to_delete=$(cat "$WOLF_ENV_DIR/tmp.env" | grep -v "BASH_" | grep -Po "^\w+(?=\=)")
+  for v in $wolf_vars_to_delete; do
+    if [[ $v != PS1 ]]; then
+      unset $v
+    fi
   done
   unset wolf_vars_to_delete
   rm "$WOLF_ENV_DIR/tmp.env"

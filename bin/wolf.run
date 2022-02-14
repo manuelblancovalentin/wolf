@@ -506,7 +506,6 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
         -run_tag ${RUNTAG} \
         -simple_output \
         ${POSITIONAL[@]} \
-        -no_gui \
         -directory ${WORKSPACE_DIR}/${DESIGN_NAME}/${DESIGN_NAME}.${PROCESS} \
         -log $_LOGFILE
 fi
