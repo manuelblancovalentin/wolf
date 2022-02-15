@@ -9,11 +9,15 @@ _wolf () {
        COMPREPLY=( $( compgen -W "list create remove activate deactivate update reload status history" -- $cur ) )
        return 0
        ;;
-   activate)
+   activate|-n|--name)
        # List all environments
        _WOLF_ENV_DIR="${HOME}/.wolf/envs"
        _WOLF_ENVS_LIST=`find "$_WOLF_ENV_DIR" -maxdepth 1 -mindepth 1 -type d | sort -n | xargs -I{} basename {}`
        COMPREPLY=( $( compgen -W "$_WOLF_ENVS_LIST" -- $cur ) )
+       return 0
+       ;;
+    create|remove)
+       COMPREPLY=( $( compgen -W "-n" -- $cur ) )
        return 0
        ;;
     *)
