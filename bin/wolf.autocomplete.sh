@@ -16,10 +16,30 @@ _wolf () {
        COMPREPLY=( $( compgen -W "$_WOLF_ENVS_LIST" -- $cur ) )
        return 0
        ;;
-    create|remove)
-       COMPREPLY=( $( compgen -W "-n" -- $cur ) )
+   create|remove)
+       COMPREPLY=( $( compgen -W "--name" -- $cur ) )
        return 0
        ;;
+   run)
+      # Flowtool flags
+      COMPREPLY=($(compgen -W "-from -to -interactive -interactive_run -predict -status -db -dist -run_tag -branch -directory -display -enabled -files -flow -inject_tcl -isolate -metrics_file -no_check -no_gui -no_db -ref_run -reset -simple_output -verbose -version" -- $cur ) )
+      return 0
+      ;;
+   -from|-to|-flow)
+      COMPREPLY=()
+      if [ -z  $WOLF_ENV_DIR ]; then 
+         echo ""
+         _wolf_error "No wolf environment detected. Please, activate an environment first and then try autocomplete again."
+         return 0
+      else 
+         if [[ -L "$WOLF_ENV_DIR/flow.sum.latest" ]]; then
+            t=`cat "$WOLF_ENV_DIR/flow.sum.latest"`
+            COMPREPLY=($(compgen -W "$t" -- $cur ) )
+            
+         fi
+      fi
+      return 0
+      ;;
     *)
        COMPREPLY=($(compgen -W "run env create remove activate deactivate update reload history" -- $cur ) )
        return 0

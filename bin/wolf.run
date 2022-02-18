@@ -504,7 +504,8 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
     cprintf "\n÷Blue÷÷bold÷ ÷white÷Invoking flowtool with previous configs                                                   ÷÷ \n\n"
     # Build command
     FLOWTOOL_CMD="flowtool -files "${FLOW_SETUP_OUT_FILE}" -run_tag ${RUNTAG} ${POSITIONAL[@]} -directory ${WORKSPACE_DIR}/${DESIGN_NAME}/${DESIGN_NAME}.${PROCESS} -log $_LOGFILE"
-    
+    # Let's also link the latest status 
+
     # Build unique id for this run
     FLOWTOOL_RUN_UUID=$(cat /proc/sys/kernel/random/uuid)
     FLOWTOOL_RUN_UUID=${FLOWTOOL_RUN_UUID,,}
@@ -518,12 +519,51 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
         echo "# for wolf environment \"$WOLF_ENV_NAME\". " >> "$WOLF_ENV_DIR/history"
     fi
     printf "$FLOWTOOL_RUN_UUID:\n" >> "$WOLF_ENV_DIR/history"
-    printf "  cmd: \"$FLOWTOOL_CMD\"\n" >> "$WOLF_ENV_DIR/history"
+    printf "  cmd1: \"wolf run $*\"\n" >> "$WOLF_ENV_DIR/history"
+    printf "  cmd2: \"$FLOWTOOL_CMD\"\n" >> "$WOLF_ENV_DIR/history"
+    printf "  dir: \"$WOLF_ENV_DIR/runs/$FLOWTOOL_RUN_UUID.d\"" >> "$WOLF_ENV_DIR/history"
     printf "  date: \"%s\"\n" "$(date)" >> "$WOLF_ENV_DIR/history"
-
+    
     # Link uuid folder to runtag
     mkdir -p "$WOLF_ENV_DIR/runs"
-    ln -sf "${WORKSPACE_DIR}/${DESIGN_NAME}/${DESIGN_NAME}.${PROCESS}/${RUNTAG}" "$WOLF_ENV_DIR/runs/$FLOWTOOL_RUN_UUID"
+    ln -sf "${WORKSPACE_DIR}/${DESIGN_NAME}/${DESIGN_NAME}.${PROCESS}/${RUNTAG}" "$WOLF_ENV_DIR/runs/$FLOWTOOL_RUN_UUID.d"
+
+    # Link latest run for easy access
+    ln -sf "${WORKSPACE_DIR}/${DESIGN_NAME}/${DESIGN_NAME}.${PROCESS}/${RUNTAG}" "$WOLF_ENV_DIR/run.latest.d"
+
+    # Get flow steps for later reference by wolf
+    if [[ $COPY_SCRIPTS_OVER || ! -L "$WOLF_ENV_DIR/flow.sum.latest" ]]; then
+        _wolf_info "Creating new ÷blue÷flow summary file÷÷ and saving to ÷yellow÷\"$WOLF_ENV_DIR/flow.sum.latest\"."
+
+        FLOW_SUMMARY="$WOLF_ENV_DIR/runs/$FLOWTOOL_RUN_UUID.flow.sum"
+        flowtool -directory "$WOLF_ENV_DIR/run.latest.d" -files "${FLOW_SETUP_OUT_FILE}" -predict summary > "$FLOW_SUMMARY.tmp"
+        
+        # Link to latest summary
+        steps=($(tac "$FLOW_SUMMARY.tmp" | sed -e '/Predicted flows and steps which will run/q' | tac | grep "^o" | cut -d ' ' -f3 | sed "s/flow_current\.//"))
+        all_steps=()
+        for subflow in ${steps[@]}; do 
+            printf "$subflow\n"
+            cum_str=""
+            substeps=(${subflow//./ })
+            for substep in ${substeps[@]}; do
+                if [ -z $cum_str ]; then
+                    cum_str="$substep"
+                else 
+                    cum_str="$cum_str.$substep"
+                fi
+                all_steps+=($cum_str)
+                printf "\t\t$cum_str\n"
+            done
+        done
+        # Get unique values
+        all_steps=`echo "${all_steps[@]}" | tr ' ' '\n' | sort -u | tr '\n' ' '`
+        # Save to file now
+        echo "$all_steps" > "$FLOW_SUMMARY"
+        # remove tmp file
+        rm "$FLOW_SUMMARY.tmp"
+        # Link to latest
+        ln -sf "$FLOW_SUMMARY" "$WOLF_ENV_DIR/flow.sum.latest"
+    fi
 
     # Finally, call flowtool
     eval "$FLOWTOOL_CMD"
