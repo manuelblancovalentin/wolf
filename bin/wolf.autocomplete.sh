@@ -41,7 +41,7 @@ _wolf () {
       return 0
       ;;
     *)
-       COMPREPLY=($(compgen -W "run env create remove activate deactivate update reload history" -- $cur ) )
+       COMPREPLY=($(compgen -W "run env create remove activate deactivate update reload history --help" -- $cur ) )
        return 0
        ;;
  esac

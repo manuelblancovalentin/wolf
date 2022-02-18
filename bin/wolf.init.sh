@@ -55,6 +55,7 @@ wolf () {
                     echo -e "\t-h, --help\t\tInvokes this dialog.\n"
                     echo "Commands:"
                     echo -e "\trun\t\tInvokes wolf.run (old flows.run) to run a specific digital flow."
+                    return 0
                 else
                     _WOLF_INIT_ARGS_POSITIONAL+=("$1")
                 fi
