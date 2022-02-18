@@ -542,7 +542,7 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
         steps=($(tac "$FLOW_SUMMARY.tmp" | sed -e '/Predicted flows and steps which will run/q' | tac | grep "^o" | cut -d ' ' -f3 | sed "s/flow_current\.//"))
         all_steps=()
         for subflow in ${steps[@]}; do 
-            printf "$subflow\n"
+            #printf "$subflow\n"
             cum_str=""
             substeps=(${subflow//./ })
             for substep in ${substeps[@]}; do
@@ -552,7 +552,7 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
                     cum_str="$cum_str.$substep"
                 fi
                 all_steps+=($cum_str)
-                printf "\t\t$cum_str\n"
+                #printf "\t\t$cum_str\n"
             done
         done
         # Get unique values
