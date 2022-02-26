@@ -6,7 +6,7 @@
 _WOLF_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 _WOLF_DIR=`dirname "$_WOLF_DIR"`
 _WOLF_BIN="${_WOLF_DIR}/bin"
-if [[ ! -d ${_WOLF_BIN} || ! -f "${_WOLF_BIN}/utils" || ! -f "${_WOLF_BIN}/wolf.run" ]]; then
+if [[ ! -d ${_WOLF_BIN} || ! -f "${_WOLF_BIN}/utils" || ! -f "${_WOLF_BIN}/wolf.run" || ! -f "${_WOLF_BIN}/wolf.ipman" || ! -f "${_WOLF_BIN}/wolf.env" ]]; then
     printf "\033[1;7;31m [ERROR] - Invalid installation. Some binary files required to run wolf are either missing or unaccessible. Contact your cadadmin to fix this."
 fi
 
@@ -24,6 +24,11 @@ source "${_WOLF_BIN}/utils"
 # Source wolf.env
 #####################################################################################
 source "${_WOLF_BIN}/wolf.env"
+
+######################################################################################
+# Source wolf.ipman
+#####################################################################################
+source "${_WOLF_BIN}/wolf.ipman"
 
 #####################################################################################
 # MAIN WOLF ALIAS
@@ -61,15 +66,17 @@ wolf () {
                 fi
                 shift
                 ;;
-            run|env|create|remove|activate|deactivate|update|reload|history)
+            run|env|create|remove|activate|deactivate|update|reload|history|ipman)
                 _WOLF_INIT_ARGS_COMMAND="${_WOLF_INIT_ARGS_KEY^^}"
                 shift
                 ;;
         *)    # unknown option
             _WOLF_INIT_ARGS_POSITIONAL+=("$1") # save it in an array for later
-            _WOLF_INIT_ARGS_POSITIONAL+=("$2")
+            if [[ "$2" != "-"* ]]; then
+                _WOLF_INIT_ARGS_POSITIONAL+=("$2")
+                shift # past value
+            fi
             shift # past argument
-            shift # past value
             ;;
         esac
         let _WOLF_INIT_ARGS_INDEX++
@@ -104,6 +111,10 @@ wolf () {
             else
                 ${_WOLF_BIN}/wolf.run "$_WOLF_INIT_ARGS_DEDUCED_ENV_VARS[@]" "${_WOLF_INIT_ARGS_POSITIONAL[@]}"
             fi
+            ;;
+        IPMAN)
+            # Call wolf ip-manager
+            _wolf_ip_manager "${_WOLF_INIT_ARGS_POSITIONAL[@]}"
             ;;
         ENV)
             # Call wolf env 

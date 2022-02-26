@@ -29,11 +29,12 @@ SKIP=false
 PROCESS="TSMC65"
 DESIGN=
 RUNTAG=
+FROM_STEP=
+TO_STEP=
 FEATURES=()
 YAML_TEMPLATE_FILE=
 YAML_SETUP_FILE=
 TIMESTAMP=$(date '+%d/%m/%Y %H:%M:%S');
-
 
 ###########################################
 # Parse flags
@@ -59,6 +60,25 @@ while [[ $# -gt 0 ]]; do
                 echo -e "\t-d, --design \t\tSpecification of the design to be synthesized. Must be one of \"tdsp_core\"\n\t\t\t\t    DEFAULT: tdsp_core"
                 echo -e "\t-f, --conf\t\tSpecify the full path of the template yaml file used to generate the final setup final that will be passed to flowtool.\n\t\t\t\t    DEFAULT: "
                 exit 0
+                ;;
+            -from)
+                # Override -from flag so we can have a greater control of the flow itself.
+                FROM_STEP="$2"
+                shift # pass argument
+                shift # pass value
+                ;;
+            -to)
+                # Override -to flag so we can have a greater control of the flow itself.
+                TO_STEP="$2"
+                shift # pass argument
+                shift # pass value
+                ;;
+            -flow)
+                # Override -from flag so we can have a greater control of the flow itself.
+                FROM_STEP="$2"
+                TO_STEP="$2"
+                shift # pass argument
+                shift # pass value
                 ;;
             -p|--process)
                 PROCESS="$2"
@@ -90,11 +110,14 @@ while [[ $# -gt 0 ]]; do
                 shift # pass argument
                 shift # pass value
                 ;;
+            
         *)    # unknown option
-         POSITIONAL+=("$1") # save it in an array for later
-         POSITIONAL+=("$2")
-         shift # past argument
-         shift # past value
+            POSITIONAL+=("$1") # save it in an array for later
+            if [[ "$2" != "-"* ]]; then
+                POSITIONAL+=("$2")
+                shift # past value
+            fi
+            shift # past argument
          ;;
     esac
 done
@@ -361,6 +384,9 @@ printVars "Inputs" "${vars_to_print[@]}"
 vars_to_print=( "RUNTAG" "RUNDIR" "FEATURES" "SETUP_YAML" "FLOW_YAML" "LOGFILE" "CLEAN" "STATUS" )
 printVars "Flow configurations" "${vars_to_print[@]}"
 
+vars_to_print=( "FROM_STEP" "TO_STEP" )
+printVars "Flow run sequence" "${vars_to_print[@]}"
+
 ## ASK USER IF EVERYTHING LOOKS OKAY, IN CASE -y FLAG WAS NOT PASSED.
 if $SKIP; then
     REPLY="Y"
@@ -502,10 +528,11 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
     # CALL FLOWTOOL
     #######################
     cprintf "\n÷Blue÷÷bold÷ ÷white÷Invoking flowtool with previous configs                                                   ÷÷ \n\n"
+ 
     # Build command
     FLOWTOOL_CMD="flowtool -files "${FLOW_SETUP_OUT_FILE}" -run_tag ${RUNTAG} ${POSITIONAL[@]} -directory ${WORKSPACE_DIR}/${DESIGN_NAME}/${DESIGN_NAME}.${PROCESS} -log $_LOGFILE"
+    
     # Let's also link the latest status 
-
     # Build unique id for this run
     FLOWTOOL_RUN_UUID=$(cat /proc/sys/kernel/random/uuid)
     FLOWTOOL_RUN_UUID=${FLOWTOOL_RUN_UUID,,}
@@ -536,11 +563,19 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
         _wolf_info "Creating new ÷blue÷flow summary file÷÷ and saving to ÷yellow÷\"$WOLF_ENV_DIR/flow.sum.latest\"."
 
         FLOW_SUMMARY="$WOLF_ENV_DIR/runs/$FLOWTOOL_RUN_UUID.flow.sum"
-        flowtool -directory "$WOLF_ENV_DIR/run.latest.d" -files "${FLOW_SETUP_OUT_FILE}" -predict summary > "$FLOW_SUMMARY.tmp"
-        
+        FLOW_STEPS="$WOLF_ENV_DIR/runs/$FLOWTOOL_RUN_UUID.flow.steps"
+        #flowtool -directory "$WOLF_ENV_DIR/run.latest.d" -files "${FLOW_SETUP_OUT_FILE}" -predict summary > "$FLOW_SUMMARY.tmp"
+        flowtool -no_check -no_db -files "${FLOW_SETUP_OUT_FILE}" -predict summary > "$FLOW_SUMMARY.tmp"
+        tac "$FLOW_SUMMARY.tmp" | sed -e '/Predicted flows and steps which will run/q' | tac | tee "$FLOW_SUMMARY.tmp" &> /dev/null
+
+        #flowtool -directory "$WOLF_ENV_DIR/run.latest.d" -files "${FLOW_SETUP_OUT_FILE}" -status > "$FLOW_SUMMARY.tmp"
+        #tail -n +2  "$FLOW_SUMMARY.tmp2" >> "$FLOW_SUMMARY.tmp"
+        #rm -f "$FLOW_SUMMARY.tmp2"
+
         # Link to latest summary
-        steps=($(tac "$FLOW_SUMMARY.tmp" | sed -e '/Predicted flows and steps which will run/q' | tac | grep "^o" | cut -d ' ' -f3 | sed "s/flow_current\.//"))
+        steps=($(cat "$FLOW_SUMMARY.tmp" | grep "^o" | cut -d ' ' -f3 | sed "s/flow_current\.//"))
         all_steps=()
+
         for subflow in ${steps[@]}; do 
             #printf "$subflow\n"
             cum_str=""
@@ -552,6 +587,7 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
                     cum_str="$cum_str.$substep"
                 fi
                 all_steps+=($cum_str)
+                all_steps+=($cum_str)
                 #printf "\t\t$cum_str\n"
             done
         done
@@ -561,15 +597,120 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
         echo "$all_steps" > "$FLOW_SUMMARY"
         # remove tmp file
         rm "$FLOW_SUMMARY.tmp"
+        # Now print steps, sorted, to file 
+        echo ${steps[@]} | tr " " "\n" > "$FLOW_STEPS"
         # Link to latest
         ln -sf "$FLOW_SUMMARY" "$WOLF_ENV_DIR/flow.sum.latest"
+        ln -sf "$FLOW_STEPS" "$WOLF_ENV_DIR/flow.steps.latest"
+        
+        unset all_steps
+        unset steps
+        unset cum_str
+    else
+        FLOW_SUMMARY="$WOLF_ENV_DIR/flow.sum.latest"
+        FLOW_STEPS="$WOLF_ENV_DIR/flow.steps.latest"
     fi
 
-    # Finally, call flowtool
-    eval "$FLOWTOOL_CMD"
+    # Link folder over 
+    #set root_dir [file join [pwd] "xray_imaging/workspace/pixelArray_full_readout/pixelArray_full_readout.TSMC65/pixelArray_full_readout.latest"]
+    #set out_dir [file join $env(HOME) test]
+    # call autorecursivelink.tcl "$root_dir" "$out_dir" ""
+
+    ##############################################################################
+    # LOOP THRU FLOW STEPS
+    #   
+    #   This is so we have greater control over what's being run. You might ask
+    #   why not simply passing this to flowtool, and forget about it? And that's
+    #   a legit question, cause that would be actually the ideal scenario, in case
+    #   flowtool behaved the way I expected it to behave. You see, when I run 
+    #   flowtool with the "-interactive" or "-interactive_run" flag, I expect 
+    #   flowtool to be interactive FOR EACH STEP I WANT TO RUN. That means, if
+    #   I ask flowtool to run from step A to D, I don't only want to have an 
+    #   interactive CLI for the first step (A) -which is the only possible behavior
+    #   offered when running sth like "flowtool -from A -to D"-; instead, I would
+    #   like to have an interactive CL for step A, then once that is done another
+    #   one for step B, and so on and so forth until step D. 
+    #
+    #   This is why this loop here exists. I'm basically checking what the -from
+    #   and the -to steps are, and then calling flowtool individually on each 
+    #   one of them, one after the other. This allows us to have full control of
+    #   each step, instead of just the first one.
+    ##############################################################################
+    # Check FROM and TO steps exist
+    if [[ ! -z $FROM_STEP && ! -z $TO_STEP ]]; then 
+        
+        if ! grep -Fq "$FROM_STEP" "$FLOW_STEPS"; then
+            # code if not found
+            _wolf_error "Flow step \"$FROM_STEP\" could not be found. List of available flow steps is:\n"
+            cat "$FLOW_STEPS"
+            return 1
+        fi
+        if ! grep -Fq "$TO_STEP" "$FLOW_STEPS"; then
+            # code if not found
+            _wolf_error "Flow step \"$TO_STEP\" could not be found. List of available flow steps is:\n"
+            cat "$FLOW_STEPS"
+            return 1
+        fi
+
+        # Count number of fields (separatd by ".")
+        ndots=(`echo "${FROM_STEP}" | awk -F"." '{print NF-1}'` `echo "${TO_STEP}" | awk -F"." '{print NF-1}'`)
+        ndots=`echo ${ndots[@]} | tr ' ' '\n' | sort -nr | head -n1`
+        let ndots++
+
+        STEP_ARRAY=($(cat "$FLOW_STEPS" | cut -d '.' -f 1-$ndots | awk '!a[$0]++' | sed -n "/$FROM_STEP/,/$TO_STEP/p"))
+
+        # Now loop
+        for STEP in ${STEP_ARRAY[@]}; do
+            # build CMD to call flowtool 
+            FLOWTOOL_CMD="flowtool\n  -files "${FLOW_SETUP_OUT_FILE}"\n  -run_tag ${RUNTAG}\n  -from ${STEP}\n  -to ${STEP}\n  ${POSITIONAL[@]}\n  -directory ${WORKSPACE_DIR}/${DESIGN_NAME}/${DESIGN_NAME}.${PROCESS}\n  -log $_LOGFILE"
+
+            ## ASK USER IF EVERYTHING LOOKS OKAY, IN CASE -y FLAG WAS NOT PASSED.
+            if $SKIP; then
+                REPLY="Y"
+            else   
+                echo ""
+                cprintf "÷Red÷ Proceed with flow step $STEP and call flowtool now or exit? ÷÷"
+                read -p "[y/N]:" -n 1 -r
+                printf "\n"  # (optional) move to a new line
+            fi
+            if [[ $REPLY =~ ^[Yy]$ ]]; then
+                _wolf_info "Now running $STEP: \n÷Blue÷÷white÷$FLOWTOOL_CMD÷÷\n"
+
+                # Finally, call flowtool
+                #eval "$FLOWTOOL_CMD"
+                flowtool \
+                    -files "${FLOW_SETUP_OUT_FILE}" \
+                    -run_tag ${RUNTAG} \
+                    -from ${STEP} \
+                    -to ${STEP} \
+                    ${POSITIONAL[@]} \
+                    -directory ${WORKSPACE_DIR}/${DESIGN_NAME}/${DESIGN_NAME}.${PROCESS} \
+                    -log $_LOGFILE
+
+                if [[ $? -ne 0 ]]; then 
+                    # There was an error, stop now
+                    _wolf_error "Error in the flow detected. Stopping sequence."
+                    exit 1
+                fi
+            else
+                cprintf "÷Red÷ Exiting wolf now ÷÷"
+                exit 0
+            fi
+
+        done
+        
+    fi
+
 
     unset FLOWTOOL_RUN_UUID
     unset FLOWTOOL_CMD
+    unset FLOW_STEPS
+    unset FLOW_SUMMARY
+    unset STEP
+    unset STEP_ARRAY
+    unset ndots
+    unset TO_STEP
+    unset FROM_STEP
 
 fi
 

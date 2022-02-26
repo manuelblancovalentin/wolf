@@ -25,6 +25,10 @@ _wolf () {
       COMPREPLY=($(compgen -W "-from -to -interactive -interactive_run -predict -status -db -dist -run_tag -branch -directory -display -enabled -files -flow -inject_tcl -isolate -metrics_file -no_check -no_gui -no_db -ref_run -reset -simple_output -verbose -version" -- $cur ) )
       return 0
       ;;
+   ipman)
+      COMPREPLY=( $( compgen -W "list --help" -- $cur ) )
+       return 0
+       ;;
    -from|-to|-flow)
       COMPREPLY=()
       if [ -z  $WOLF_ENV_DIR ]; then 
@@ -41,7 +45,7 @@ _wolf () {
       return 0
       ;;
     *)
-       COMPREPLY=($(compgen -W "run env create remove activate deactivate update reload history --help" -- $cur ) )
+       COMPREPLY=($(compgen -W "run env create remove activate deactivate update reload history --help ipman" -- $cur ) )
        return 0
        ;;
  esac

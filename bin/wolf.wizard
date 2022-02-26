@@ -1,0 +1,50 @@
+#!/bin/bash
+# whiptail ref: https://www.xmodulo.com/create-dialog-boxes-interactive-shell-script.html
+
+function display_file () {
+    file_in="$1"
+    dialog --stdout --scrollbar --textbox "$1" 0 0
+}
+
+function set_dont_use_cells() {
+    cells=(`grep -E "cell \(\w+\)" /asic/Library/TSMC/TSMC65_Merged/Digital/Front_End/timing_power_noise/ECSM/tcbn65lp_200a/tcbn65lpwcl_ecsm.lib | sed 's/^.*cell (//' | awk '{print $1}' | sed 's/)//' | sort -u`)
+    num_cells="${#cells[@]}"
+    index_cells=(`seq 0 1 $(($num_cells - 1))`)
+    listing=()
+    for (( i=0; i<$num_cells; i++ ))
+    do 
+        listing+=($i)
+        listing+=(${cells[$i]})
+        listing+=(on)
+    done
+
+    #_WOLF_WIZ_ARGS_DONT_USE_LIST=`whiptail --scrolltext --title "Don't use cells" --checklist "Choose don't use cells for lib ..." $LINES $COLUMNS 40 ${listing[@]::120} 3>&1 1>&2 2>&3`
+
+    _WOLF_WIZ_ARGS_DONT_USE_LIST=$(dialog --stdout --checklist "Cells to use:" 0 0 0 ${listing[@]})
+    clear
+
+    # Invert selection
+    _WOLF_WIZ_ARGS_DONT_USE_LIST=`echo ${index_cells[@]} ${_WOLF_WIZ_ARGS_DONT_USE_LIST[@]} | tr ' ' '\n' | sort -n | uniq -u`
+
+    DONT_USE_LIST=()
+    for duc in ${_WOLF_WIZ_ARGS_DONT_USE_LIST[@]}; do
+        DONT_USE_LIST+=(${cells[$duc]})
+    done
+    echo "dont_use list: ${DONT_USE_LIST[@]}"
+}
+
+
+# display mapfile exmaple:
+display_file "/asic/Library/TSMC/TSMC65_Merged/PDK/V1.7A_1/1p9m6x1z1u/mapfile"
+
+# display layermap
+display_file "/asic/Library/TSMC/TSMC65_Merged/PDK/V1.7A_1/1p9m6x1z1u/tsmcN65/tsmcN65.layermap"
+
+# display techfile
+display_file "/asic/Library/TSMC/TSMC65_Merged/PDK/V1.7A_1/1p9m6x1z1u/techfile"
+
+# dev list
+display_file "/asic/Library/TSMC/TSMC65_Merged/PDK/V1.7A_1/1p9m6x1z1u/Techfile/dev.list"
+
+
+

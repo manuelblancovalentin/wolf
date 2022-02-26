@@ -12,7 +12,7 @@ _WOLF_white="\033[38m"
 _WOLF_green="\033[32m"
 
 
-######################
+#####################################################################################
 # HEADERS
 #   Generated using: https://fsymbols.com/generators/carty/
 #####################################################################################
@@ -52,10 +52,23 @@ _WOLF_RUN_HEADER="
 "
 _WOLF_RUN_HEADER="${_WOLF_RUN_HEADER//░/${_WOLF_purple}░÷÷}"
 
+_WOLF_IPMAN_HEADER="
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+░░░██╗░░░░░░░██╗░█████╗░██╗░░░░░███████╗░░░██╗██████╗░░░░░░░███╗░░░███╗░█████╗░███╗░░██╗░░░
+░░░██║░░██╗░░██║██╔══██╗██║░░░░░██╔════╝░░░██║██╔══██╗░░░░░░████╗░████║██╔══██╗████╗░██║░░░
+░░░╚██╗████╗██╔╝██║░░██║██║░░░░░█████╗░░░░░██║██████╔╝█████╗██╔████╔██║███████║██╔██╗██║░░░
+░░░░████╔═████║░██║░░██║██║░░░░░██╔══╝░░░░░██║██╔═══╝░╚════╝██║╚██╔╝██║██╔══██║██║╚████║░░░
+░░░░╚██╔╝░╚██╔╝░╚█████╔╝███████╗██║░░░░░██╗██║██║░░░░░░░░░░░██║░╚═╝░██║██║░░██║██║░╚███║░░░
+░░░░░╚═╝░░░╚═╝░░░╚════╝░╚══════╝╚═╝░░░░░╚═╝╚═╝╚═╝░░░░░░░░░░░╚═╝░░░░░╚═╝╚═╝░░╚═╝╚═╝░░╚══╝░░░
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+"
+_WOLF_IPMAN_HEADER="${_WOLF_IPMAN_HEADER//░/${_WOLF_purple}░÷÷}"
+
+
 # VARS TO IGNORE:
 _WOLF_VARS_TO_IGNORE=(BASH_ARGV BASH_LINENO BASH_SOURCE BASH_REMATCH BASH_ _WOLF_DIR _WOLF_BIN _WOLF_HEADER \
 _WOLF_purple _WOLF_Purple _WOLF_blue _WOLF_white _WOLF_bold _WOLF_reset _WOLF_green \
-_WOLF_ENV_HEADER _WOLF_RUN_HEADER _WOLF_HLINE \
+_WOLF_ENV_HEADER _WOLF_RUN_HEADER _WOLF_IPMAN_HEADER _WOLF_HLINE \
 _WOLF_HOR_DASH _WOLF_TAB_VERT_NOCROSS _WOLF_TAB_VERT_CROSSRIGHT _WOLF_TAB_VERT_CORNERRIGHT _WOLF_TAB_CROSS_DOWN \
 _WOLF_ARC_UPRIGHT _WOLF_ARC_DOWNRIGHT _WOLF_ARROWHEAD_RIGHT _WOLF_ARROWHEAD_LEFT _WOLF_QUAD0 _WOLF_QUAD1 \
 _WOLF_UNI_HLINE cprintf _wolf_entry _wolf_ok _wolf_info _wolf_error printVars get_next_indexed_file \
@@ -63,6 +76,7 @@ get_next_indexed_dir get_max_indexed_dir vectorize \
 _WOLF_ENV_DIR _WOLF_ENVS_LIST _WOLF_HISTORY_KEY_CMD printed _WOLF_HISTORY_KEY_DATE \
 _WOLF_ENV_ARGS_COMMAND _WOLF_ENV_ARGS_NAME _WOLF_ENV_ARGS_UPDATE_BUCKET _WOLF_ENV_ARGS_BUCKET_LIST \
 _WOLF_ENV_ARGS_POSITIONAL _WOLF_ENV_ARGS_KEY _WOLF_ENV_ARGS_NUM_ENVS _WOLF_ENV_ARGS_ENV_FOLDER \
+_WOLF_IP_DIR _WOLF_IP_LIST _WOLF_IPMAN_ARGS_COMMAND _WOLF_IPMAN_ARGS_NAME _WOLF_IPMAN_ARGS_KEY _WOLF_IPMAN_ARGS_NUM_IPS \
 _WOLF_ACT_ENV_FILE _WOLF_UPDATE_ENV_FILE _WOLF_DEACT_ENV_FILE \
 _WOLF_INIT_ARGS_COMMAND _WOLF_INIT_ARGS_POSITIONAL _WOLF_INIT_ARGS_INDEX \
 _WOLF_INIT_ARGS_KEY _WOLF_INIT_ARGS_DEDUCED_ENV_VARS _WOLF_INIT_ARGS_CMD _WOLF_VARS_TO_IGNORE \
