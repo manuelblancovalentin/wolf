@@ -66,7 +66,7 @@ wolf () {
                 fi
                 shift
                 ;;
-            run|env|create|remove|activate|deactivate|update|reload|history|ipman)
+            run|env|create|remove|activate|deactivate|update|reload|history|ipman|track)
                 _WOLF_INIT_ARGS_COMMAND="${_WOLF_INIT_ARGS_KEY^^}"
                 shift
                 ;;
@@ -143,6 +143,29 @@ wolf () {
         RELOAD)
             # Call wolf env 
             _wolf_env reload "$WOLF_ENV_NAME" "${_WOLF_INIT_ARGS_POSITIONAL[@]}"
+            ;;
+        TRACK)
+            # print processes
+            _WOLF_TRACKER_DIR="${HOME}/.wolf/tracker"
+            if [[ ! -d "$_WOLF_TRACKER_DIR" && ! -L "$_WOLF_TRACKER_DIR" ]]; then 
+                _wolf_info "First runtime detected. Creating wolf tracker dir at ÷yellow÷\"$_WOLF_TRACKER_DIR\"÷÷"
+                mkdir -p "$_WOLF_TRACKER_DIR"
+            fi
+            
+            # Get list of pid files currently present
+            pid_files=`ls ${_WOLF_TRACKER_DIR}/*.pid`
+            pids=`ls ${_WOLF_TRACKER_DIR}/*.pid | xargs -I{} cat {}`
+            if [[ ${#pids[@]} -gt 0 ]]; then 
+                cprintf "$_WOLF_HEADER\n"
+                cprintf "÷Blue÷÷bold÷ ÷white÷Active wolf processes running as of now                                                   ÷÷ \n"
+            fi
+            for (( iip=0; iip<${#pids[@]}; iip++ ))
+            do 
+                cprintf "÷invert÷÷bold÷ RUN UUID: ${pid_files[iip]}          "
+                cprintf "÷invert÷\033[K\n"
+                top -p ${pids[iip]} -n 1 | grep -B 1 ${pids[iip]}
+            done
+            echo ""
             ;;
         HISTORY)
              # Call wolf env 

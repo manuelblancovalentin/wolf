@@ -659,6 +659,13 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
 
         STEP_ARRAY=($(cat "$FLOW_STEPS" | cut -d '.' -f 1-$ndots | awk '!a[$0]++' | sed -n "/$FROM_STEP/,/$TO_STEP/p"))
 
+        # Make sure TRACKER exists to keep track of pids
+        _WOLF_TRACKER_DIR="${HOME}/.wolf/tracker"
+        if [[ ! -d "$_WOLF_TRACKER_DIR" && ! -L "$_WOLF_TRACKER_DIR" ]]; then 
+            _wolf_info "First runtime detected. Creating wolf tracker dir at ÷yellow÷\"$_WOLF_TRACKER_DIR\"÷÷"
+            mkdir -p "$_WOLF_TRACKER_DIR"
+        fi
+
         # Now loop
         for STEP in ${STEP_ARRAY[@]}; do
             # build CMD to call flowtool 
@@ -674,18 +681,37 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
                 printf "\n"  # (optional) move to a new line
             fi
             if [[ $REPLY =~ ^[Yy]$ ]]; then
-                _wolf_info "Now running $STEP: \n÷Blue÷÷white÷$FLOWTOOL_CMD÷÷\n"
+                _wolf_info "Now running $STEP: \n÷white÷÷Blue÷$FLOWTOOL_CMD÷÷\n"
+
+                # Before calling, let's lock the PID so we know forehand the PID of the process we are
+                # about to launch
+                #_WOLF_ACT_LAST_PID=`cat /proc/sys/kernel/ns_last_pid`
+                #let _WOLF_ACT_LAST_PID++
+                #let _WOLF_ACT_LAST_PID++
+                #(
+                #    flock -xn 200
+                #    #trap "rm $_WOLF_TRACKER_DIR/$FLOWTOOL_RUN_UUID.pid" 0
+                #    RETVAL=$?
+                #    if [ $RETVAL -eq 1 ] ; then
+                #        echo $RETVAL
+                #        exit 1
+                #    else
+                #        echo "$_WOLF_ACT_LAST_PID" > "/proc/sys/kernel/ns_last_pid"
+                #    fi
+                #) 200>"/proc/sys/kernel/ns_last_pid"
+
+                #touch "$_WOLF_TRACKER_DIR/$FLOWTOOL_RUN_UUID.pid"
+                #echo "$_WOLF_ACT_LAST_PID" > "$_WOLF_TRACKER_DIR/$FLOWTOOL_RUN_UUID.pid"
+
+                # Inject tcl for PID record
+
 
                 # Finally, call flowtool
                 #eval "$FLOWTOOL_CMD"
-                flowtool \
-                    -files "${FLOW_SETUP_OUT_FILE}" \
-                    -run_tag ${RUNTAG} \
-                    -from ${STEP} \
-                    -to ${STEP} \
-                    ${POSITIONAL[@]} \
-                    -directory ${WORKSPACE_DIR}/${DESIGN_NAME}/${DESIGN_NAME}.${PROCESS} \
-                    -log $_LOGFILE
+                _WOLF_TRACKER_INJECT_TCL="exec echo \"[pid]\" > $_WOLF_TRACKER_DIR/$FLOWTOOL_RUN_UUID.pid"
+                flowtool -files "${FLOW_SETUP_OUT_FILE}" -run_tag ${RUNTAG} -inject_tcl "$_WOLF_TRACKER_INJECT_TCL" -from ${STEP} -to ${STEP} ${POSITIONAL[@]} -directory ${WORKSPACE_DIR}/${DESIGN_NAME}/${DESIGN_NAME}.${PROCESS} -log $_LOGFILE
+                # Remove pid file
+                rm -f "$_WOLF_TRACKER_DIR/$FLOWTOOL_RUN_UUID.pid"
 
                 if [[ $? -ne 0 ]]; then 
                     # There was an error, stop now
@@ -711,6 +737,7 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
     unset ndots
     unset TO_STEP
     unset FROM_STEP
+    unset _WOLF_TRACKER_INJECT_TCL
 
 fi
 

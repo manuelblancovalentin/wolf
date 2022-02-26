@@ -34,6 +34,7 @@ TODO
 
 - `run`: Run a flow.
 - `env`: Manipulates, lists and creates wolf environments, which can be used later for flow recreation.
+- `track`: Display active wolf processes.
 
 ### Wolf.run
 
