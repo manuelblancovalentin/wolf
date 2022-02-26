@@ -137,3 +137,97 @@ Now update the wolf environment to save the changes. And reload the environment.
 |wolf:pixelAI| foo@bar:~$ wolf env reload
 ```
 
+## Ip-manager
+What is this used for?
+```
+TODO
+```
+
+#### Install a library/process
+```
+TODO
+```
+Define corners, opconds, voltages,...
+
+- Device map
+- Objectmap
+- Layermap path
+- Techfile path
+- qrcTechfile path
+- Voltages/Temp ranges
+
+
+#### PDK/Digital libs
+```
+TODO
+```
+
+#### Query information about the library
+LEFS
+```
+TODO
+```
+GDS
+```
+TODO
+```
+SPICE
+```
+TODO
+```
+VERILOG
+```
+TODO
+```
+
+## Wizard
+What can you setup using the wizard?
+
+#### RTL/inputs
+Setup and point to the code required for the flow
+
+#### Technology/Process
+Pick process to be used among installed ips 
+
+- TSMC 28nm
+- TSMC 65nm
+- GF 22nm
+- etc.
+
+#### MMMC config
+- Library sets
+- Op conds
+- Timing conditions
+- RC corners
+- Delay corners
+- Constraint modes
+- Analysis views
+
+
+![mmmc.png](mmmc.png)
+
+
+![mmmc2.png](mmmc2.png)
+
+#### Cells
+ - Don't use. A window in the command line line below, where the user can pick which cells not to use.
+```bash
+
+    ┌────────────────────────────────────────────── Choose cells to use  ────────────────────────────────────────────────┐
+    │                                                                                                                    │
+    │────────────────────────────────────────────────────────────────────────────────────────────────────────────────────│
+    │ [x] CKND1                                                                                                          │  
+    │ [x] CKND2                                                                                                          │ 
+    │ [x] CKND4                                                                                                          │ 
+    │ [ ] CFDN1                                                                                                          │ 
+    │ [ ] CFDN2                                                                                                          │
+    │ [ ] ...                                                                                                            │
+```
+
+
+#### Calibre DRC/LVS
+- Point to custom LVS rulefiles to be added for nmLVS
+  - setup.yaml: `user_lvs_rulefiles` 
+- Point to custom DRC rulefiles to be added for DRC
+  - setup.yaml: `user_drc_rulefiles` 
+
