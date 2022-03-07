@@ -29,6 +29,10 @@ _wolf () {
       COMPREPLY=( $( compgen -W "list --help" -- $cur ) )
        return 0
        ;;
+   update)
+      COMPREPLY=( $( compgen -W "--bucket" -- $cur ) )
+       return 0
+       ;;
    -from|-to|-flow)
       COMPREPLY=()
       if [ -z  $WOLF_ENV_DIR ]; then 
@@ -45,7 +49,7 @@ _wolf () {
       return 0
       ;;
     *)
-       COMPREPLY=($(compgen -W "run track env create remove activate deactivate update reload history --help ipman" -- $cur ) )
+       COMPREPLY=($(compgen -W "run track env create remove activate deactivate update reload history --help ipman set" -- $cur ) )
        return 0
        ;;
  esac

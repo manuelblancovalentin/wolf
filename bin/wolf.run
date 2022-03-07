@@ -480,7 +480,8 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
                 ["DESIGN_NAME"]="$DESIGN_NAME" \
                 ["FLOORPLAN_FILE"]="$_FLOORPLAN_FILE" \
                 ["FLOORPLAN_IO_FILE"]="$_FLOORPLAN_IO_FILE" \
-                ["VTHS"]="${VTHS}"
+                ["VTHS"]="${VTHS}"\
+                ["TRACKS"]="${TRACKS}"
     )
 
     file="$YAML_SETUP_OUT_FILE"
@@ -667,18 +668,34 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
         fi
 
         # Now loop
+        steps_run=0
         for STEP in ${STEP_ARRAY[@]}; do
             # build CMD to call flowtool 
             FLOWTOOL_CMD="flowtool\n  -files "${FLOW_SETUP_OUT_FILE}"\n  -run_tag ${RUNTAG}\n  -from ${STEP}\n  -to ${STEP}\n  ${POSITIONAL[@]}\n  -directory ${WORKSPACE_DIR}/${DESIGN_NAME}/${DESIGN_NAME}.${PROCESS}\n  -log $_LOGFILE"
 
             ## ASK USER IF EVERYTHING LOOKS OKAY, IN CASE -y FLAG WAS NOT PASSED.
-            if $SKIP; then
-                REPLY="Y"
-            else   
-                echo ""
-                cprintf "÷Red÷ Proceed with flow step $STEP and call flowtool now or exit? ÷÷"
-                read -p "[y/N]:" -n 1 -r
-                printf "\n"  # (optional) move to a new line
+            if [ $steps_run -gt 0 ]; then 
+                if [[ $? =~ "Flow failed" ]]; then
+                    REPLY="N"
+                else 
+                    if $SKIP; then
+                        REPLY="Y"
+                    else   
+                        echo ""
+                        cprintf "÷Red÷ Proceed with flow step ÷invert÷$STEP÷÷÷Red÷ and call flowtool now or exit? ÷÷"
+                        read -p "[y/N]:" -n 1 -r
+                        printf "\n"  # (optional) move to a new line
+                    fi
+                fi
+            else 
+                if $SKIP; then
+                    REPLY="Y"
+                else   
+                    echo ""
+                    cprintf "÷Red÷ Proceed with flow step ÷invert÷$STEP÷÷÷Red÷ and call flowtool now or exit? ÷÷"
+                    read -p "[y/N]:" -n 1 -r
+                    printf "\n"  # (optional) move to a new line
+                fi
             fi
             if [[ $REPLY =~ ^[Yy]$ ]]; then
                 _wolf_info "Now running $STEP: \n÷white÷÷Blue÷$FLOWTOOL_CMD÷÷\n"

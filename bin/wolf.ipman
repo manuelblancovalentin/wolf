@@ -197,6 +197,59 @@ _wolf_ip_manager () {
 #   - GET ALL CELLS FROM LIB FILE:
 #       grep -E "cell \(\w+\)" /asic/Library/TSMC/TSMC65_Merged/Digital/Front_End/timing_power_noise/ECSM/tcbn65lp_200a/tcbn65lpwcl_ecsm.lib | sed 's/^.*cell (//' | awk '{print $1}' | sed 's/)//' | sort -u
 #
+#   - GET ALL TEMPERATURES AVAILABLE:
+#       find /asic/Library/TSMC/TSMC65_Merged/Digital/Front_End/timing_power_noise/ECSM -type f -name *.lib | xargs -I{} grep -Er "nom_temperature" {} | cut -d " " -f 7 | sed 's/;//g' | sort -un
+#
+#   - GET ALL NOM_VOLTAGES AVAILABLE:
+#       find /asic/Library/TSMC/TSMC65_Merged/Digital/Front_End/timing_power_noise/ECSM -type f -name *.lib | xargs -I{} grep -Er "nom_voltage" {} | cut -d " " -f 7 | sed 's/;//g' | sort -un
+#
+#   - GENERATE A YAML LIST OF ALL LIBRARIES (LIB FILES) FOR TIMING, ETC.
+#   root_lib_dir="/asic/Library/TSMC/TSMC65_Merged/Digital/Front_End/timing_power_noise/ECSM"
+    # declare -A temps=(
+    #     [M40C]="-40" 
+    #     [0C]="0"
+    #     [25C]="25"
+    #     [125C]="125"
+    # )
+
+    # declare -A voltages=(
+    #     [0P90V]="0\.9"
+    #     [1P00V]="1\.0"
+    #     [1P08V]="1\.08"
+    #     [1P10V]="1\.1"
+    #     [1P20V]="1\.2"
+    #     [1P32V]="1\.32"
+    # )
+
+    # declare -A vts=(
+    #     [hvt]="hvt"
+    #     [rvt]=""
+    #     [lvt]="lvt"
+    # )
+
+    # declare -A tracks=(
+    #     [7T]="tcbn65lpbwp7t"
+    #     [9T]="tcbn65lp"
+    #     [12T]="tcbn65lpbwp12t"
+    # )
+
+    # printf "library_sets:\n"
+    # for v in "${!voltages[@]}"; do 
+    #     for t in "${!temps[@]}"; do 
+    #         printf "  PVT_${v}_${t}:\n"
+    #         for trk in "${!tracks[@]}"; do
+    #             printf "    ${trk}:\n"
+    #             for vth in "${!vts[@]}"; do
+    #                 printf "      ${vth}:\n"
+    #                 #echo "searching for *${tracks[$trk]}${vts[$vth]}*.lib: temperature ${temps[$t]}  &  nom_voltage ${voltages[$v]//\\/}"
+    #                 find $root_lib_dir -type d -name "*${tracks[$trk]}${vts[$vth]}\_*" | xargs -I{} find {} -type f -name "*${tracks[$trk]}${vts[$vth]}*.lib" | xargs -I{} grep -Eol "nom_voltage.*${voltages[$v]}" {} | xargs -I{} grep -Eol "nom_temperature.*${temps[$t]}" {} | xargs -I{} printf "        {}\n"
+    #             done
+    #         done
+    #     done
+    # done
+#
+#
+#
 ##############################################
 # VERILOG UTILS
 #   - GET ALL MODULES FROM A VERILOG FILE:
@@ -218,3 +271,7 @@ _wolf_ip_manager () {
 #
 
 
+# WOLF-IPMAN object structure (yaml style):
+#   Structural recursivity is the key!! 
+#   <LIBRARY_NAME>:
+#    

@@ -13,7 +13,3 @@ if [[ -f "$WOLF_ENV_DIR/bucket.p" || -L "$WOLF_ENV_DIR/bucket.p" ]]; then
   source "$WOLF_ENV_DIR/bucket.p"
 fi
 
-# Auto generate vars now 
-if [[ -f "$WOLF_ENV_DIR/update" ]]; then
-  source "$WOLF_ENV_DIR/update"
-fi
