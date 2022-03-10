@@ -26,7 +26,7 @@ cprintf "$_WOLF_RUN_HEADER\n"
 ##########################################
 CLEAN=false
 SKIP=false
-PROCESS="TSMC65"
+PROCESS=
 DESIGN=
 RUNTAG=
 FROM_STEP=
@@ -85,7 +85,7 @@ while [[ $# -gt 0 ]]; do
                 shift
                 shift
                 ;;
-            -t|--runtag)
+            --runtag)
                 RUNTAG="$2"
                 shift
                 shift
@@ -122,28 +122,6 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 set -- "${POSITIONAL[@]}" # restore positional parameters
-
-
-#############################################
-# Setup vars according to PROCESS
-#
-############################################
-cprintf "\r÷Blue÷÷bold÷ ÷white÷Pre-tasks                                                                                 ÷÷ \n\n"
-case $PROCESS in
-    TSMC65)
-        export PROCESS_TECH="TSMC65"
-        export PROCESS_SIZE="65nm"
-        # Source env vars
-        source "/asic/Library/TSMC/TSMC65_LP/TSMC65nmBashProfile.csh" > /dev/null
-        PROCESS_SCRIPTS="$TSMC65_PROCESS_SCRIPTS"
-        PROCESS_FLOW_TEMPLATE="${TSMC65_STYLUS_FLOW_TEMPLATE}"
-        PROCESS_SETUP_TEMPLATE="${TSMC65_STYLUS_SETUP_TEMPLATE}"
-        ;;
-    *)
-        echo "Unknown process option. Valid options are: TSMC65"
-        exit 1
-        ;;
-esac
 
 
 ###########################################
@@ -187,9 +165,11 @@ esac
 ###############################################################################
 cmd="find ${WORKSPACE_DIR}/${DESIGN_NAME}/${DESIGN_NAME}.${PROCESS} -maxdepth 1 -regextype posix-extended -regex '^.*${DESIGN_NAME}\.([0-9])*$' -exec basename {} \; 2>/dev/null | grep -o "[0-9]*" | sort -n | tail -1"
 max_index=`eval "$cmd"`
+OVERRIDE_RUNTAG=false
 if [[ -z $RUNTAG ]]; then
     RUNTAG=${DESIGN_NAME}
 else
+    OVERRIDE_RUNTAG=true
     if [[ ! -d ${WORKSPACE_DIR}/${DESIGN_NAME}/${DESIGN_NAME}.${PROCESS}/$RUNTAG && ! -L ${WORKSPACE_DIR}/${DESIGN_NAME}/${DESIGN_NAME}.${PROCESS}/$RUNTAG ]] ; then 
         CLEAN=true
     fi
@@ -207,13 +187,12 @@ if ! [[ $max_index ]]; then
     fi
 fi
 
-
 ###############################################################################
 # Fix RUNTAG according to CLEAN flag
 ###############################################################################
 if $CLEAN ; then
     let max_index++
-    if [[ $max_index -gt 0 ]] ; then
+    if [ $max_index -gt 0 ] && [ $OVERRIDE_RUNTAG == false ] ; then
         RUNTAG=$RUNTAG.$max_index
     fi   
       
@@ -223,7 +202,7 @@ if $CLEAN ; then
     #ln -s ${FLOORPLANS_DIR}/$DESIGN_NAME.fp ${WORKSPACE_DIR}/${DESIGN_NAME}/$RUNTAG/$DESIGN_NAME.fp
     #ln -s ${FLOORPLANS_DIR}/$DESIGN_NAME.fp.spr ${WORKSPACE_DIR}/${DESIGN_NAME}/$RUNTAG/$DESIGN_NAME.fp.spr
 else
-    if [[ $max_index -gt 0 ]] ; then
+    if [ $max_index -gt 0 ] && [ $OVERRIDE_RUNTAG == false ] ; then
         RUNTAG=$RUNTAG.$max_index
     fi    
     _wolf_info "Picking previously defined ÷blue÷flow run ÷yellow÷\"${WORKSPACE_DIR}/${DESIGN_NAME}/${DESIGN_NAME}.${PROCESS}/$RUNTAG\" "
@@ -560,53 +539,67 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
     ln -sf "${WORKSPACE_DIR}/${DESIGN_NAME}/${DESIGN_NAME}.${PROCESS}/${RUNTAG}" "$WOLF_ENV_DIR/run.latest.d"
 
     # Get flow steps for later reference by wolf
-    if [[ $COPY_SCRIPTS_OVER || ! -L "$WOLF_ENV_DIR/flow.sum.latest" ]]; then
+    if [[ $CLEAN || $COPY_SCRIPTS_OVER || ! -L "$WOLF_ENV_DIR/flow.sum.latest" ]]; then
         _wolf_info "Creating new ÷blue÷flow summary file÷÷ and saving to ÷yellow÷\"$WOLF_ENV_DIR/flow.sum.latest\"."
 
         FLOW_SUMMARY="$WOLF_ENV_DIR/runs/$FLOWTOOL_RUN_UUID.flow.sum"
         FLOW_STEPS="$WOLF_ENV_DIR/runs/$FLOWTOOL_RUN_UUID.flow.steps"
-        #flowtool -directory "$WOLF_ENV_DIR/run.latest.d" -files "${FLOW_SETUP_OUT_FILE}" -predict summary > "$FLOW_SUMMARY.tmp"
-        flowtool -no_check -no_db -files "${FLOW_SETUP_OUT_FILE}" -predict summary > "$FLOW_SUMMARY.tmp"
-        tac "$FLOW_SUMMARY.tmp" | sed -e '/Predicted flows and steps which will run/q' | tac | tee "$FLOW_SUMMARY.tmp" &> /dev/null
+        #echo $FLOW_SUMMARY
+        #echo $FLOW_STEPS
+        # Create temp file with flow steps
+        grep -Pzo 'flows:(.*\n)*' $FLOW_SETUP_OUT_FILE | sed '/^[[:space:]]*$/d' | sed 's/\t/  /g' | sed '/^#/d' | sed '/enabled:/d' | sed '/args:/d' | sed '/features:/d' | awk -F':' '{print $1":"}' | tee "$FLOW_SUMMARY.tmp" > /dev/null
+        # Remove last line (which contains an invalid character)
+        sed -i '$ d' $FLOW_SUMMARY.tmp
 
+        # Parse with python
+        steps=`python3 "${WOLF_BIN}/flow_yaml_parser.py" "$FLOW_SUMMARY.tmp"`
+        echo "${steps[@]}" | tr ' ' '\n' > "$FLOW_STEPS"
+        echo "${steps[@]}" | tr ' ' '\n' | sort -u | tr '\n' ' ' > "$FLOW_SUMMARY"
+        #rm "$FLOW_SUMMARY.tmp"
+        #echo "${steps[@]}"
+
+        #flowtool -directory "$WOLF_ENV_DIR/run.latest.d" -files "${FLOW_SETUP_OUT_FILE}" -predict summary > "$FLOW_SUMMARY.tmp"
+        #flowtool -no_check -no_db -files "${FLOW_SETUP_OUT_FILE}" -predict summary > "$FLOW_SUMMARY.tmp"
+        #tac "$FLOW_SUMMARY.tmp" | sed -e '/Predicted flows and steps which will run/q' | tac | tee "$FLOW_SUMMARY.tmp" &> /dev/null
+ 
         #flowtool -directory "$WOLF_ENV_DIR/run.latest.d" -files "${FLOW_SETUP_OUT_FILE}" -status > "$FLOW_SUMMARY.tmp"
         #tail -n +2  "$FLOW_SUMMARY.tmp2" >> "$FLOW_SUMMARY.tmp"
         #rm -f "$FLOW_SUMMARY.tmp2"
 
         # Link to latest summary
-        steps=($(cat "$FLOW_SUMMARY.tmp" | grep "^o" | cut -d ' ' -f3 | sed "s/flow_current\.//"))
-        all_steps=()
+        #steps=($(cat "$FLOW_SUMMARY.tmp" | grep "^o" | cut -d ' ' -f3 | sed "s/flow_current\.//"))
+        #all_steps=()
 
-        for subflow in ${steps[@]}; do 
-            #printf "$subflow\n"
-            cum_str=""
-            substeps=(${subflow//./ })
-            for substep in ${substeps[@]}; do
-                if [ -z $cum_str ]; then
-                    cum_str="$substep"
-                else 
-                    cum_str="$cum_str.$substep"
-                fi
-                all_steps+=($cum_str)
-                all_steps+=($cum_str)
-                #printf "\t\t$cum_str\n"
-            done
-        done
-        # Get unique values
-        all_steps=`echo "${all_steps[@]}" | tr ' ' '\n' | sort -u | tr '\n' ' '`
-        # Save to file now
-        echo "$all_steps" > "$FLOW_SUMMARY"
-        # remove tmp file
-        rm "$FLOW_SUMMARY.tmp"
-        # Now print steps, sorted, to file 
-        echo ${steps[@]} | tr " " "\n" > "$FLOW_STEPS"
+        # for subflow in ${steps[@]}; do 
+        #     #printf "$subflow\n"
+        #     cum_str=""
+        #     substeps=(${subflow//./ })
+        #     for substep in ${substeps[@]}; do
+        #         if [ -z $cum_str ]; then
+        #             cum_str="$substep"
+        #         else 
+        #             cum_str="$cum_str.$substep"
+        #         fi
+        #         all_steps+=($cum_str)
+        #         all_steps+=($cum_str)
+        #         #printf "\t\t$cum_str\n"
+        #     done
+        # done
+        # # Get unique values
+        # all_steps=`echo "${all_steps[@]}" | tr ' ' '\n' | sort -u | tr '\n' ' '`
+        # # Save to file now
+        # echo "$all_steps" > "$FLOW_SUMMARY"
+        # # remove tmp file
+        # rm "$FLOW_SUMMARY.tmp"
+        # # Now print steps, sorted, to file 
+        # echo ${steps[@]} | tr " " "\n" > "$FLOW_STEPS"
         # Link to latest
         ln -sf "$FLOW_SUMMARY" "$WOLF_ENV_DIR/flow.sum.latest"
         ln -sf "$FLOW_STEPS" "$WOLF_ENV_DIR/flow.steps.latest"
         
-        unset all_steps
+        #unset all_steps
         unset steps
-        unset cum_str
+        #unset cum_str
     else
         FLOW_SUMMARY="$WOLF_ENV_DIR/flow.sum.latest"
         FLOW_STEPS="$WOLF_ENV_DIR/flow.steps.latest"
