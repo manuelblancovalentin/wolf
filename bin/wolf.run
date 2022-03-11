@@ -246,7 +246,13 @@ fi
 # INIT LOGFILE
 #   flowtool will append the index automatically.
 ######################################################
-_LOGFILE="${RUNDIR}/flows.run"
+log_cmd="find ${RUNDIR} -maxdepth 1 -regextype posix-extended -regex '^.*wolf.run\.log([0-9])*$' -exec basename {} \; 2>/dev/null | grep -o "[0-9]*" | sort -n | tail -1"
+log_max_index=`eval "$log_cmd"`
+_LOGFILE="${RUNDIR}/wolf.run.log"
+if [[ $log_max_index -gt 0 ]] ; then
+    let log_max_index++
+    _LOGFILE=$_LOGFILE$log_max_index
+fi 
 LOGFILE="÷white÷$RUNDIR÷÷/÷yellow÷"$(basename ${_LOGFILE})"÷÷"
 
 
@@ -510,7 +516,7 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
     cprintf "\n÷Blue÷÷bold÷ ÷white÷Invoking flowtool with previous configs                                                   ÷÷ \n\n"
  
     # Build command
-    FLOWTOOL_CMD="flowtool -files "${FLOW_SETUP_OUT_FILE}" -run_tag ${RUNTAG} ${POSITIONAL[@]} -directory ${WORKSPACE_DIR}/${DESIGN_NAME}/${DESIGN_NAME}.${PROCESS} -log $_LOGFILE"
+    FLOWTOOL_CMD="flowtool -files "${FLOW_SETUP_OUT_FILE}" -run_tag ${RUNTAG} ${POSITIONAL[@]} -directory ${WORKSPACE_DIR}/${DESIGN_NAME}/${DESIGN_NAME}.${PROCESS} -log ${RUNDIR}/wolf.run"
     
     # Let's also link the latest status 
     # Build unique id for this run
@@ -663,8 +669,22 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
         # Now loop
         steps_run=0
         for STEP in ${STEP_ARRAY[@]}; do
+
+            #######################################################
+            # INIT LOGFILE
+            #   flowtool will append the index automatically.
+            ######################################################
+            log_cmd="find ${RUNDIR} -maxdepth 1 -regextype posix-extended -regex '^.*wolf.run\.log([0-9])*$' -exec basename {} \; 2>/dev/null | grep -o "[0-9]*" | sort -n | tail -1"
+            log_max_index=`eval "$log_cmd"`
+            _LOGFILE="${RUNDIR}/wolf.run.log"
+            if [[ $log_max_index -gt 0 ]] ; then
+                let log_max_index++
+                _LOGFILE=$_LOGFILE$log_max_index
+            fi 
+            LOGFILE="÷white÷$RUNDIR÷÷/÷yellow÷"$(basename ${_LOGFILE})"÷÷"
+
             # build CMD to call flowtool 
-            FLOWTOOL_CMD="flowtool\n  -files "${FLOW_SETUP_OUT_FILE}"\n  -run_tag ${RUNTAG}\n  -from ${STEP}\n  -to ${STEP}\n  ${POSITIONAL[@]}\n  -directory ${WORKSPACE_DIR}/${DESIGN_NAME}/${DESIGN_NAME}.${PROCESS}\n  -log $_LOGFILE"
+            FLOWTOOL_CMD="flowtool\n  -files "${FLOW_SETUP_OUT_FILE}"\n  -run_tag ${RUNTAG}\n  -from ${STEP}\n  -to ${STEP}\n  ${POSITIONAL[@]}\n  -directory ${WORKSPACE_DIR}/${DESIGN_NAME}/${DESIGN_NAME}.${PROCESS}\n  -log ${RUNDIR}/wolf.run"
 
             ## ASK USER IF EVERYTHING LOOKS OKAY, IN CASE -y FLAG WAS NOT PASSED.
             if [ $steps_run -gt 0 ]; then 
@@ -715,21 +735,24 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
 
                 # Inject tcl for PID record
 
-
                 # Finally, call flowtool
                 #eval "$FLOWTOOL_CMD"
                 _WOLF_TRACKER_INJECT_TCL="exec echo \"[pid]\" > $_WOLF_TRACKER_DIR/$FLOWTOOL_RUN_UUID.pid"
+                
+                # Link latest log
+                ln -sf "$_LOGFILE" "${RUNDIR}/wolf.run.log.latest"
+
                 flowtool -files "${FLOW_SETUP_OUT_FILE}" -run_tag ${RUNTAG} -inject_tcl "$_WOLF_TRACKER_INJECT_TCL" -from ${STEP} -to ${STEP} ${POSITIONAL[@]} -directory ${WORKSPACE_DIR}/${DESIGN_NAME}/${DESIGN_NAME}.${PROCESS} -log $_LOGFILE
                 # Remove pid file
                 rm -f "$_WOLF_TRACKER_DIR/$FLOWTOOL_RUN_UUID.pid"
-
-                if [[ $? -ne 0 ]]; then 
+                
+                if grep -Fq "Flow failed" "$_LOGFILE"; then
                     # There was an error, stop now
                     _wolf_error "Error in the flow detected. Stopping sequence."
                     exit 1
                 fi
             else
-                cprintf "÷Red÷ Exiting wolf now ÷÷"
+                cprintf "÷Red÷ Exiting wolf now ÷÷\n"
                 exit 0
             fi
 
