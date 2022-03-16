@@ -373,27 +373,27 @@ vars_to_print=( "FROM_STEP" "TO_STEP" )
 printVars "Flow run sequence" "${vars_to_print[@]}"
 
 # Print tools too
-vars_to_print=()
-if [ ! -z `which flowtool` ] ; then
-    FLOWTOOL_VERSION=`flowtool -version | grep -Po "(?<=Flowtool )[ A-Za-z0-9\._-]*"`
-    vars_to_print+=( "FLOWTOOL_VERSION" )
-fi
-if [ ! -z `which genus` ] ; then
-    GENUS_VERSION=`genus -v | grep -Po "(?<=Version: )[ A-Za-z0-9\._-]*"`
-    vars_to_print+=( "GENUS_VERSION" )
-fi
-if [ ! -z `which innovus` ] ; then
-    INNOVUS_VERSION=`innovus -version | grep -Po "(?<=Innovus )[ A-Za-z0-9\._-]*"`
-    vars_to_print+=( "INNOVUS_VERSION" )
-fi
-if [ ! -z `which quantus` ] ; then
-    QUANTUS_VERSION=`quantus -version | grep -Po "(?<=Version)\s*:\s*[ A-Za-z0-9\._-]*" | grep -Po "(?<=:)\s*[A-Za-z0-9\._-]*"`
-    vars_to_print+=( "QUANTUS_VERSION" )
-fi
-if [ ! -z `which calibre` ] ; then
-    CALIBRE_VERSION=`calibre -version | grep -Po "(?<=Calibre )v[A-Za-z0-9\._-]*"`
-    vars_to_print+=( "CALIBRE_VERSION" )
-fi
+# vars_to_print=()
+# if [ ! -z `which flowtool` ] ; then
+#     FLOWTOOL_VERSION=`flowtool -version | grep -Po "(?<=Flowtool )[ A-Za-z0-9\._-]*"`
+#     vars_to_print+=( "FLOWTOOL_VERSION" )
+# fi
+# if [ ! -z `which genus` ] ; then
+#     GENUS_VERSION=`genus -v | grep -Po "(?<=Version: )[ A-Za-z0-9\._-]*"`
+#     vars_to_print+=( "GENUS_VERSION" )
+# fi
+# if [ ! -z `which innovus` ] ; then
+#     INNOVUS_VERSION=`innovus -version | grep -Po "(?<=Innovus )[ A-Za-z0-9\._-]*"`
+#     vars_to_print+=( "INNOVUS_VERSION" )
+# fi
+# if [ ! -z `which quantus` ] ; then
+#     QUANTUS_VERSION=`quantus -version | grep -Po "(?<=Version)\s*:\s*[ A-Za-z0-9\._-]*" | grep -Po "(?<=:)\s*[A-Za-z0-9\._-]*"`
+#     vars_to_print+=( "QUANTUS_VERSION" )
+# fi
+# if [ ! -z `which calibre` ] ; then
+#     CALIBRE_VERSION=`calibre -version | grep -Po "(?<=Calibre )v[A-Za-z0-9\._-]*"`
+#     vars_to_print+=( "CALIBRE_VERSION" )
+# fi
 
 printVars "CAD tools" "${vars_to_print[@]}"
 
