@@ -684,7 +684,7 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
             LOGFILE="÷white÷$RUNDIR÷÷/÷yellow÷"$(basename ${_LOGFILE})"÷÷"
 
             # build CMD to call flowtool 
-            FLOWTOOL_CMD="flowtool\n  -files "${FLOW_SETUP_OUT_FILE}"\n  -run_tag ${RUNTAG}\n  -from ${STEP}\n  -to ${STEP}\n  ${POSITIONAL[@]}\n  -directory ${WORKSPACE_DIR}/${DESIGN_NAME}/${DESIGN_NAME}.${PROCESS}\n  -log ${RUNDIR}/wolf.run"
+            FLOWTOOL_CMD="flowtool\n  -files "${FLOW_SETUP_OUT_FILE}"\n  -run_tag ${RUNTAG}\n  -from ${STEP}\n  -to ${STEP}\n  ${POSITIONAL[@]}\n  -directory ${WORKSPACE_DIR}/${DESIGN_NAME}/${DESIGN_NAME}.${PROCESS}\n  -log $_LOGFILE"
 
             ## ASK USER IF EVERYTHING LOOKS OKAY, IN CASE -y FLAG WAS NOT PASSED.
             if [ $steps_run -gt 0 ]; then 
@@ -742,7 +742,7 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
                 # Link latest log
                 ln -sf "$_LOGFILE" "${RUNDIR}/wolf.run.log.latest"
 
-                flowtool -files "${FLOW_SETUP_OUT_FILE}" -run_tag ${RUNTAG} -inject_tcl "$_WOLF_TRACKER_INJECT_TCL" -from ${STEP} -to ${STEP} ${POSITIONAL[@]} -directory ${WORKSPACE_DIR}/${DESIGN_NAME}/${DESIGN_NAME}.${PROCESS} -log $_LOGFILE
+                flowtool -files "${FLOW_SETUP_OUT_FILE}" -run_tag ${RUNTAG} -inject_tcl "$_WOLF_TRACKER_INJECT_TCL" -from ${STEP} -to ${STEP} ${POSITIONAL[@]} -directory ${WORKSPACE_DIR}/${DESIGN_NAME}/${DESIGN_NAME}.${PROCESS} -log ${RUNDIR}/wolf.run
                 # Remove pid file
                 rm -f "$_WOLF_TRACKER_DIR/$FLOWTOOL_RUN_UUID.pid"
                 
