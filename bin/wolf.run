@@ -576,6 +576,9 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
 
         FLOW_SUMMARY="$WOLF_ENV_DIR/runs/$FLOWTOOL_RUN_UUID.flow.sum"
         FLOW_STEPS="$WOLF_ENV_DIR/runs/$FLOWTOOL_RUN_UUID.flow.steps"
+        # Get flow current 
+        FLOWS_CURRENT=($(sed -n 's/flow_current://p' "$FLOW_SETUP_OUT_FILE"))
+        
         #echo $FLOW_SUMMARY
         #echo $FLOW_STEPS
         # Create temp file with flow steps
@@ -584,7 +587,7 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
         sed -i '$ d' $FLOW_SUMMARY.tmp
 
         # Parse with python
-        steps=`python3 "${WOLF_BIN}/flow_yaml_parser.py" "$FLOW_SUMMARY.tmp"`
+        steps=`python3 "${WOLF_BIN}/flow_yaml_parser.py" "$FLOW_SUMMARY.tmp" "${FLOWS_CURRENT[@]}"`
         echo "${steps[@]}" | tr ' ' '\n' > "$FLOW_STEPS"
         echo "${steps[@]}" | tr ' ' '\n' | sort -u | tr '\n' ' ' > "$FLOW_SUMMARY"
         #rm "$FLOW_SUMMARY.tmp"
@@ -662,8 +665,30 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
     #   one of them, one after the other. This allows us to have full control of
     #   each step, instead of just the first one.
     ##############################################################################
+    # Check if flow steps exist
+    if [ ! -f "$FLOW_STEPS" ]; then
+        _wolf_error "No flow steps found. Check if the flow setup file is correct."
+        return 1
+    fi 
+    
+    # Make sure we have both -from and -to steps 
+    if [ -z "${FROM_STEP// }" ]; then
+        if [ -z "${TO_STEP// }" ]; then
+            # Run whole flow 
+            FROM_STEP=`head -1 "$FLOW_STEPS"`
+            TO_STEP=`tail -1 "$FLOW_STEPS"`
+        else 
+            FROM_STEP=`head -1 "$FLOW_STEPS"`
+        fi
+    else 
+        if [ -z "${TO_STEP// }" ]; then
+            TO_STEP=`tail -1 "$FLOW_STEPS"`
+        fi
+    fi
+    FROM_TO_STEP_ARGS="-from $FROM_STEP -to $TO_STEP"
+    
     # Check FROM and TO steps exist
-    if [[ ! -z $FROM_STEP && ! -z $TO_STEP ]]; then 
+    if [[ ! -z "${FROM_STEP// }" && ! -z "${TO_STEP// }" ]]; then 
         
         if ! grep -Fq "$FROM_STEP" "$FLOW_STEPS"; then
             # code if not found
@@ -683,7 +708,13 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
         ndots=`echo ${ndots[@]} | tr ' ' '\n' | sort -nr | head -n1`
         let ndots++
 
-        STEP_ARRAY=($(cat "$FLOW_STEPS" | cut -d '.' -f 1-$ndots | awk '!a[$0]++' | sed -n "/$FROM_STEP/,/$TO_STEP/p"))
+        # Check if FROM_STEP is different than TO_STEP
+        if [ "$FROM_STEP" == "$TO_STEP" ]; then
+            STEP_ARRAY=("$FROM_STEP")
+        else 
+            STEP_ARRAY=($(cat "$FLOW_STEPS" | cut -d '.' -f 1-$ndots | awk '!a[$0]++' | sed -n "/$FROM_STEP/,/$TO_STEP/p"))
+        fi
+        
 
         # Make sure TRACKER exists to keep track of pids
         _WOLF_TRACKER_DIR="${HOME}/.wolf/tracker"
@@ -783,7 +814,9 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
             fi
 
         done
-        
+    else
+        _wolf_error "No flow steps found. Exiting."
+        exit 1
     fi
 
 
