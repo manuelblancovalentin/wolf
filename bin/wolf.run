@@ -163,7 +163,7 @@ set -- "${POSITIONAL[@]}" # restore positional parameters
 ###############################################################################
 # Check if this design was ran before. If it was, detect the latest index.
 ###############################################################################
-cmd="find ${WORKSPACE_DIR}/${DESIGN_NAME}/${DESIGN_NAME}.${PROCESS} -maxdepth 1 -regextype posix-extended -regex '^.*${DESIGN_NAME}\.([0-9])*$' -exec basename {} \; 2>/dev/null | grep -o "[0-9]*" | sort -n | tail -1"
+cmd="find ${WORKSPACE_DIR}/${DESIGN_NAME}/${DESIGN_NAME}.${PROCESS} -maxdepth 1 -regextype posix-extended -regex '^.*${DESIGN_NAME}\.([0-9])*$' -exec basename {} \; 2>/dev/null | sed 's/${DESIGN_NAME}.//' | grep -o "[0-9]*" | sort -n | tail -1"
 max_index=`eval "$cmd"`
 OVERRIDE_RUNTAG=false
 if [[ -z $RUNTAG ]]; then
