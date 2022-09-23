@@ -483,6 +483,7 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
                 ["CONSTRAINTS_FILES"]="$CONSTRAINTS_FILE_CAT" \
                 ["SCRIPTS_DIR"]="$SCRIPTS_DIR" \
                 ["DATA_DIR"]="$DATA_DIR" \
+                ["INPUTS_DIR"]="$INPUTS_DIR" \
                 ["LIB_DIR"]="$LIB_DIR" \
                 ["IO_LIB_DIR"]="$IO_LIB_DIR" \
                 ["METAL_STACK"]="$METAL_STACK" \
