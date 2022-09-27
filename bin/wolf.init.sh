@@ -98,7 +98,8 @@ wolf () {
                 if [[ -v YAML_TEMPLATE_FILE ]]; then _WOLF_INIT_ARGS_DEDUCED_ENV_VARS+=("--conf"); _WOLF_INIT_ARGS_DEDUCED_ENV_VARS+=("$YAML_TEMPLATE_FILE"); fi
             fi
             if [[ -v WOLF_ENV_DIR && -f "$WOLF_ENV_DIR/vars.env" ]]; then 
-                _WOLF_INIT_ARGS_CMD=`grep -v '#.*' $WOLF_ENV_DIR/vars.env | xargs`
+                #_WOLF_INIT_ARGS_CMD=`grep -v '#.*' $WOLF_ENV_DIR/vars.env | xargs`
+                _WOLF_INIT_ARGS_CMD=`grep -v '#.*' $WOLF_ENV_DIR/vars.env | tr '\n' ' '`
                 _WOLF_INIT_ARGS_CMD="${_WOLF_INIT_ARGS_CMD} ${_WOLF_BIN}/wolf.run "
                 for v in "${_WOLF_INIT_ARGS_DEDUCED_ENV_VARS[@]}"; do 
                     _WOLF_INIT_ARGS_CMD="${_WOLF_INIT_ARGS_CMD} $v"
