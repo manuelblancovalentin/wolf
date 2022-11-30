@@ -25,10 +25,21 @@ _wolf () {
       COMPREPLY=($(compgen -W "-from -to -interactive -interactive_run -predict -status -db -dist -run_tag -branch -directory -display -enabled -files -flow -inject_tcl -isolate -metrics_file -no_check -no_gui -no_db -ref_run -reset -simple_output -verbose -version" -- $cur ) )
       return 0
       ;;
-   ipman)
-      COMPREPLY=( $( compgen -W "list --help" -- $cur ) )
+   setup)
+      COMPREPLY=( $( compgen -W "list process flow --help" -- $cur ) )
        return 0
        ;;
+   process)
+      _WOLF_CONFIG_DIR="${_WOLF_DIR}/config"
+      _WOLF_IP_TECHNODE_DIR="${_WOLF_CONFIG_DIR}/technodes"
+      _WOLF_IP_TECHNODE_LIST=( `find "$_WOLF_IP_TECHNODE_DIR" -maxdepth 1 -mindepth 1 -type d | sort -n | xargs -I{} basename {}` )
+      COMPREPLY=( $( compgen -W "--name ${_WOLF_IP_TECHNODE_LIST[*]}" -- $cur ) )
+      return 0
+      ;;
+   flow)
+      COMPREPLY=( $( compgen -W --name -- $cur ) )
+      return 0
+      ;;
    update)
       COMPREPLY=( $( compgen -W "--bucket" -- $cur ) )
        return 0
@@ -49,7 +60,7 @@ _wolf () {
       return 0
       ;;
     *)
-       COMPREPLY=($(compgen -W "run track env create remove activate deactivate update reload history --help ipman set" -- $cur ) )
+       COMPREPLY=($(compgen -W "run track env create remove activate deactivate update reload history --help setup set" -- $cur ) )
        return 0
        ;;
  esac

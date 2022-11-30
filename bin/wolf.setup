@@ -1,0 +1,404 @@
+#!/bin/bash
+
+#####################################################################################
+# MAKE SURE WE HAVE ALL SOURCE CODE WE NEED
+#####################################################################################
+_WOLF_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+_WOLF_DIR=`dirname "$_WOLF_DIR"`
+_WOLF_BIN="${_WOLF_DIR}/bin"
+if [[ ! -d ${_WOLF_BIN} || ! -f "${_WOLF_BIN}/utils" || ! -f "${_WOLF_BIN}/wolf.run" ]]; then
+    printf "\033[1;7;31m [ERROR] - Invalid installation. Some binary files required to run wolf are either missing or unaccessible. Contact your cadadmin to fix this."
+fi
+_WOLF_CONFIG_DIR="${_WOLF_DIR}/config"
+if [[ ! -d ${_WOLF_CONFIG_DIR} ]]; then
+    printf "\033[1;7;31m [ERROR] - Invalid installation. Some binary files required to run wolf are either missing or unaccessible. Contact your cadadmin to fix this."
+fi
+
+#####################################################################################
+# Source utils
+#####################################################################################
+source "${_WOLF_BIN}/utils"
+
+#####################################################################################
+# WOLF LIB HANDLER ALIAS
+#####################################################################################
+_wolf_setup () {
+
+    #####################################################################################
+    # Make sure the local folder ".wolf" exists on user's path
+    #####################################################################################
+    _WOLF_SETUP_DIR="${HOME}/.wolf/config"
+    if [[ ! -d "$_WOLF_SETUP_DIR" && ! -L "$_WOLF_SETUP_DIR" ]]; then 
+        _wolf_info "First runtime detected. Creating wolf ip dir at ÷yellow÷\"$_WOLF_SETUP_DIR\"÷÷"
+        mkdir -p "$_WOLF_SETUP_DIR"
+    fi
+
+    #####################################################################################
+    # Get list of ips
+    #####################################################################################
+    _WOLF_SETUP_LIST=`find "$_WOLF_SETUP_DIR" -maxdepth 1 -mindepth 1 -type d | sort -n`
+
+    #####################################################################################
+    # Get list of available technodes
+    #####################################################################################
+    _WOLF_SETUP_TECHNODE_DIR="${_WOLF_CONFIG_DIR}/technodes"
+    _WOLF_SETUP_TECHNODE_LIST=( `find "$_WOLF_SETUP_TECHNODE_DIR" -maxdepth 1 -mindepth 1 -type d | sort -n | xargs -I{} basename {}` )
+
+    ###########################################
+    # Init vars to default values
+    #
+    ##########################################
+    _WOLF_SETUP_ARGS_COMMAND=
+    _WOLF_SETUP_ARGS_NAME=
+
+    ###########################################
+    # Parse flags
+    ##########################################
+    _WOLF_SETUP_ARGS_POSITIONAL=()
+    while [[ $# -gt 0 ]]; do
+        _WOLF_SETUP_ARGS_KEY="$1"
+            case $_WOLF_SETUP_ARGS_KEY in
+                -h|--help)
+                    # Help dialog
+                    echo -e "Usage $(basename $BASH_SOURCE) [OPTIONS]... [EXTRA_ARGUMENTS]..."
+                    echo "Wolf ip manager"
+                    echo ""
+                    echo "Main arguments taken $(basename $BASH_SOURCE):"
+                    echo -e "\t-h, --help\t\tInvokes this dialog.\n"
+                    echo -e "Options/commands passed to wolf env:\n"
+                    echo -e "\tcreate \t\tCreates a new environment."
+                    echo -e "\tlist \t\tList all available environments."
+                    echo -e "Arguments taken by \"wolf env create\":\n"
+                    echo -e "\t-n, --name \t\tSpecifies the name of the environment."
+                    echo -e "Arguments taken by wolf env list:\n"
+                    return 0
+                    ;;
+                list)
+                    _WOLF_SETUP_ARGS_COMMAND="LIST"
+                    shift # pass argument
+                    ;;
+                setup)
+                    _WOLF_SETUP_ARGS_COMMAND="SETUP"
+                    shift 
+                    ;;
+                -n|--name)
+                    _WOLF_SETUP_ARGS_NAME="$2"
+                    shift
+                    shift 
+                    ;;
+                --process)
+                    _WOLF_SETUP_ARGS_PROCESS="$2"
+                    shift
+                    shift 
+                    ;;
+
+            *)    # unknown option
+            _WOLF_SETUP_ARGS_POSITIONAL+=("$1") # save it in an array for later
+            _WOLF_SETUP_ARGS_POSITIONAL+=("$2")
+            shift # past argument
+            shift # past value
+            ;;
+        esac
+    done
+    set -- "${_WOLF_SETUP_ARGS_POSITIONAL[@]}" # restore positional parameters
+
+    #############################################
+    # Invoke _WOLF_SETUP_ARGS_COMMAND
+    #
+    ############################################
+    case $_WOLF_SETUP_ARGS_COMMAND in
+        LIST)
+            # Print header
+            cprintf "$_WOLF_SETUP_HEADER"
+            cprintf "\n÷Blue÷÷bold÷ ÷white÷Available ips                                                                    ÷÷ \n"
+            if [[ ! -z $_WOLF_SETUP_LIST ]]; then
+                _WOLF_SETUP_LIST=($(echo "${_WOLF_SETUP_LIST[@]}" | xargs))
+                _WOLF_SETUP_ARGS_NUM_IPS="${#_WOLF_SETUP_LIST[@]}"
+                for ((i=0; i<_WOLF_SETUP_ARGS_NUM_IPS; i++)); do
+                    printf " "
+                    _wolf_entry "÷÷÷yellow÷`basename ${_WOLF_SETUP_LIST[$i]}`÷÷       \t${_WOLF_SETUP_LIST[$i]}"
+                done
+                unset i
+                printf "\n"
+            else 
+                # Print empty warning message
+                cprintf "÷red÷No ips ÷÷detected in ÷yellow÷\"$_WOLF_SETUP_DIR\"÷÷.\n\n"
+            fi
+            ;;
+        SETUP)
+            # Make sure name is valid
+            if [[ -z $_WOLF_SETUP_ARGS_PROCESS ]]; then
+                _wolf_error "Setup command requires a process value to be passed to wolf using the flag \"--process\",\n\te.g. ÷blue÷wolf ip setup ÷red÷--process <PROCESS_NAME>÷÷"
+            else 
+                
+                # Make sure node exists in available processes
+                if [[ ! " ${_WOLF_SETUP_TECHNODE_LIST[*]} " =~ " ${_WOLF_SETUP_ARGS_PROCESS} " ]]; then
+                    # whatever you want to do when array doesn't contain value
+                    _wolf_error "Technode specified was not recognized. Available processes are: ÷blue÷${_WOLF_SETUP_TECHNODE_LIST[*]}÷÷"
+                fi
+
+                # Read default config file and start asking for variables
+                _WOLF_SETUP_TECHNODE_SETUP_REQ_VARS_FILE="${_WOLF_SETUP_TECHNODE_DIR}/${_WOLF_SETUP_ARGS_PROCESS}/${_WOLF_SETUP_ARGS_PROCESS}.ip.setup.template.wlf"
+                if [[ ! -f ${_WOLF_SETUP_TECHNODE_SETUP_REQ_VARS_FILE} ]]; then 
+                    _wolf_error "Invalid installation. The technode configuration file ÷yellow÷${_WOLF_SETUP_TECHNODE_SETUP_REQ_VARS_FILE}÷÷ was not detected in your system. Contact your cadadmin to fix this."
+                fi 
+
+                # We are clear. Let's start the wizard.
+                cprintf "$_WOLF_SETUP_HEADER"
+                printf "\n"
+
+                # Get pairs of keys/values first
+                declare -A _field_vals
+                while IFS=, read -r _field _val; do
+                    _field_vals[${_field}]=${_val}
+                done < "${_WOLF_SETUP_TECHNODE_SETUP_REQ_VARS_FILE}"
+
+                declare -A _WOLF_SETUP_TECHNODE_SETUP_VARS_AND_VALS
+                for _field in "${!_field_vals[@]}"; do 
+                    # Get vars 
+                    _val=${_field_vals[$_field]}
+                    # loop until we get a valid answer
+                    invalid_answer=true
+                    while ${invalid_answer}; do 
+                        # Ask for this variable 
+                        _this_field_value=""
+                        CC=$'\e[0m'
+                        BC=$'\e[1;32m'
+                        PC=$'\e[33m'
+                        read -r -e -p "${BC}${_field}${CC} ${PC}<${_val}>${CC}: " _this_field_value
+                        
+                        case ${_val} in 
+                            dir)
+                                if [[ ! -d "${_this_field_value}" ]]; then 
+                                    _wolf_error "The specified directory ÷yellow÷${_this_field_value}÷÷ for variable ÷yellow÷${_field}÷÷ could not be found. Please specify a valid accessible directory."
+                                else 
+                                    invalid_answer=false
+                                    _WOLF_SETUP_TECHNODE_SETUP_VARS_AND_VALS[${_val}]=${_this_field_value}
+                                fi
+                                ;;
+                            str)
+                                # No check required
+                                invalid_answer=false
+                                _WOLF_SETUP_TECHNODE_SETUP_VARS_AND_VALS[${_val}]=${_this_field_value}
+                                ;;
+
+                            file) 
+                                if [[ ! -f "${_this_field_value}" ]]; then 
+                                    _wolf_error "The specified file ÷yellow÷${_this_field_value}÷÷ for variable ÷yellow÷${_field}÷÷ could not be found. Please specify a valid accessible file."
+                                else 
+                                    invalid_answer=false
+                                    _WOLF_SETUP_TECHNODE_SETUP_VARS_AND_VALS[${_val}]=${_this_field_value}
+                                fi
+                                ;;
+                            
+                            *)
+                                # No check required
+                                invalid_answer=false
+                                _WOLF_SETUP_TECHNODE_SETUP_VARS_AND_VALS[${_val}]=${_this_field_value}
+                                ;;
+                        esac
+                    done
+
+                done 
+
+                # Now that we are done with the variables, let's create all the templates 
+                # Make sure outdir exists
+                _WOLF_SETUP_THIS_PROCESS_LOCAL_DIR="${_WOLF_SETUP_DIR}/${_WOLF_SETUP_ARGS_PROCESS}"
+                _WOLF_SETUP_THIS_PROCESS_LOCAL_FILE="${_WOLF_SETUP_THIS_PROCESS_LOCAL_DIR}/${_WOLF_SETUP_ARGS_PROCESS}.`hostname`.bucket.csh"
+                mkdir -p "${_WOLF_SETUP_THIS_PROCESS_LOCAL_DIR}"
+
+                # Touch file and start appending stuff into it 
+                _wolf_info "Now creating bucket template file for process ÷yellow÷${_WOLF_SETUP_ARGS_PROCESS}÷÷ at ÷green÷${_WOLF_SETUP_THIS_PROCESS_LOCAL_FILE}÷÷"
+                touch ${_WOLF_SETUP_THIS_PROCESS_LOCAL_FILE}
+                echo "## .bash_profile" >> "${_WOLF_SETUP_THIS_PROCESS_LOCAL_FILE}"
+                echo "PROCESS=\"${_WOLF_SETUP_ARGS_PROCESS}\"" >> "${_WOLF_SETUP_THIS_PROCESS_LOCAL_FILE}"
+                for _var in "${!_WOLF_SETUP_TECHNODE_SETUP_VARS_AND_VALS[@]}"; do 
+                    # Get vars 
+                    _val=${_WOLF_SETUP_TECHNODE_SETUP_VARS_AND_VALS[$_var]}
+                    echo "export ${_var}=\"${_val}\"" >> "${_WOLF_SETUP_THIS_PROCESS_LOCAL_FILE}"
+                done 
+
+                # export TSMC65_LIB_DIR="/asic/Library/$FOUNDRY/$LIB_NAME/Digital"
+                # export TSMC65_IO_LIB_DIR="/asic/Library/$FOUNDRY/$LIB_NAME/Digital"
+                # export TSMC65_PDK_VERSION="V1.7A_1"
+                # export TSMC65_PDK_HOME="/asic/Library/$FOUNDRY/$LIB_NAME/PDK/$TSMC65_PDK_VERSION/${METAL_STACK_DIR}"
+
+
+
+            fi    
+            ;;
+        *)
+            _wolf_error "Invalid command passed to wolf IP. Wolf requires at least 1 command to be executed. Valid commands are: ..."
+            ;;
+    esac
+
+}
+
+###########################################################################################################
+# TODO LIST:
+#
+# 1) Wolf should have 3 main cornerstones: IP/RTL/FLOWS. 
+#       a) IPs is basically the libraries and processes. This is managed with ip-man
+#
+#       b) RTL is project-dependent and it's the set of HDL/RTL/input files used for the design. 
+#           although it also includes any custom LEF files, etc.
+#
+#       c) FLOWS are basically the digital flow scripting for each process and it relates to the 
+#           specific options the user might want to set for that specific flow. Obviously if
+#           the user picks a technology X and process Y we MUST have some default scripts for the 
+#           flow. Nonetheless FLOW here refers to the SPECIFIC FLOW that will be generated after
+#           user customization (corners/timing constraints/dont_use cells/etc...). These flows, 
+#           despite being made by the user, can be absolutely generic too, and so the user might
+#           want to use them for multiple designs. That's should be wolf objective: to allow the
+#           user to define a generic (yet customized) flow, and then be able to pick this flow
+#           for any desired wolf environment.
+#
+#   All these should be handled and stored separatedly inside wolf. 
+#   Thus, the task of the "ENV" is precisely to setup an environment with a specific combination
+#    of a set of {IP-libs/RTL/FLOW}. This way it'd be possible to, say, easily setup two different
+#    envs with the same RTL but different processes. That's the dream. One-click button digital
+#    flow with two different processes for any design. 
+#
+#   Hence, the process of creating a wolf ENV is "nothing" but putting together a set of {RTL:x, IP:y, FLOW:z} 
+#
+#  (wolf environment "α")   (wolf environment "ß")  (wolf environment "µ")  (wolf environment "∂")
+#   +-----------------+      +-----------------+     +-----------------+     +-----------------+
+#   |      RTL:a      |      |      RTL:a      |     |      RTL:b      |     |      RTL:b      |
+#   |      /   \      |      |      /   \      |     |      /   \      |     |      /   \      |
+#   |     /     \     |      |     /     \     |     |     /     \     |     |     /     \     |
+#   |  IP:m -- FLOW:x |      |  IP:n -- FLOW:x |     |  IP:m -- FLOW:y |     |  IP:m -- FLOW:x |
+#   +-----------------+      +-----------------+     +-----------------+     +-----------------+
+#   
+#   Here, 4 different wolf environments are set. There are 2 RTL sources (a/b), two different technologies/libs (m/n)
+#    and two different flows (x/y). 
+#       - Environment α and ß apply the same flow to the same RTL, but they use different libraries (this is actually a 
+#           weird case because different technologies/ips have different flows, but okay).
+#       - Environment α and ∂ apply the same flow and process, but to two different RTLs.
+#       - Environment µ and ∂ apply use the same libraries/processes to the same RTL, however they use different flows
+#           (say, one focuses more on constraining area and the other one on power, for instance).
+#
+# 2) IP-MAN: The IP must be able to keep track of the most important info for each library/ip
+#       a) QrcTechfile
+#       b) Process
+#       c) Foundry
+#       d) List of cells of the library.
+#       How the process of installing a lib is:
+#           ( ) Init lib (give it whatever name you want). Point to a dir. It can even be a custom lib.
+#           ( ) Add PDK version
+#               ( ) (auto)Install metal stack
+#               ( ) (auto)detect qrctechfiles, etc.
+#           ( ) Add Digital libraries
+#
+# 3) WOLF/ENV configuration file:
+#       (*) dont_use cells. [DONE - Look at wolf.wizard -> set_dont_use_cells function]
+#       ( ) custom DRC/LVS scripts
+#       ( ) RTL and top design
+#       ( ) process and libs/ips
+
+
+
+###############################################
+# LEF UTILITIES
+#   - GET ALL LAYERS FROM A LEF FILE:
+#       grep "LAYER" /asic/Library/TSMC/TSMC65_Merged/Digital/Back_End/lef/tcbn65lp_200a/lef/tcbn65lp_9lmT2.lef | sed 's/^.*LAYER //' | awk '{print $1}'| sort -u
+#
+#   - GET ALL MACROS FROM A LEF FILE:
+#       grep "MACRO" /asic/Library/TSMC/TSMC65_Merged/Digital/Back_End/lef/tcbn65lp_200a/lef/tcbn65lp_9lmT2.lef | sed 's/^.*MACRO //' | awk '{print $1}'| sort -u
+#
+#   - GET ALL CLASSES FROM A LEF FILE:
+#       grep "CLASS" /asic/Library/TSMC/TSMC65_Merged/Digital/Back_End/lef/tcbn65lp_200a/lef/tcbn65lp_9lmT2.lef | sed 's/^.*CLASS //' | awk '{print $1}'| sort -u
+#
+#   - GET ALL SITES FROM A LEF FILE:
+#       grep "SITE" /asic/Library/TSMC/TSMC65_Merged/Digital/Back_End/lef/tcbn65lp_200a/lef/tcbn65lp_9lmT2.lef | sed 's/^.*SITE //' | awk '{print $1}'| sort -u
+#
+#   - GET ALL TAPCELLS 
+#       grep "CLASS ENDCAP" /asic/Library/TSMC/TSMC65_Merged/Digital/Back_End/lef/tcbn65lp_200a/lef/tcbn65lp_9lmT2.lef | sed 's/^.*CLASS //' | awk '{print $1}'| sort -u
+#   
+##############################################
+# SPICE UTILITIES
+#   - GET ALL SUBCKTS FROM A SPICE FILE:
+#       grep ".subckt" /asic/Library/TSMC/TSMC65_Merged/Digital/Back_End/spice/tcbn65lp_200a/tcbn65lp_200a.spi | sed 's/^.*\.subckt //' | awk '{print $1}'
+#
+##############################################
+# LIB UTILITIES
+#   - GET ALL CELLS FROM LIB FILE:
+#       grep -E "cell \(\w+\)" /asic/Library/TSMC/TSMC65_Merged/Digital/Front_End/timing_power_noise/ECSM/tcbn65lp_200a/tcbn65lpwcl_ecsm.lib | sed 's/^.*cell (//' | awk '{print $1}' | sed 's/)//' | sort -u
+#
+#   - GET ALL TEMPERATURES AVAILABLE:
+#       find /asic/Library/TSMC/TSMC65_Merged/Digital/Front_End/timing_power_noise/ECSM -type f -name *.lib | xargs -I{} grep -Er "nom_temperature" {} | cut -d " " -f 7 | sed 's/;//g' | sort -un
+#
+#   - GET ALL NOM_VOLTAGES AVAILABLE:
+#       find /asic/Library/TSMC/TSMC65_Merged/Digital/Front_End/timing_power_noise/ECSM -type f -name *.lib | xargs -I{} grep -Er "nom_voltage" {} | cut -d " " -f 7 | sed 's/;//g' | sort -un
+#
+#   - GENERATE A YAML LIST OF ALL LIBRARIES (LIB FILES) FOR TIMING, ETC.
+#   root_lib_dir="/asic/Library/TSMC/TSMC65_Merged/Digital/Front_End/timing_power_noise/ECSM"
+    # declare -A temps=(
+    #     [M40C]="-40" 
+    #     [0C]="0"
+    #     [25C]="25"
+    #     [125C]="125"
+    # )
+
+    # declare -A voltages=(
+    #     [0P90V]="0\.9"
+    #     [1P00V]="1\.0"
+    #     [1P08V]="1\.08"
+    #     [1P10V]="1\.1"
+    #     [1P20V]="1\.2"
+    #     [1P32V]="1\.32"
+    # )
+
+    # declare -A vts=(
+    #     [hvt]="hvt"
+    #     [rvt]=""
+    #     [lvt]="lvt"
+    # )
+
+    # declare -A tracks=(
+    #     [7T]="tcbn65lpbwp7t"
+    #     [9T]="tcbn65lp"
+    #     [12T]="tcbn65lpbwp12t"
+    # )
+
+    # printf "library_sets:\n"
+    # for v in "${!voltages[@]}"; do 
+    #     for t in "${!temps[@]}"; do 
+    #         printf "  PVT_${v}_${t}:\n"
+    #         for trk in "${!tracks[@]}"; do
+    #             printf "    ${trk}:\n"
+    #             for vth in "${!vts[@]}"; do
+    #                 printf "      ${vth}:\n"
+    #                 #echo "searching for *${tracks[$trk]}${vts[$vth]}*.lib: temperature ${temps[$t]}  &  nom_voltage ${voltages[$v]//\\/}"
+    #                 find $root_lib_dir -type d -name "*${tracks[$trk]}${vts[$vth]}\_*" | xargs -I{} find {} -type f -name "*${tracks[$trk]}${vts[$vth]}*.lib" | xargs -I{} grep -Eol "nom_voltage.*${voltages[$v]}" {} | xargs -I{} grep -Eol "nom_temperature.*${temps[$t]}" {} | xargs -I{} printf "        {}\n"
+    #             done
+    #         done
+    #     done
+    # done
+#
+#
+#
+##############################################
+# VERILOG UTILS
+#   - GET ALL MODULES FROM A VERILOG FILE:
+#       grep -E "module\s+\w+" /asic/Library/TSMC/TSMC65_Merged/Digital/Front_End/verilog/tcbn65lp_200a/tcbn65lp.v | sed 's/^.*module //' | sed 's/;//' | awk '{print $1}' | sort -u
+#
+##############################################
+# MIXED UTILS
+#   - GET ALL MODELS FOR WHICH WE HAVE A VERILOG FILE BUT NOT A TIMING MODEL (OR VICEVERSA)
+#       comm -3 <(grep -E "module\s+\w+" /asic/Library/TSMC/TSMC65_Merged/Digital/Front_End/verilog/tcbn65lp_200a/tcbn65lp.v | sed 's/^.*module //' | sed 's/;//' | awk '{print $1}' | sort -u) <(grep -E "cell \(\w+\)" /asic/Library/TSMC/TSMC65_Merged/Digital/Front_End/timing_power_noise/ECSM/tcbn65lp_200a/tcbn65lpwcl_ecsm.lib | sed 's/^.*cell (//' | awk '{print $1}' | sed 's/)//' | sort -u)
+#
+#
+#################################################
+# MISC
+#   - THIS IS A LIST OF DEVICES OF A PDK
+#       cat /asic/Library/TSMC/TSMC65_Merged/PDK/V1.7A_1/1p9m6x1z1u/Techfile/dev.list
+#
+#   - THIS IS THE MAPFILE
+#       cat /asic/Library/TSMC/TSMC65_Merged/PDK/V1.7A_1/1p9m6x1z1u/mapfile
+#
+
+
+# WOLF-IP object structure (yaml style):
+#   Structural recursivity is the key!! 
+#   <LIBRARY_NAME>:
+#    
