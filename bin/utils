@@ -209,3 +209,49 @@ function vectorize {
     done
     echo "$VAR_CAT"
 }
+
+
+
+
+####################################
+# FUNCTION TO ASK FOR VALUES FROM USER
+####################################
+function _wolf_helper_function_get_valid_user_input {
+
+    _field="$1"
+    _description="$2"
+    _val="$3"
+
+    # Ask for stack name 
+    declare -A _WOLF_HELPER_FUNCTION_VARS_AND_VALS
+    invalid_answer=true
+    while ${invalid_answer}; do 
+        # Ask for this variable 
+        _this_field_value=""
+        CC=$'\e[0m'
+        BC=$'\e[1;32m'
+        PC=$'\e[33m'
+        read -r -e -p "${BC}${_field}${CC} ${PC}<${_val}>${CC} (${_description}): " _this_field_value
+        
+        case ${_val} in 
+            dir)
+                if [[ ! -d "${_this_field_value}" ]]; then 
+                    _wolf_error "The specified directory ÷yellow÷${_this_field_value}÷÷ for variable ÷yellow÷${_field}÷÷ could not be found. Please specify a valid accessible directory."
+                else 
+                    invalid_answer=false
+                    _WOLF_HELPER_FUNCTION_VARS_AND_VALS[${_field}]=${_this_field_value}
+                fi
+                ;;
+            str)
+                # No check required
+                invalid_answer=false
+                _WOLF_HELPER_FUNCTION_VARS_AND_VALS[${_field}]=${_this_field_value}
+                ;;
+        esac 
+    done 
+
+    printf "${_WOLF_HELPER_FUNCTION_VARS_AND_VALS[@]}"
+
+}
+
+

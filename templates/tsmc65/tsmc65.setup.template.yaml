@@ -1,0 +1,280 @@
+%TAG ! tag:design.stylus.cadence.com,0.1:
+---
+# Generated Using: Flowtool 20.10-p020_1
+# Template Release: 2027154
+####################################################################################################
+# MMMC Config
+####################################################################################################
+# Flow paramters which relate to multi-mode, multi-corner (mmmc) setup.  The majority of items will
+# be consumed in the mmmc_config.tcl file
+####################################################################################################
+
+# Library and Design data pointers
+inputs_dir: ${INPUTS_DIR}
+scripts_dir: ${SCRIPTS_DIR}
+hdl_search_path: ${INIT_HDL_SEARCH_PATH}
+flow_yaml: ${FLOW_YAML_FILE}
+run_dir: ${RUNDIR}
+
+# Constraint modes to be created using 'create_constraint_mode'
+#---------------------------------------------------------------------------------------------------
+#   constraint_modes:
+#     <name>:
+#       sdc_files:
+#          -  <list of constraint files to associate with the constraint_mode>
+#     [ tcl_variables:
+#          -  <optional list of TCL variables defined as key/value pairs> ]
+
+constraint_modes:
+  func:
+    sdc_files: ${CONSTRAINTS_FILES}
+
+####################################################################################################
+# Tool Config
+####################################################################################################
+# Flow parameters which relate to design and tool setup.  Majority of items will be consumed in the
+# 'init_design' and 'init_<TOOL>' flow_steps.
+####################################################################################################
+
+# A YAML list of power/ground net names used by 'init_design' command.  This is typically not necessary
+# when a power_intent file is specified.
+# [@manuelbv]: This definition of init pwr/gnd nets was taken from beast1:/asic/projects/F/FLORA/farah/digital/pixelArray_hvt/pnr/work/FF/init.tcl
+init_power_nets:
+   - VDD
+   - vdda
+   - Vtest
+   - Vref
+   - Vdd12
+   - Vclamp
+   # [@manuelbv]: Added the following signals to match with file setup.tcl (beast1:../FLORA_top) 
+   # {
+   - Vbias1 
+   #- Vbias2 
+   - VDD_LVDS 
+   #- vcc
+   # }
+ 
+init_ground_nets:
+   - VSS
+   - vssa
+   - gnd 
+   - gnda
+   - Icharge
+   - Icomp
+   - Ife
+   - Ib2
+   - Inject
+   #- Iterm
+   # [@manuelbv]: Added the following signals to match with file setup.tcl (beast1:../FLORA_top) 
+   # {
+   - Biasgnd 
+   #- vee
+   # }
+
+preserve_instances:
+  - digIOBUFF*
+  # - digIOBUFF2
+  # - digIOBUFF3
+  # - digIOBUFF4
+  # - digIOBUFF5
+  # - digIOBUFF6
+  # - digIOBUFF7
+  # - digIOBUFF8
+  # - digIOBUFF9
+  # - digIOBUFF10
+  # - digIOBUFF11
+  # - digIOBUFF12
+  # - digIOBUFF13
+  # - digIOBUFF14
+  # - digIOBUFF15
+  # - digIOBUFF16
+  # - digIOBUFF17
+  # - digIOBUFF18
+  # - digIOBUFF19
+  # - digIOBUFF20
+  # - digIOBUFF21
+  # - digIOBUFF22
+  # - digIOBUFF23
+
+# (Connect global nets pin_name: net) - Pin_names must be unique - Multiple pins can be connected to the same net
+user_global_nets:
+  Vtest: Vtest 
+  Vref: Vref 
+  Vdd12: Vdd12 
+  Vclamp: Vclamp 
+  Icharge: Icharge 
+  Icomp: Icomp 
+  Ife: Ife 
+  Ib2: Ib2 
+  vdda: vdda 
+  vssa: vssa 
+  gnd: gnd 
+  gnda: gnda
+  #InjectL: Inject
+  #InjectR: Inject
+  Inject: Inject
+  #Iterm: Iterm
+  # [@manuelbv]: Added the following signals to match with file setup.tcl (beast1:../FLORA_top) 
+  # {
+  Vbias1: Vbias1
+  #Vbias2: Vbias2
+  VDD_LVDS: VDD_LVDS
+  #vcc: vcc
+  Biasgnd: Biasgnd
+  #vee: vee
+  # }
+
+
+# DRC/LVS custom rulefiles
+user_lvs_rulefiles:
+  - '[get_flow_config data_dir]/calibre/${DESIGN_NAME}.lvs.cal'
+
+user_drc_rulefiles:
+  - '[get_flow_config data_dir]/calibre/${DESIGN_NAME}.drc.cal'
+
+
+##########################################################3
+# Var used to inject code into the flow without necessarily
+# modifying the original template flow.
+##########################################################3
+user_inject_tcl:
+  steps:
+    synthesis.syn_generic.block_start:
+      postrun:
+        - 'set_db minimize_uniquify true'
+    #implementation.floorplan.load_floorplan:
+      #postrun:
+        #- 'set_db \[get_db nets *In\\\[*\\] \] .skip_routing true'
+
+
+# Path to floorplan file read in during 'init_floorplan' flow_step.
+#init_floorplan_file: ${FLOORPLAN_FILE}
+init_floorplan_file: /home/manuelbv/xray_imaging/src/inputs_top_2Q_AE_PCA/floorplans/pixelAI_top_2Q_AE_PCA.fp
+init_floorplan_io_file: ${FLOORPLAN_IO_FILE}
+
+core_site_name: core
+
+floorplan_spef: 
+  die_width: 1038
+  die_height: 1038
+  margin_horizontal: 0.0
+  margin_vertical: 0.0
+  power_grid:
+    layers:
+      vertical: 
+        M3: 0.5 
+        M6: 1.0 
+        M8: 1.0
+      horizontal: 
+        M5: 1.0 
+        M7: 1.0
+
+# 'design' related attributes
+#---------------------------------------------------------------------------------------------------
+# The name of the toplevel module.
+design_name: ${DESIGN_NAME}
+
+# The name of process and technology node size used in route related settings.
+# design_tech_node: < PLACEHOLDER: DESIGN TECH NODE >
+
+# The flow effort optimization level {express standard extreme}.
+design_flow_effort: standard
+
+# The power effort optimization level {none low high}.
+design_power_effort: none
+
+# A YAML list of base_cell names which should be marked as dont_use
+# dont_use_cells:
+#   - < PLACEHOLDER: LIST OF DONT_USE BASE_CELLS >
+dont_use_cells: 
+#  - "*D0"
+
+
+# Clock derate
+clock_derates:
+  cell_delay: 
+    late: 1.05
+    early: 0.95
+
+#[@manuelbv]: We had to change bottom routing layer for 9lmT2 from M1 to M2 because CTS was routing on M1
+#   and producing a bunch of DRC errors because of that
+max_routing_layers:
+  top:    M8
+  bottom: M2
+
+# synthesis
+# Place into YAML:
+#--RTL files
+rtl_files: 
+  vhdl: 
+    files: ${RTL_VHDL_FILES}
+    args: ${RTL_VHDL_FILES_ARGS}
+  sv:
+    files: ${RTL_SV_FILES}
+    args: ${RTL_SV_FILES_ARGS}
+  
+
+# [@manuelbv] - custom physical files for custom cells
+user_custom_lib_files:
+  lef_files: 
+    - '[get_flow_config data_dir]/inputs_top/lib/BIAS_ANA.lef'
+    - '[get_flow_config data_dir]/inputs_top/lib/LVDS_IO_top.lef'
+    - '[get_flow_config data_dir]/inputs_top_2Q_AE_PCA/lib/pixelArray_AE_readout.14/Dec04/pixelArray_AE_readout.postroute.Dec04.lef'
+    - '[get_flow_config data_dir]/inputs_top_2Q_AE_PCA/lib/pixelArray_PCA_readout.7/Dec04/pixelArray_PCA_readout.postroute.Dec04.lef'
+    # - '[get_flow_config data_dir]/inputs_top_2Q_AE_PCA/lib/pixelArray_AE_readout.13/pixelArray_AE_readout.postroute.Nov24.lef'
+    # - '[get_flow_config data_dir]/inputs_top_2Q_AE_PCA/lib/pixelArray_PCA_readout.6/pixelArray_PCA_readout.postroute.Nov24.lef'
+    
+    #- '[get_flow_config data_dir]/inputs_top/lib/tpan65lpnv2od3_7lm.custom.lef'
+  gds_files:
+    - '[get_flow_config data_dir]/inputs_top/lib/BIAS_ANA.gds'
+    - '[get_flow_config data_dir]/inputs_top/lib/LVDS_IO_top.gds'
+    - '[get_flow_config data_dir]/inputs_top_2Q_AE_PCA/lib/FLORA_pads.gds'
+    - '[get_flow_config data_dir]/inputs_top_2Q_AE_PCA/lib/pixelArray_AE_readout.14/Dec04/pixelArray_AE_readout.postroute.merged.Dec04.gds'
+    - '[get_flow_config data_dir]/inputs_top_2Q_AE_PCA/lib/pixelArray_PCA_readout.7/Dec04/pixelArray_PCA_readout.postroute.merged.Dec04.gds'
+    # - '[get_flow_config data_dir]/inputs_top_2Q_AE_PCA/lib/pixelArray_AE_readout.13/pixelArray_AE_readout.postroute.merged.Nov24.gds'
+    # - '[get_flow_config data_dir]/inputs_top_2Q_AE_PCA/lib/pixelArray_PCA_readout.6/pixelArray_PCA_readout.postroute.merged.Nov24.gds'
+  spice_files:
+    #- '[get_flow_config data_dir]/inputs_top/spice/LVDS_IO_bot.sp'
+    - '[get_flow_config data_dir]/inputs_top/spice/LVDS_IO_top.uniquified.sp'
+    - '[get_flow_config data_dir]/inputs_top/spice/BIAS_ANA.uniquified.sp'
+    - '[get_flow_config data_dir]/inputs_top_2Q_AE_PCA/lib/pixelArray_AE_readout.14/Dec04/pixelArray_AE_readout.postroute.merged.Dec04.sp'
+    - '[get_flow_config data_dir]/inputs_top_2Q_AE_PCA/lib/pixelArray_PCA_readout.7/Dec04/pixelArray_PCA_readout.postroute.merged.Dec04.sp'
+
+
+# [@manuelbv] - custom timing libs
+# Max ->  smallest voltage, worst case timing 
+# Min ->  highest voltage, best case timing
+user_library_files:
+  PVT_1P08V_125C:
+    library_files:
+      - '[get_flow_config data_dir]/inputs_top_2Q_AE_PCA/lib/pixelArray_AE_readout.14/Dec04/pixelArray_AE_readout.func-slow_1p08_125C.postroute.Dec04.lib'
+      - '[get_flow_config data_dir]/inputs_top_2Q_AE_PCA/lib/pixelArray_PCA_readout.7/Dec04/pixelArray_PCA_readout.func-slow_1p08_125C.postroute.Dec04.lib'
+      #- '[get_flow_config data_dir]/inputs_top/lib/timing/pixelArray_AE_readout.func-slow_1p08_125C.postroute.lib'
+      #- '[get_flow_config data_dir]/inputs_top/lib/timing/pixelArray_PCA_readout.func-slow_1p08_125C.postroute.lib'
+      #- '[get_flow_config data_dir]/inputs_top/lib/timing/digTest_av_max.lib'
+      #- '[get_flow_config data_dir]/inputs_top/lib/timing/LVDS_IO_bot.tcbn65lpbwp7thvtwc0d9.lib'
+      - '[get_flow_config data_dir]/inputs_top/lib/timing/LVDS_IO_top.tcbn65lpbwp7thvtwc0d9.lib'
+      #- '/asic/Library/TSMC/TSMC65_Merged/Digital/Front_End/timing_power_noise/NLDM/tpan65lpnv2od3_200a/tpan65lpnv2od3wc.lib'
+      - '[get_flow_config data_dir]/inputs/lib/timing/tpan65lpnv2od3wc.custom.lib'
+      #- '[get_flow_config data_dir]/inputs_top/lib/timing/LVDS_Dr_Rv_Bot.tcbn65lpbwp7thvtwc0d9.lib'
+      #- '[get_flow_config data_dir]/inputs_top/lib/timing/LVDS_Dr_Rv_Top.tcbn65lpbwp7thvtwc0d9.lib'
+
+  PVT_1P32V_M40C:
+    library_files:
+      - '[get_flow_config data_dir]/inputs_top_2Q_AE_PCA/lib/pixelArray_AE_readout.14/Dec04/pixelArray_AE_readout.func-fast_1p32_M40C.postroute.Dec04.lib'
+      - '[get_flow_config data_dir]/inputs_top_2Q_AE_PCA/lib/pixelArray_PCA_readout.7/Dec04/pixelArray_PCA_readout.func-fast_1p32_M40C.postroute.Dec04.lib'
+      #- '[get_flow_config data_dir]/inputs_top/lib/timing/digTest_av_min.lib'
+      - '[get_flow_config data_dir]/inputs_top/lib/timing/LVDS_IO_top.tcbn65lpbwp7thvtlt1d1.lib'
+      #- '[get_flow_config data_dir]/inputs_top/lib/timing/LVDS_IO_bot.tcbn65lpbwp7thvtlt1d1.lib'
+      #- '/asic/Library/TSMC/TSMC65_Merged/Digital/Front_End/timing_power_noise/NLDM/tpan65lpnv2od3_200a/tpan65lpnv2od3lt.lib'
+      - '[get_flow_config data_dir]/inputs/lib/timing/tpan65lpnv2od3lt.custom.lib'
+      #- '[get_flow_config data_dir]/inputs_top/lib/timing/LVDS_Dr_Rv_Bot.tcbn65lpbwp7thvtlt1d1.lib'
+      #- '[get_flow_config data_dir]/inputs_top/lib/timing/LVDS_Dr_Rv_Top.tcbn65lpbwp7thvtlt1d1.lib'
+      
+# [@manuelbv] - Custom scripts to be run for floorplanning
+user_floorplanning_scripts:
+#  - '[get_flow_config data_dir]/inputs/scripts/[get_flow_config design_name]_floorplan.tcl'
+
+calibre_scripts:
+  lvs: '[get_flow_config pdk_dir]/Calibre/lvs/calibre.lvs'
+  drc: '[get_flow_config pdk_dir]/Calibre/drc/cell_drc.calibre'

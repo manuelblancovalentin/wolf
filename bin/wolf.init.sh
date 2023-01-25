@@ -6,7 +6,7 @@
 _WOLF_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 _WOLF_DIR=`dirname "$_WOLF_DIR"`
 _WOLF_BIN="${_WOLF_DIR}/bin"
-if [[ ! -d ${_WOLF_BIN} || ! -f "${_WOLF_BIN}/utils" || ! -f "${_WOLF_BIN}/wolf.run" || ! -f "${_WOLF_BIN}/wolf.setup" || ! -f "${_WOLF_BIN}/wolf.env" ]]; then
+if [[ ! -d ${_WOLF_BIN} || ! -f "${_WOLF_BIN}/utils" || ! -f "${_WOLF_BIN}/wolf.run" || ! -f "${_WOLF_BIN}/wolf.process" || ! -f "${_WOLF_BIN}/wolf.env" ]]; then
     printf "\033[1;7;31m [ERROR] - Invalid installation. Some binary files required to run wolf are either missing or unaccessible. Contact your cadadmin to fix this."
 fi
 
@@ -26,9 +26,9 @@ source "${_WOLF_BIN}/utils"
 source "${_WOLF_BIN}/wolf.env"
 
 ######################################################################################
-# Source wolf.setup
+# Source wolf.process
 #####################################################################################
-source "${_WOLF_BIN}/wolf.setup"
+source "${_WOLF_BIN}/wolf.process"
 
 #####################################################################################
 # MAIN WOLF ALIAS
@@ -66,7 +66,7 @@ wolf () {
                 fi
                 shift
                 ;;
-            run|env|create|remove|activate|deactivate|update|reload|history|setup|track|set)
+            run|env|activate|deactivate|update|reload|history|process|track|set)
                 _WOLF_INIT_ARGS_COMMAND="${_WOLF_INIT_ARGS_KEY^^}"
                 shift
                 ;;
@@ -74,9 +74,9 @@ wolf () {
             _WOLF_INIT_ARGS_POSITIONAL+=("$1") # save it in an array for later
             if [[ "$2" != "-"* ]]; then
                 _WOLF_INIT_ARGS_POSITIONAL+=("$2")
-                shift # past value
+                shift # pass value
             fi
-            shift # past argument
+            shift # pass argument
             ;;
         esac
         let _WOLF_INIT_ARGS_INDEX++
@@ -113,22 +113,22 @@ wolf () {
                 ${_WOLF_BIN}/wolf.run "$_WOLF_INIT_ARGS_DEDUCED_ENV_VARS[@]" "${_WOLF_INIT_ARGS_POSITIONAL[@]}"
             fi
             ;;
-        SETUP)
+        PROCESS)
             # Call wolf ip-manager
-            _wolf_setup "${_WOLF_INIT_ARGS_POSITIONAL[@]}"
+            _wolf_process "${_WOLF_INIT_ARGS_POSITIONAL[@]}"
             ;;
         ENV)
             # Call wolf env 
             _wolf_env "${_WOLF_INIT_ARGS_POSITIONAL[@]}"
             ;;
-        CREATE)
-            # Call wolf env 
-            _wolf_env create "${_WOLF_INIT_ARGS_POSITIONAL[@]}"
-            ;;
-        REMOVE)
-            # Call wolf env 
-            _wolf_env remove "${_WOLF_INIT_ARGS_POSITIONAL[@]}"
-            ;;
+        # CREATE)
+        #     # Call wolf env 
+        #     _wolf_env create "${_WOLF_INIT_ARGS_POSITIONAL[@]}"
+        #     ;;
+        # REMOVE)
+        #     # Call wolf env 
+        #     _wolf_env remove "${_WOLF_INIT_ARGS_POSITIONAL[@]}"
+        #     ;;
         ACTIVATE)
             # Call wolf env 
             _wolf_env activate "${_WOLF_INIT_ARGS_POSITIONAL[@]}"

@@ -6,7 +6,7 @@ _wolf () {
 
   case "$prev" in
    env)
-       COMPREPLY=( $( compgen -W "list create remove activate deactivate update reload status history" -- $cur ) )
+       COMPREPLY=( $( compgen -W "list create remove activate deactivate update reload status history build-placeholders" -- $cur ) )
        return 0
        ;;
    activate|-n|--name)
@@ -25,15 +25,11 @@ _wolf () {
       COMPREPLY=($(compgen -W "-from -to -interactive -interactive_run -predict -status -db -dist -run_tag -branch -directory -display -enabled -files -flow -inject_tcl -isolate -metrics_file -no_check -no_gui -no_db -ref_run -reset -simple_output -verbose -version" -- $cur ) )
       return 0
       ;;
-   setup)
-      COMPREPLY=( $( compgen -W "list process flow --help" -- $cur ) )
-       return 0
-       ;;
    process)
       _WOLF_CONFIG_DIR="${_WOLF_DIR}/config"
       _WOLF_IP_TECHNODE_DIR="${_WOLF_CONFIG_DIR}/technodes"
       _WOLF_IP_TECHNODE_LIST=( `find "$_WOLF_IP_TECHNODE_DIR" -maxdepth 1 -mindepth 1 -type d | sort -n | xargs -I{} basename {}` )
-      COMPREPLY=( $( compgen -W "--name ${_WOLF_IP_TECHNODE_LIST[*]}" -- $cur ) )
+      COMPREPLY=( $( compgen -W "list create remove --name ${_WOLF_IP_TECHNODE_LIST[*]}" -- $cur ) )
       return 0
       ;;
    flow)
@@ -59,8 +55,12 @@ _wolf () {
       fi
       return 0
       ;;
-    *)
-       COMPREPLY=($(compgen -W "run track env create remove activate deactivate update reload history --help setup set" -- $cur ) )
+   build-placeholders)
+      COMPREPLY=( $( compgen -W "--force" -- $cur ) )
+      return 0
+      ;;
+   *)
+       COMPREPLY=($(compgen -W "run track env create remove activate deactivate update reload history --help process set" -- $cur ) )
        return 0
        ;;
  esac
