@@ -426,9 +426,9 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
     ##########################
     _wolf_info "Creating ÷blue÷setup.yaml÷÷ file at ÷yellow÷\"$YAML_SETUP_OUT_FILE\"."
     # Initialize with project specific yaml
-    cp "$YAML_TEMPLATE_FILE" "$YAML_SETUP_OUT_FILE"
+    cp "$PROCESS_SETUP_COMMON_TEMPLATE" "$YAML_SETUP_OUT_FILE"
     # Merge with common template
-    tail -n +3 "$PROCESS_SETUP_COMMON_TEMPLATE" >> "$YAML_SETUP_OUT_FILE"
+    tail -n +3 "$YAML_TEMPLATE_FILE" >> "$YAML_SETUP_OUT_FILE"
     # Merge with host libraries location 
     tail -n +3 "$PROCESS_SETUP_HOST_TEMPLATE" >> "$YAML_SETUP_OUT_FILE"
 
