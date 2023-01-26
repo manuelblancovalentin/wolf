@@ -123,43 +123,6 @@ while [[ $# -gt 0 ]]; do
 done
 set -- "${POSITIONAL[@]}" # restore positional parameters
 
-
-###########################################
-# Setup vars according to DESIGN
-#
-##########################################
-#case $DESIGN in
-#    flora_top|digTest|pixelArray_full_readout)
-#        # Design name
-#        case $DESIGN in
-#            flora_top)
-#                export DESIGN_NAME="flora_top"
-#                ;;
-#            digTest)
-#                export DESIGN_NAME="digTest"
-#                ;;
-#            pixelArray_full_readout)
-#                export DESIGN_NAME="pixelArray_full_readout"                
-#        esac
-#
-#        # Source var definitions
-#        _wolf_info "Sourcing ÷yellow÷\"/home/manuelbv/xray_imaging/src/inputs/env/FLORA_env.csh\"÷÷"
-#        source "/home/manuelbv/xray_imaging/src/inputs/env/FLORA_env.csh" > /dev/null
-#        
-#        THRESHOLD_VOLTAGES="${VTHS}"
-#        YAML_SETUP_FILE="setup.${DESIGN_NAME}.yaml"
-#        # Make sure we evaluate the PDK_DIR (to pick up the right metal_stack dir and everything)
-#        PDK_DIR=`eval echo "$PDK_DIR"`
-#        TECHDIR_DRC=`eval echo "$TECHDIR_DRC"`
-#        TECHDIR_LVS=`eval echo "$TECHDIR_LVS"`
-#        ;;
-#    
-#    *)
-#        _error "Unknown design option. Exiting now"
-#        exit 1
-#        ;;
-#esac
-
 ###############################################################################
 # Check if this design was ran before. If it was, detect the latest index.
 ###############################################################################
@@ -357,7 +320,7 @@ printVars ""
 vars_to_print=( "DESIGN_NAME" "USER" "TIMESTAMP" )
 printVars "Design options" "${vars_to_print[@]}"
 
-vars_to_print=("PROCESS" "LIB_DIR" "IO_LIB_DIR" "PDK_DIR" "METAL_STACK" "TECHDIR_DRC" "TECHDIR_LVS" "THRESHOLD_VOLTAGES" "PROCESS_SCRIPTS" "PROCESS_SETUP_TEMPLATE" "PROCESS_FLOW_TEMPLATE" )
+vars_to_print=("PROCESS" "LIB_DIR" "IO_LIB_DIR" "PDK_DIR" "METAL_STACK" "TECHDIR_DRC" "TECHDIR_LVS" "THRESHOLD_VOLTAGES" "PROCESS_SCRIPTS" "PROCESS_SETUP_COMMON_TEMPLATE" "PROCESS_SETUP_HOST_TEMPLATE" "PROCESS_FLOW_TEMPLATE" )
 printVars "Technology specification" "${vars_to_print[@]}"
 
 vars_to_print=( "WORKSPACE_DIR" "SCRIPTS_DIR" )
@@ -462,9 +425,12 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
     # YAML FILES CREATION/COPYING
     ##########################
     _wolf_info "Creating ÷blue÷setup.yaml÷÷ file at ÷yellow÷\"$YAML_SETUP_OUT_FILE\"."
-    cp "$PROCESS_SETUP_TEMPLATE" "$YAML_SETUP_OUT_FILE"
-    # Merge with project template
-    tail -n +3 "$YAML_TEMPLATE_FILE" >> "$YAML_SETUP_OUT_FILE"
+    # Initialize with project specific yaml
+    cp "$YAML_TEMPLATE_FILE" "$YAML_SETUP_OUT_FILE"
+    # Merge with common template
+    tail -n +3 "$PROCESS_SETUP_COMMON_TEMPLATE" >> "$YAML_SETUP_OUT_FILE"
+    # Merge with host libraries location 
+    tail -n +3 "$PROCESS_SETUP_HOST_TEMPLATE" >> "$YAML_SETUP_OUT_FILE"
 
     _wolf_info "Creating ÷blue÷flow.yaml÷÷ file at ÷yellow÷\"$FLOW_SETUP_OUT_FILE\"."
     cp "$PROCESS_FLOW_TEMPLATE" "$FLOW_SETUP_OUT_FILE"
