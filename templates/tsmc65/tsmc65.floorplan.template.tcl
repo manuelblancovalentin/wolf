@@ -62,6 +62,14 @@ if { [expr [file readable $io_template_file] && [file exists $io_template_file] 
     read_io_file $io_template_file
 } else {
     # Place pins manually
+    set_db assign_pins_edit_in_batch true
+    edit_pin -fix_overlap 1 -unit micron -spread_direction clockwise -side Left -layer 4 -spread_type start -spacing 10 -start 0.0 40.0 -pin {A clk reset}
+    edit_pin -fix_overlap 1 -unit micron -spread_direction clockwise -side Right -layer 4 -spread_type start -spacing 10 -start 0.0 40.0 -pin {{B[1]} {B[0]}}
+    set_db assign_pins_edit_in_batch false
+
+    # Now write io file
+    pinfo "Writing IO file to [+ green]$io_template_file[+]"
+    write_io_file "$io_template_file"
 
 }
 
@@ -163,7 +171,138 @@ route_special -connect {core_pin} \
 
 # ADD STRIPES MANUALLY
 
+set stripe_width 1.8
+set stripe_separation $stripe_width
+set set_to_set_distance [expr 2*$stripe_width + 2*$stripe_separation]
 
+
+# Vertical stripes on M4 vias down to M1
+set_db add_stripes_ignore_block_check false ; 
+set_db add_stripes_break_at none ; 
+set_db add_stripes_route_over_rows_only false ; 
+set_db add_stripes_rows_without_stripes_only false ; 
+set_db add_stripes_extend_to_closest_target none ; 
+set_db add_stripes_stop_at_last_wire_for_area false ; 
+set_db add_stripes_partial_set_through_domain false ; 
+set_db add_stripes_ignore_non_default_domains false ; 
+set_db add_stripes_trim_antenna_back_to_shape none ; 
+set_db add_stripes_spacing_type edge_to_edge ; 
+set_db add_stripes_spacing_from_block 0 ; 
+set_db add_stripes_stripe_min_length stripe_width ; 
+set_db add_stripes_stacked_via_top_layer M4 ; 
+set_db add_stripes_stacked_via_bottom_layer M1 ; 
+set_db add_stripes_via_using_exact_crossover_size false ; 
+set_db add_stripes_split_vias false ; 
+set_db add_stripes_orthogonal_only true ; 
+set_db add_stripes_allow_jog { padcore_ring  block_ring } ; 
+set_db add_stripes_skip_via_on_pin {  standardcell } ; 
+set_db add_stripes_skip_via_on_wire_shape {  noshape   }
+add_stripes -nets {VDD VSS} \
+    -layer M4 -direction vertical \
+    -width $stripe_width -spacing $stripe_separation \
+    -set_to_set_distance $set_to_set_distance \
+    -start_from left -start 2 \
+    -switch_layer_over_obs false \
+    -max_same_layer_jog_length 2 \
+    -pad_core_ring_top_layer_limit AP \
+    -pad_core_ring_bottom_layer_limit M1 \
+    -block_ring_top_layer_limit AP \
+    -block_ring_bottom_layer_limit M1 \
+    -use_wire_group 0 \
+    -snap_wire_center_to_grid none
+
+# Horizontal stripes on M5 vias down to M4
+set_db add_stripes_stacked_via_top_layer M5 ; 
+set_db add_stripes_stacked_via_bottom_layer M4 ; 
+add_stripes -nets {VDD VSS} \
+    -layer M5 -direction horizontal \
+    -width $stripe_width -spacing $stripe_separation \
+    -set_to_set_distance $set_to_set_distance \
+    -start_from left -start 2 \
+    -switch_layer_over_obs false \
+    -max_same_layer_jog_length 2 \
+    -pad_core_ring_top_layer_limit AP \
+    -pad_core_ring_bottom_layer_limit M1 \
+    -block_ring_top_layer_limit AP \
+    -block_ring_bottom_layer_limit M1 \
+    -use_wire_group 0 \
+    -snap_wire_center_to_grid none
+
+# Vertical stripes on M6 vias down to M5
+set stripe_width [expr 2*$stripe_width]
+set stripe_separation $stripe_width
+set set_to_set_distance [expr 2*$stripe_width + 2*$stripe_separation]
+set_db add_stripes_stacked_via_top_layer M6 ; 
+set_db add_stripes_stacked_via_bottom_layer M5 ; 
+add_stripes -nets {VDD VSS} \
+    -layer M6 -direction vertical \
+    -width $stripe_width -spacing $stripe_separation \
+    -set_to_set_distance $set_to_set_distance \
+    -start_from left -start 2 \
+    -switch_layer_over_obs false \
+    -max_same_layer_jog_length 2 \
+    -pad_core_ring_top_layer_limit AP \
+    -pad_core_ring_bottom_layer_limit M1 \
+    -block_ring_top_layer_limit AP \
+    -block_ring_bottom_layer_limit M1 \
+    -use_wire_group 0 \
+    -snap_wire_center_to_grid none
+
+# Horizontal stripes on M7 wias down to M6
+set_db add_stripes_stacked_via_top_layer M7 ; 
+set_db add_stripes_stacked_via_bottom_layer M6 ; 
+add_stripes -nets {VDD VSS} \
+    -layer M7 -direction horizontal \
+    -width $stripe_width -spacing $stripe_separation \
+    -set_to_set_distance $set_to_set_distance \
+    -start_from left -start 2 \
+    -switch_layer_over_obs false \
+    -max_same_layer_jog_length 2 \
+    -pad_core_ring_top_layer_limit AP \
+    -pad_core_ring_bottom_layer_limit M1 \
+    -block_ring_top_layer_limit AP \
+    -block_ring_bottom_layer_limit M1 \
+    -use_wire_group 0 \
+    -snap_wire_center_to_grid none
+
+
+# Vertical stripes on M8 vias down to M7
+set stripe_width [expr 2*$stripe_width]
+set stripe_separation $stripe_width
+set set_to_set_distance [expr 2*$stripe_width + 2*$stripe_separation]
+set_db add_stripes_stacked_via_top_layer M8 ; 
+set_db add_stripes_stacked_via_bottom_layer M7 ; 
+add_stripes -nets {VDD VSS} \
+    -layer M8 -direction vertical \
+    -width $stripe_width -spacing $stripe_separation \
+    -set_to_set_distance $set_to_set_distance \
+    -start_from left -start 2 \
+    -switch_layer_over_obs false \
+    -max_same_layer_jog_length 2 \
+    -pad_core_ring_top_layer_limit AP \
+    -pad_core_ring_bottom_layer_limit M1 \
+    -block_ring_top_layer_limit AP \
+    -block_ring_bottom_layer_limit M1 \
+    -use_wire_group 0 \
+    -snap_wire_center_to_grid none
+
+# Horizontal stripes on M9 wias down to M8
+set_db add_stripes_stacked_via_top_layer M9 ; 
+set_db add_stripes_stacked_via_bottom_layer M8 ; 
+add_stripes -nets {VDD VSS} \
+    -layer M9 -direction horizontal \
+    -width $stripe_width -spacing $stripe_separation \
+    -set_to_set_distance $set_to_set_distance \
+    -start_from left -start 2 \
+    -switch_layer_over_obs false \
+    -max_same_layer_jog_length 2 \
+    -pad_core_ring_top_layer_limit AP \
+    -pad_core_ring_bottom_layer_limit M1 \
+    -block_ring_top_layer_limit AP \
+    -block_ring_bottom_layer_limit M1 \
+    -use_wire_group 0 \
+    -snap_wire_center_to_grid none
+    
 # SAVE FLOORPLAN
 set floorplan_file [string map {".latest" "" } [get_flow_config init_floorplan_file]]
 set new_floorplan_file [lindex [next_file_version_number $floorplan_file] 1]
