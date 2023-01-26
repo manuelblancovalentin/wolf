@@ -390,7 +390,7 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
     #####################################################################
     if $COPY_SCRIPTS_OVER; then
         _wolf_info "Copying ÷blue÷process scripts÷÷ templates over to ÷yellow÷\"$SCRIPTS_DIR\"."
-        cp -r ${PROCESS_SCRIPTS} ${SCRIPTS_DIR}
+        cp -r -L ${PROCESS_SCRIPTS} ${SCRIPTS_DIR}
         # Now create sha checksum
         rm -f "${SCRIPTS_DIR}/scripts.sha512checksum"
         find "${SCRIPTS_DIR}" -type f ! -iname "${SCRIPTS_DIR}/scripts.sha512checksum" -exec sha512sum "{}" + > "${SCRIPTS_DIR}/scripts.sha512checksum" 2&> /dev/null
@@ -426,14 +426,14 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
     ##########################
     _wolf_info "Creating ÷blue÷setup.yaml÷÷ file at ÷yellow÷\"$YAML_SETUP_OUT_FILE\"."
     # Initialize with project specific yaml
-    cp "$PROCESS_SETUP_COMMON_TEMPLATE" "$YAML_SETUP_OUT_FILE"
+    cp -L "$PROCESS_SETUP_COMMON_TEMPLATE" "$YAML_SETUP_OUT_FILE"
     # Merge with common template
     tail -n +3 "$YAML_TEMPLATE_FILE" >> "$YAML_SETUP_OUT_FILE"
     # Merge with host libraries location 
     tail -n +3 "$PROCESS_SETUP_HOST_TEMPLATE" >> "$YAML_SETUP_OUT_FILE"
 
     _wolf_info "Creating ÷blue÷flow.yaml÷÷ file at ÷yellow÷\"$FLOW_SETUP_OUT_FILE\"."
-    cp "$PROCESS_FLOW_TEMPLATE" "$FLOW_SETUP_OUT_FILE"
+    cp -L "$PROCESS_FLOW_TEMPLATE" "$FLOW_SETUP_OUT_FILE"
 
     #######################
     # YAML FILES SUBSTITUTION
