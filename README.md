@@ -307,12 +307,6 @@ Pick process to be used among installed ips
 - Constraint modes
 - Analysis views
 
-
-![mmmc.png](mmmc.png)
-
-
-![mmmc2.png](mmmc2.png)
-
 #### Cells
  - Don't use. A window in the command line line below, where the user can pick which cells not to use.
 ```bash
