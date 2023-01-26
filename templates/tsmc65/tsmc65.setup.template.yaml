@@ -145,16 +145,16 @@ shield_clocks: 0
 
 # The target slew used for clock tree synthesis. This attribute specifies a maximum slew time that
 # the clock tree synthesis algorithm will allow in library units.
-# cts_target_max_transitions:
-#   top: 100.0pS
-#   trunk: 250.0pS
-#   leaf: 100.0pS
+cts_target_max_transitions:
+  top: 100.0pS
+  trunk: 250.0pS
+  leaf: 100.0pS
 
 # The target skew used for clock tree synthesis. Valid values are: default | auto | ignore | <double>.
-#cts_target_skew: 50.0pS
+cts_target_skew: 50.0pS
 
 # PJO after this ...
-#post_CTS_uncertainty: 62.5
+post_CTS_uncertainty: 62.5
 
 # Clock derate
 clock_derates:
