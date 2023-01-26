@@ -6,7 +6,7 @@ _wolf () {
 
   case "$prev" in
    env)
-       COMPREPLY=( $( compgen -W "list create remove activate deactivate update reload status history build-placeholders" -- $cur ) )
+       COMPREPLY=( $( compgen -W "list create remove activate deactivate update reload status history auto-setup" -- $cur ) )
        return 0
        ;;
    activate|-n|--name)
@@ -55,7 +55,7 @@ _wolf () {
       fi
       return 0
       ;;
-   build-placeholders)
+   auto-setup)
       COMPREPLY=( $( compgen -W "--force" -- $cur ) )
       return 0
       ;;
