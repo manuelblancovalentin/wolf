@@ -15,7 +15,7 @@ function printArray () {
     fi
     for key in "${@:2}";
     do  
-        cmd="echo \$$key"
+        cmd="echo \${$key[@]}"
         val=$(eval $cmd)
         printf "${purple}| ${blue}$key${white}: $val\n"
     done
@@ -50,36 +50,44 @@ CONSTRAINTS_FILE="${INPUTS_DIR}/constraints/${DESIGN_NAME}.constraints.sdc"
 
 # Other configs
 if [[ ! -f "$YAML_TEMPLATE_FILE" ]]; then
-    YAML_TEMPLATE_FILE="${INPUTS_DIR}/env/${DESIGN_NAME}/setup.${DESIGN_NAME}.template.yaml"
+    YAML_TEMPLATE_FILE="${INPUTS_DIR}/env/setup.${DESIGN_NAME}.template.yaml"
 fi
 
 # Metal Stack
+# 1p10m_5x2y2r 1p10m_5x2y2z 1p9m_6x1z1u
 ms=${METAL_STACK}
 ms=$(echo "$ms" | tr -d '\\"')
 ms=`echo ${ms}`
 case $ms in 
-    "6lmT1"|"6lmT2"|"7lmT1"|"7lmT2"|"8lmT1"|"8lmT2"|"9lmT1"|"9lmT2")
-        METAL_STACK_NUM_LAYERS="${METAL_STACK:0:1}"
-        METAL_STACK_TECH="${METAL_STACK: -1}"
-        METAL_STACK_DIR="1p${METAL_STACK_NUM_LAYERS}m$((${METAL_STACK_NUM_LAYERS} - 3))x1z1u"
+    1p10m_5x2y2r|"1p10m_5x2y2r")
+        METAL_STACK_NUM_LAYERS="10"
+        METAL_STACK_TECH="R"
+        METAL_STACK_DIR="1p10m_5x2y2r"
+        ;;
+    1p10m_5x2y2z|"1p10m_5x2y2z")
+        METAL_STACK_NUM_LAYERS="10"
+        METAL_STACK_TECH="Z"
+        METAL_STACK_DIR="1p10m_5x2y2z"
+        ;;
+    1p9m_6x1z1u|"1p9m_6x1z1u")
+        METAL_STACK_NUM_LAYERS="9"
+        METAL_STACK_TECH="U"
+        METAL_STACK_DIR="1p9m_6x1z1u"
         ;;
     *)
-         _wolf_error "Unknown metal_stack \"$METAL_STACK\". Valid options are: 6lmT1, 6lmT2, 7lmT1, 7lmT2, 8lmT1, 8lmT2, 9lmT1, 9lmT2"
+         _wolf_error "Unknown metal_stack \"$METAL_STACK\". Valid options are: 1p10m_5x2y2r, 1p10m_5x2y2z, 1p9m_6x1z1u"
         return 1
         ;;
 esac 
 
+
 # We are only going to use regular vt and 9 track
 # VTHS=( "rvt" )
-THRESHOLD_VOLTAGES=${VTHS[@]}
+THRESHOLD_VOLTAGES=( ${VTHS[@]} )
 TRACKS="9T"
 
-# It is important to change the PDK_DIR to the right dir according to the METAL_STACK
-#PDK_DIR="$PDK_DIR/1p9m6x1z1u"
-
 # RTL FILES (same for all FLORA modules, that is, flora_top, digTest, etc.)
-RTL_YAML_FILE="${INPUTS_DIR}/env/${DESIGN_NAME}/${DESIGN_NAME}.src.yaml"
-
+RTL_YAML_FILE="${INPUTS_DIR}/env/${DESIGN_NAME}.src.yaml"
 
 # Print rest of info and exit
 vars_to_set=()
@@ -104,6 +112,7 @@ done
 #echo "${VTHS[@]}"
 wolf set VTHS "${VTHS[@]}"
 wolf set THRESHOLD_VOLTAGES "${VTHS[@]}"
+
 
 unset vars_to_print
 unset printArray
