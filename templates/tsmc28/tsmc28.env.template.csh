@@ -50,7 +50,7 @@ CONSTRAINTS_FILE="${INPUTS_DIR}/constraints/${DESIGN_NAME}.constraints.sdc"
 
 # Other configs
 if [[ ! -f "$YAML_TEMPLATE_FILE" ]]; then
-    YAML_TEMPLATE_FILE="${INPUTS_DIR}/env/setup.${DESIGN_NAME}.template.yaml"
+    YAML_TEMPLATE_FILE="${INPUTS_DIR}/env/${DESIGN_NAME}/setup.${DESIGN_NAME}.template.yaml"
 fi
 
 # Metal Stack
@@ -87,7 +87,7 @@ THRESHOLD_VOLTAGES=( ${VTHS[@]} )
 TRACKS="9T"
 
 # RTL FILES (same for all FLORA modules, that is, flora_top, digTest, etc.)
-RTL_YAML_FILE="${INPUTS_DIR}/env/${DESIGN_NAME}.src.yaml"
+RTL_YAML_FILE="${INPUTS_DIR}/env/${DESIGN_NAME}/${DESIGN_NAME}.src.yaml"
 
 # Print rest of info and exit
 vars_to_set=()
