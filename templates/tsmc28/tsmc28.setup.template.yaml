@@ -293,3 +293,24 @@ user_library_files:
 # A YAML list of base_cell names which should be marked as dont_use
 #dont_use_cells:
 #  - < PLACEHOLDER: LIST OF DONT_USE BASE_CELLS >
+
+########################################################################
+# [@manuelbv]: This list allows the user to set a list of pointers to 
+#   postsyn netlists (other blocks that were previously synthesized
+#   in genus) so they get added after synthesis, for floorplanning.
+#   This is useful, for instance, whenever you have very big designs
+#   that have a specific block that takes a lot of time to get synthesized
+#   (like a neural network that comes out of HLS) and you instantiate
+#   those modules at the top level, which you also have to synthesize,
+#   but you don't want to re-synthesize the big block (DNN) over and over
+#   every time you synthesize the top level. So instead, you synthesize
+#   the big block (DNN) independently running its own synthesis flow,
+#   get the postsyn netlist; then run synthesis for the top block independently
+#   (instantiating a dummy verilog definition at the top, which only contains
+#   the big block's ports), and then just reference this postsyn netlist (DNN) 
+#   to be used for implementation, so innovus will pick both the postsyn 
+#   top module's verilog as well as the big block's postsyn verilog to start
+#   implementation at floorplanning
+###########################################################################
+user_postsyn_netlists:
+#  - < PLACEHOLDER: LIST OF POSTSYN NETLISTS TO BE ADDED AFTER SYNTHESIS >
