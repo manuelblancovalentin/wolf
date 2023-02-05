@@ -15,6 +15,7 @@
 
 # WOLF: A tool for digital flow automation and management.
 
+![Algo](imgs/road_sign.png)
 ## 1. Introduction
 ```bash
 TODO
