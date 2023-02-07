@@ -23,6 +23,10 @@ max_routing_layers:
   top:    M8
   bottom: M2
 
+# [@manuelbv]: Variable specifying whether a design should be uniquified or not
+uniquify_modules: 
+#  - '[get_flow_config design_name]'
+
 ##############################################################################################################################
 # [@manuelbv]: Var used to inject code into the flow without necessarily modifying the original template flow.
 ##############################################################################################################################
