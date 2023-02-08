@@ -190,13 +190,13 @@ decap_cells:
   DCAP32:   8.60 
 
 decap_cells_list:
-  - DCAP64 
-  - DCAP32 
+  - DCAP64LVT
+  - DCAP32LVT
 
 decap_cells_endcap_antenna_cells:
-  - DCAP64
-  - DCAP32
-  - ANTENNA
+  - DCAP64LVT
+  - DCAP32LVT
+  - ANTENNALVT
 
 total_decap: 300000
 
@@ -232,7 +232,7 @@ total_decap: 300000
 # [?] GFILLBWP7T 
 # [?] GFILL<2,3,4,10>BWP7T
 # [x] TAPCELLBWP7T
-well_tap_cell: FILL1
+well_tap_cell: FILL1LVT
 welltap_interval: 14
 
   

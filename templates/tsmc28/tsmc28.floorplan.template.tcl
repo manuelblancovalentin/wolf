@@ -61,10 +61,53 @@ set io_template_file "[file join [get_flow_config inputs_dir] floorplans [get_fl
 if { [expr [file readable $io_template_file] && [file exists $io_template_file] ] } {
     read_io_file $io_template_file
 } else {
-    # Place pins manually
+    
+    # [@manuelbv]: Unassign all pins
+    set_partition_pin_status -pins [get_db ports .name] -status unplaced -quiet
+
+    # [@manuelbv]: Set batch to true
     set_db assign_pins_edit_in_batch true
-    edit_pin -fix_overlap 1 -unit micron -spread_direction clockwise -side Left -layer 4 -spread_type start -spacing 10 -start 0.0 40.0 -pin {A clk reset}
-    edit_pin -fix_overlap 1 -unit micron -spread_direction clockwise -side Right -layer 4 -spread_type start -spacing 10 -start 0.0 40.0 -pin {{B[1]} {B[0]}}
+
+    # [@manuelbv]: Syntax: [dict create "direction" {Side layer separation_between_pins}]
+    set pin_position [dict create "in" {"Left" 4 1.0} "out" { "Right" 4 1.0} ]
+
+    dict for {pin_dir pin_loc_layer_and_sep} $pin_position {
+        set these_pins_loc [lindex $pin_loc_layer_and_sep 0]
+        set these_pins_layer [lindex $pin_loc_layer_and_sep 1]
+        set these_pins_sep [lindex $pin_loc_layer_and_sep 2]
+        set these_pins [get_db [get_db ports -if {.direction == "$pin_dir"}] .name]
+        set npins [llength $these_pins]
+        if { ($these_pins_loc eq "Left") || ($these_pins_loc eq "Right") } {
+            puts "y"
+            set these_pins_offset [list 0.0 [expr ($die_height - ($npins - 1)*$these_pins_sep)/2 ]]
+            if { $these_pins_loc eq "Left" } { 
+                set spread_dir "clockwise"
+            } else {
+                set spread_dir "counterclockwise"
+            }
+        } else {
+            puts "x"
+            set these_pins_offset [list [expr ($die_width - ($npins - 1)*$these_pins_sep)/2 ] 0.0]
+            if { $these_pins_loc eq "Top" } { 
+                set spread_dir "clockwise"
+            } else {
+                set spread_dir "counterclockwise"
+            }
+        }
+        # Place pins
+        edit_pin \
+            -fix_overlap 1 \
+            -unit micron \
+            -spread_direction "$spread_dir" \
+            -side "$these_pins_loc" \
+            -layer "$these_pins_layer" \
+            -spread_type start \
+            -spacing $these_pins_sep \
+            -start $these_pins_offset \
+            -pin "$these_pins"
+    }
+
+    # Place pins manually
     set_db assign_pins_edit_in_batch false
 
     # Now write io file
