@@ -1,0 +1,277 @@
+%TAG ! tag:design.stylus.cadence.com,0.1:
+---
+# Generated Using: Flowtool 20.10-p020_1
+# Template Release: 2027154
+
+
+####################################################################################################
+# Flow Customization
+####################################################################################################
+
+# [@manuelbv] VIRTUAL METAL FILL (WHICH MAKES INNOVUS ESTIMATE THE PARASITICS WITH METAL FILL)
+enable_VMF: false
+
+# The flow effort optimization level {express standard extreme}.
+design_flow_effort: standard
+
+# The power effort optimization level {none low high}.
+design_power_effort: none
+
+# [@manuelbv]: Variable specifying whether a design should be uniquified or not
+uniquify_modules: 
+#  - '[get_flow_config design_name]'
+
+##############################################################################################################################
+# [@manuelbv]: Var used to inject code into the flow without necessarily modifying the original template flow.
+##############################################################################################################################
+user_inject_tcl:
+  steps:
+    #synthesis.syn_generic.block_start:
+      #prerun:
+        # - command num 1 to be executed before the step "synthesis.syn_generic.block_start"
+        # - command num 2 to be executed before the step "synthesis.syn_generic.block_start", after the command in the previous line
+      #postrun:
+        #- command to be run after the step "synthesis.syn_generic.block_start"
+        #-'set_db minimize_uniquify true'
+    #implementation.floorplan.load_floorplan:
+      #postrun:
+        #- 'set_db \[get_db nets *In\\\[*\\] \] .skip_routing true'
+
+# [@manuelbv]: Directory where virtuoso libraries will be added to
+virtuoso_user_dir: '$env(HOME)/virtuoso'
+
+# Constraint modes to be created using 'create_constraint_mode'
+#---------------------------------------------------------------------------------------------------
+#   constraint_modes:
+#     <name>:
+#       sdc_files:
+#          -  <list of constraint files to associate with the constraint_mode>
+#     [ tcl_variables:
+#          -  <optional list of TCL variables defined as key/value pairs> ]
+constraint_modes:
+  funcEarlyConstraintMode:
+    sdc_files: ${CONSTRAINTS_FILES}
+  funcLateConstraintMode:
+    sdc_files: ${CONSTRAINTS_FILES}
+
+# [@manuelbv]: Calibre PDK files
+calibre_scripts:
+  lvs: '[get_flow_config pdk_dir]/Calibre/lvs/calibre.lvs'
+  drc: '[get_flow_config pdk_dir]/Calibre/drc/cell_drc.calibre'
+
+# DRC/LVS custom rulefiles
+user_lvs_rulefiles:
+  - '[get_flow_config inputs_dir]/calibre/${DESIGN_NAME}/${DESIGN_NAME}.lvs.cal'
+
+user_drc_rulefiles:
+  - '[get_flow_config inputs_dir]/calibre/${DESIGN_NAME}/${DESIGN_NAME}.drc.cal'
+
+
+# Path to power_intent files which are keyed by power_intent type.  These entries will be
+# expanded and used by the 'read_power_intent' command.
+#   init_power_intent_files:
+#     cpf: < power intent file in CPF format >
+#     1801: < power intent file in 1801 format >
+#init_power_intent_files:
+#  cpf: '[get_flow_config data_dir]/constraints/tdsp_core.cpf'
+
+# 'place' related attributes
+#---------------------------------------------------------------------------------------------------
+
+
+##############################################################################################################################
+# [@manuelbv]: The instance names added to this list will remain untouched by genus after synthesis
+##############################################################################################################################
+preserve_instances:
+  #- digIOBUFF*
+  
+##############################################################################################################################
+# [@manuelbv]: A YAML list of base_cell names which should be marked as dont_use
+##############################################################################################################################
+dont_use_cells: 
+#  - "*D0"
+
+
+####################################################################################################
+# Floorplan vars Config
+####################################################################################################
+# Flow parameters which relate to floorplanning
+####################################################################################################
+
+# A YAML list of power/ground net names used by 'init_design' command.  This is typically not necessary
+# when a power_intent file is specified.
+# [@manuelbv]: This definition of init pwr/gnd nets was taken from beast1:/asic/projects/F/FLORA/farah/digital/pixelArray_hvt/pnr/work/FF/init.tcl
+init_power_nets:
+   - VDD
+ 
+init_ground_nets:
+   - VSS
+
+# (Connect global nets pin_name: net) - Pin_names must be unique - Multiple pins can be connected to the same net
+user_global_nets:
+  # global_net_A: global_net_B
+
+####################################################################################################################
+# [@manuelbv]: Path to floorplan file read in during 'init_floorplan' flow_step, by default this is set by wolf.
+####################################################################################################################
+init_floorplan_file: ${FLOORPLAN_FILE}
+init_floorplan_io_file: ${FLOORPLAN_IO_FILE}
+
+
+# Core name, this is the default value
+core_site_name: SC8T_104CPP_CMOS22FDX
+
+# Specification of the floorplan/power-grid dimensions
+floorplan_spef: 
+  #die_width: 1038
+  #die_height: 1038
+  #margin_horizontal: 0.0
+  #margin_vertical: 0.0
+  #power_grid:
+  #  layers:
+  #    vertical: 
+  #      M3: 0.5 
+  #      M6: 1.0 
+  #      M8: 1.0
+  #    horizontal: 
+  #      M5: 1.0 
+  #      M7: 1.0
+
+# [@manuelbv] - Custom scripts to be run for floorplanning
+user_floorplanning_scripts:
+#  - '[get_flow_config inputs_dir]/scripts/[get_flow_config design_name]/[get_flow_config design_name].floorplan.tcl'
+
+
+##########################
+# [@manuelbv] : CTS RELATED VARIABLES
+##########################
+#This variable defines whether the clocks should be shield or not
+shield_clocks: 0
+
+# The target slew used for clock tree synthesis. This attribute specifies a maximum slew time that
+# the clock tree synthesis algorithm will allow in library units.
+cts_target_max_transitions:
+  top: 100.0pS
+  trunk: 100.0pS
+  leaf: 100.0pS
+
+# The target skew used for clock tree synthesis. Valid values are: default | auto | ignore | <double>.
+cts_target_skew: 50.0pS
+
+# PJO after this ...
+post_CTS_uncertainty: 62.5
+
+# Clock derate
+clock_derates:
+  cell_delay: 
+    late: 1.05
+    early: 0.95
+
+
+##########################
+# [@manuelbv] : Define preferred layers for CTS
+##########################
+cts_preferred_layers:
+  trunk:
+    top: 6
+    bottom: 5
+  top:
+    top: 6
+    bottom: 5
+  leaf:
+    top: 4
+    bottom: 3
+
+
+# 'dft' related attributes
+#---------------------------------------------------------------------------------------------------
+# Max scan chain length.
+dft_max_length_of_scan_chains: 50000
+
+# ADDED BY MANU
+rst_max_delay: 900
+
+#############################################
+# VOLTUS 
+#############################################
+global_activity: 0.05
+
+clock_gates_output: 
+
+
+
+###############################################################################################
+# [@manuelbv] : CUSTOM LIBRARY FILES
+###############################################################################################
+# [@manuelbv] - custom physical files for custom cells
+user_custom_lib_files:
+  lef_files: 
+    # - '[get_flow_config inputs_dir]/lib/lef/<CUSTOM_LEF_FILE>.lef'
+  gds_files:
+    # - '[get_flow_config inputs_dir]/lib/gds/<CUSTOM_GDS_FILE>.gds'
+  spice_files:
+    #- '[get_flow_config inputs_dir]/lib/spice/<CUSTOM_SPICE_FILE>.sp'
+    
+# [@manuelbv] - custom timing libs
+# Max ->  smallest voltage, worst case timing 
+# Min ->  highest voltage, best case timing
+user_library_files:
+  SSG_0P72V_125C:
+    # library_files:
+    #   #- '[get_flow_config lib_dir]/IN_GF22FDX_S1PL/sram_sp_16384x16_NFLG_C128/model/timing/lib/sram_sp_16384x16_116cpp_SSG_0P720V_0P720V_0P000V_0P000V_125C.lib'
+    #   - '[get_flow_config lib_dir]/IN_GF22FDX_S1P/sram_sp_8192x32_NFRG_C128/model/timing/lib/sram_sp_8192x32_104cpp_SSG_0P720V_0P720V_0P000V_0P000V_125C.lib'
+    #   - '[get_flow_config lib_dir]/IN_GF22FDX_S1PL/sram_sp_4096x8_NFLG_C128/model/timing/lib/sram_sp_4096x8_116cpp_SSG_0P720V_0P720V_0P000V_0P000V_125C.lib'
+    # aocv_files:
+    #   #- '[get_flow_config lib_dir]/IN_GF22FDX_S1PL/sram_sp_16384x16_NFLG_C128/model/timing/aocv/sram_sp_16384x16_116cpp_SSG_0P720V_0P720V_0P000V_0P000V_125C.aocv'
+    #   - '[get_flow_config lib_dir]/IN_GF22FDX_S1P/sram_sp_8192x32_NFRG_C128/model/timing/aocv/sram_sp_8192x32_104cpp_SSG_0P720V_0P720V_0P000V_0P000V_125C.aocv'
+    #   - '[get_flow_config lib_dir]/IN_GF22FDX_S1PL/sram_sp_4096x8_NFLG_C128/model/timing/aocv/sram_sp_4096x8_116cpp_SSG_0P720V_0P720V_0P000V_0P000V_125C.aocv'
+  SSG_0P72V_M40C:
+    # library_files:
+    #   #- '[get_flow_config lib_dir]/IN_GF22FDX_S1PL/sram_sp_16384x16_NFLG_C128/model/timing/lib/sram_sp_16384x16_116cpp_SSG_0P720V_0P720V_0P000V_0P000V_M40C.lib'
+    #   - '[get_flow_config lib_dir]/IN_GF22FDX_S1P/sram_sp_8192x32_NFRG_C128/model/timing/lib/sram_sp_8192x32_104cpp_SSG_0P720V_0P720V_0P000V_0P000V_M40C.lib'
+    #   - '[get_flow_config lib_dir]/IN_GF22FDX_S1PL/sram_sp_4096x8_NFLG_C128/model/timing/lib/sram_sp_4096x8_116cpp_SSG_0P720V_0P720V_0P000V_0P000V_M40C.lib'
+    # aocv_files:
+    #   #- '[get_flow_config lib_dir]/IN_GF22FDX_S1PL/sram_sp_16384x16_NFLG_C128/model/timing/aocv/sram_sp_16384x16_116cpp_SSG_0P720V_0P720V_0P000V_0P000V_M40C.aocv'
+    #   - '[get_flow_config lib_dir]/IN_GF22FDX_S1P/sram_sp_8192x32_NFRG_C128/model/timing/aocv/sram_sp_8192x32_104cpp_SSG_0P720V_0P720V_0P000V_0P000V_M40C.aocv'
+    #   - '[get_flow_config lib_dir]/IN_GF22FDX_S1PL/sram_sp_4096x8_NFLG_C128/model/timing/aocv/sram_sp_4096x8_116cpp_SSG_0P720V_0P720V_0P000V_0P000V_M40C.aocv'
+  FFG_0P88V_M40C:
+    # library_files:
+    #   #- '[get_flow_config lib_dir]/IN_GF22FDX_S1PL/sram_sp_16384x16_NFLG_C128/model/timing/lib/sram_sp_16384x16_116cpp_FFG_0P880V_0P880V_0P000V_0P000V_M40C.lib'
+    #   - '[get_flow_config lib_dir]/IN_GF22FDX_S1P/sram_sp_8192x32_NFRG_C128/model/timing/lib/sram_sp_8192x32_104cpp_FFG_0P880V_0P880V_0P000V_0P000V_M40C.lib'
+    #   - '[get_flow_config lib_dir]/IN_GF22FDX_S1PL/sram_sp_4096x8_NFLG_C128/model/timing/lib/sram_sp_4096x8_116cpp_FFG_0P880V_0P880V_0P000V_0P000V_M40C.lib'
+    # aocv_files:
+    #   #- '[get_flow_config lib_dir]/IN_GF22FDX_S1PL/sram_sp_16384x16_NFLG_C128/model/timing/aocv/sram_sp_16384x16_116cpp_FFG_0P880V_0P880V_0P000V_0P000V_M40C.aocv'
+    #   - '[get_flow_config lib_dir]/IN_GF22FDX_S1P/sram_sp_8192x32_NFRG_C128/model/timing/aocv/sram_sp_8192x32_104cpp_FFG_0P880V_0P880V_0P000V_0P000V_M40C.aocv'
+    #   - '[get_flow_config lib_dir]/IN_GF22FDX_S1PL/sram_sp_4096x8_NFLG_C128/model/timing/aocv/sram_sp_4096x8_116cpp_FFG_0P880V_0P880V_0P000V_0P000V_M40C.aocv'
+  FFG_0P88V_125C:
+    # library_files:
+    #   #- '[get_flow_config lib_dir]/IN_GF22FDX_S1PL/sram_sp_16384x16_NFLG_C128/model/timing/lib/sram_sp_16384x16_116cpp_FFG_0P880V_0P880V_0P000V_0P000V_125C.lib'
+    #   - '[get_flow_config lib_dir]/IN_GF22FDX_S1P/sram_sp_8192x32_NFRG_C128/model/timing/lib/sram_sp_8192x32_104cpp_FFG_0P880V_0P880V_0P000V_0P000V_125C.lib'
+    #   - '[get_flow_config lib_dir]/IN_GF22FDX_S1PL/sram_sp_4096x8_NFLG_C128/model/timing/lib/sram_sp_4096x8_116cpp_FFG_0P880V_0P880V_0P000V_0P000V_125C.lib'
+    # aocv_files:
+    #   #- '[get_flow_config lib_dir]/IN_GF22FDX_S1PL/sram_sp_16384x16_NFLG_C128/model/timing/aocv/sram_sp_16384x16_116cpp_FFG_0P880V_0P880V_0P000V_0P000V_125C.aocv'
+    #   - '[get_flow_config lib_dir]/IN_GF22FDX_S1P/sram_sp_8192x32_NFRG_C128/model/timing/aocv/sram_sp_8192x32_104cpp_FFG_0P880V_0P880V_0P000V_0P000V_125C.aocv'
+    #   - '[get_flow_config lib_dir]/IN_GF22FDX_S1PL/sram_sp_4096x8_NFLG_C128/model/timing/aocv/sram_sp_4096x8_116cpp_FFG_0P880V_0P880V_0P000V_0P000V_125C.aocv'
+
+
+
+########################################################################
+# [@manuelbv]: This list allows the user to set a list of pointers to 
+#   postsyn netlists (other blocks that were previously synthesized
+#   in genus) so they get added after synthesis, for floorplanning.
+#   This is useful, for instance, whenever you have very big designs
+#   that have a specific block that takes a lot of time to get synthesized
+#   (like a neural network that comes out of HLS) and you instantiate
+#   those modules at the top level, which you also have to synthesize,
+#   but you don't want to re-synthesize the big block (DNN) over and over
+#   every time you synthesize the top level. So instead, you synthesize
+#   the big block (DNN) independently running its own synthesis flow,
+#   get the postsyn netlist; then run synthesis for the top block independently
+#   (instantiating a dummy verilog definition at the top, which only contains
+#   the big block's ports), and then just reference this postsyn netlist (DNN) 
+#   to be used for implementation, so innovus will pick both the postsyn 
+#   top module's verilog as well as the big block's postsyn verilog to start
+#   implementation at floorplanning
+###########################################################################
+user_postsyn_netlists:
+#  - < PLACEHOLDER: LIST OF POSTSYN NETLISTS TO BE ADDED AFTER SYNTHESIS >
