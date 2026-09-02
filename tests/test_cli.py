@@ -63,7 +63,10 @@ class InstalledCliTests(unittest.TestCase):
         self.assert_success(result)
         self.assertIn("░░░░░", result.stdout)
         self.assertIn("WOLF EDA workflow and environment manager", result.stdout)
-        self.assertIn("{env,process,backend,run,doctor,info,activate,deactivate}", result.stdout)
+        self.assertIn(
+            "{env,process,backend,package,install,run,doctor,info,activate,deactivate}",
+            result.stdout,
+        )
         self.assertNotIn("_shell-activate", result.stdout)
         self.assertNotIn("_complete", result.stdout)
         self.assertNotIn("\x1b", result.stdout)
