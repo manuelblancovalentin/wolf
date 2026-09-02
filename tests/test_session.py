@@ -8,6 +8,7 @@ import unittest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 BASH = shutil.which("bash") or "/bin/bash"
+ZSH = shutil.which("zsh")
 
 
 class BashIntegrationTests(unittest.TestCase):
@@ -52,6 +53,32 @@ wolf deactivate
 PS1='original> '; wolf activate missing; status=$?
 [ $status -ne 0 ] && [ -z "${{WOLF_ACTIVE_ENV+x}}" ] && [ "$PS1" = 'original> ' ] || exit 10
 wolf deactivate
+'''
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+
+
+@unittest.skipUnless(ZSH, "zsh is not installed")
+class ZshIntegrationTests(BashIntegrationTests):
+    def zsh(self, script):
+        return subprocess.run([ZSH, "-f", "-c", script], env=self.env,
+                              text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+
+    def test_activation_marks_theme_managed_prompt_and_restores_it(self):
+        result = self.zsh(
+            f'''source "{REPO_ROOT}/shell/wolf.zsh"
+original_pid=$$; original_pwd=$PWD; original_path=$PATH; original_ps1='theme> '; PROMPT=$original_ps1; KEEP=value
+wolf activate foo || exit $?
+# Simulate a theme rebuilding the prompt before zsh's precmd hooks run.
+PROMPT=$original_ps1; _wolf_zsh_prompt
+[[ "$$" = "$original_pid" && "$PWD" = "$original_pwd" && "$PATH" = "$original_path" && "$KEEP" = value && "$WOLF_ACTIVE_ENV" = foo && "$PROMPT" == *foo* ]] || exit 10
+wolf activate bar || exit $?
+PROMPT=$original_ps1; _wolf_zsh_prompt
+[[ "$WOLF_ACTIVE_ENV" = bar && "$PROMPT" == *bar* && "$PROMPT" != *foo* ]] || exit 11
+wolf info >/dev/null || exit $?
+cd /; wolf run --plan >/dev/null || exit $?
+wolf deactivate
+[[ -z "${{WOLF_ACTIVE_ENV+x}}" && "$PROMPT" = "$original_ps1" && "$$" = "$original_pid" && "$KEEP" = value ]] || exit 12
 '''
         )
         self.assertEqual(result.returncode, 0, msg=result.stderr)

@@ -40,3 +40,7 @@ for that invocation only.
 
 Execution location does not define experiment location. The active/resolved
 WOLF environment does.
+
+Use `shell/wolf.bash` for Bash and `shell/wolf.zsh` for zsh. The zsh integration
+uses a `precmd` hook so theme-managed prompts retain the active-environment
+marker.

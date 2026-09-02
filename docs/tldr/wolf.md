@@ -47,6 +47,10 @@
 
 `source ./shell/wolf.bash && wolf activate {{environment}}`
 
+- For zsh, load its native prompt integration instead:
+
+`source ./shell/wolf.zsh && wolf activate {{environment}}`
+
 - Inspect or deactivate the active environment:
 
 `wolf {{info|deactivate}}`
