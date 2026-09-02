@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ -z "${WOLF_PACKAGE_TEST_HOME:-}" ]]; then
+    echo "Set WOLF_PACKAGE_TEST_HOME to a dedicated package smoke-test directory." >&2
+    exit 2
+fi
+
+test_root=$(realpath -m -- "$WOLF_PACKAGE_TEST_HOME")
+if [[ "$test_root" == "/" || "$test_root" == "${HOME}/.wolf" ]]; then
+    echo "Refusing unsafe package smoke-test root: $test_root" >&2
+    exit 2
+fi
+
+mkdir -p -- "$test_root"
+export WOLF_HOME=$test_root
+
+wolf install flow/orfs
+wolf install rtl/ibex
+wolf install pdk/asap7
+wolf package list
+
+test -f "$WOLF_HOME/packages/flow/orfs/8c0616910615e843780ba527526f2b83a564ba70/installed.yaml"
+test -f "$WOLF_HOME/packages/rtl/ibex/77d801001554cce8fe69e742e96539eecbe74425/installed.yaml"
+test -f "$WOLF_HOME/packages/pdk/asap7/b9b4c9266113c67978f75b987f1d5a0841c2f15f/installed.yaml"
+
+echo "Package smoke test passed under $WOLF_HOME"

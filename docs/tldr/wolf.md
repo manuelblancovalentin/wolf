@@ -37,6 +37,16 @@
 
 `wolf backend info orfs`
 
+- Install the pinned Ibex, ASAP7, and ORFS packages:
+
+`wolf install {{rtl/ibex|flow/orfs|pdk/asap7}}`
+
+- List installed packages or inspect one package:
+
+`wolf package list`
+
+`wolf package info rtl/ibex`
+
 - Resolve a named environment without starting EDA tools:
 
 `wolf run --environment {{environment}} --plan`

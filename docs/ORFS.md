@@ -1,17 +1,16 @@
 # ORFS backend
 
-The `orfs` backend drives an externally supplied OpenROAD Flow Scripts (ORFS)
-checkout. WOLF manages the selected backend, generic WOLF run lifecycle, stage
+The `orfs` backend drives an installed `flow/orfs` package or an externally
+supplied OpenROAD Flow Scripts (ORFS) checkout. WOLF manages the selected backend, generic WOLF run lifecycle, stage
 ranges, snapshots, and failure stopping; ORFS remains responsible for the
 Yosys/OpenROAD implementation flow.
 
-This phase does not clone, install, or manage ORFS. It also does not require
-host-installed Yosys, OpenROAD, or KLayout.
+It does not require host-installed Yosys, OpenROAD, or KLayout.
 
 ## Requirements
 
-- An ORFS checkout whose root is its `flow` directory. It must contain
-  `Makefile`, `designs`, and `util`.
+- Installed `flow/orfs`, or an external ORFS checkout whose root is its `flow`
+  directory. It must contain `Makefile`, `designs`, and `util`.
 - A usable Docker or Podman runtime. Rootless Podman is preferred when it is
   available and usable.
 - Python 3 for the opt-in result checker.
@@ -22,6 +21,16 @@ Configure the checkout with:
 export ORFS_ROOT=/path/to/OpenROAD-flow-scripts/flow
 wolf backend info orfs
 ```
+
+Alternatively install the pinned built-in package:
+
+```bash
+wolf install flow/orfs
+wolf backend info orfs
+```
+
+Resolution precedence is explicit/environment `ORFS_ROOT`, then installed
+`flow/orfs`, then a clear validation failure. WOLF never searches cwd.
 
 `wolf backend info orfs` is read-only: it reports configured checkout and
 runtime status and does not attempt to pull images or invoke EDA tools. It
@@ -36,7 +45,7 @@ environment model is still being introduced.
 
 | Variable | Required | Meaning |
 | --- | --- | --- |
-| `ORFS_ROOT` | yes | External ORFS `flow` checkout. |
+| `ORFS_ROOT` | conditional | External ORFS `flow` checkout; optional when `flow/orfs` is installed. |
 | `ORFS_DESIGN_CONFIG` | yes | Design `config.mk`, absolute or relative to `ORFS_ROOT`. |
 | `ORFS_FLOW_VARIANT` | yes | Dedicated ORFS `FLOW_VARIANT` result namespace. |
 | `ORFS_SDC_FILE` | no | Explicit host-owned SDC override, absolute or relative to `ORFS_ROOT`. |

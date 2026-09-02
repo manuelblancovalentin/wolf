@@ -42,6 +42,12 @@ construction, backend-neutral stage ranges, and failure propagation without
 starting a container or requiring host OpenROAD tools. The opt-in real Ibex
 integration harness is `tests/integration/run_orfs_ibex`; see `docs/ORFS.md`.
 
+Package tests use temporary local Git repositories, including a recursive
+submodule, to exercise pinned installation, validation, atomic placement,
+idempotency, corruption refusal, package views, CLI inspection, completion,
+ORFS fallback, and cwd independence without network access. The opt-in real
+package harness is `tests/integration/run_packages`; see `docs/PACKAGES.md`.
+
 Test names distinguish intent:
 
 - `test_characterization_*` protects intended legacy semantics.

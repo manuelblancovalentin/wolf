@@ -142,21 +142,27 @@ The manifest schema should stabilize through real migrations rather than be fina
 
 ### 8. Add package and registry behavior after abstraction stability
 
-Once environment, backend, and component identities are stable, add incremental discovery/install support for categories such as RTL, PDK, library, flow, toolchain/backend, and complete examples.
+Phase 1 establishes pinned local discovery/install support for `rtl`, `pdk`,
+and `flow` using a trusted built-in file registry and human-readable installed
+records. It proves `rtl/ibex`, `pdk/asap7`, and `flow/orfs` without introducing
+dependency solving or a service.
 
 The registry should prefer recipes and upstream references. Public assets may be fetched; proprietary assets remain local and must never be uploaded or redistributed.
 
-Possible initial UX:
+Implemented initial UX:
 
 ```text
 wolf search rtl
 wolf install rtl/ibex
 wolf install pdk/asap7
 wolf install flow/orfs
-wolf install example/ibex-asap7-orfs
+wolf package list
+wolf package info rtl/ibex
 ```
 
-These command shapes are directional until manifests and package identity have been proven by the earlier phases.
+Later phases may add libraries, toolchains/backends, complete examples,
+search, updates, uninstall, and richer registry behavior after native
+declarative environments exercise the package metadata.
 
 ## POSSIBLE FUTURE
 

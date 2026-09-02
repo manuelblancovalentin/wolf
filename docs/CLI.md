@@ -21,6 +21,10 @@ Rich performs normal terminal capability detection and honors `NO_COLOR`.
 Redirected and captured output remains plain text without escape sequences.
 `wolf --version` deliberately remains a single unadorned line for scripting.
 
+Package commands use `wolf package info KIND/NAME` for the same terminology as
+environment and backend inspection. `wolf package list` shows installed
+versions, while `wolf install KIND/NAME` resolves a pinned built-in manifest.
+
 The Bash implementation continues to use `bin/defs` and `bin/utils`. It should
 remain visually compatible, but its rendering implementation does not need to
 be shared with Python.
@@ -50,8 +54,8 @@ marker.
 
 The Bash and zsh integration files also register native completion for the
 installed `wolf` command. Completion currently covers public commands and
-subcommands, their current options, stored environment names, and built-in
-backend names. Dynamic candidates come from a private machine-readable Python
+subcommands, their current options, stored environment names, built-in backend
+names, and built-in package identifiers. Dynamic candidates come from a private machine-readable Python
 protocol; shell code does not scrape WOLF's formatted output or duplicate state
 discovery.
 

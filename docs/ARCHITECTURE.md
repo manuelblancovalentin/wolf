@@ -290,11 +290,29 @@ Artifacts, logs, reports, and metrics belong to a specific run, execution, and w
 
 ## Packages and registry
 
-Package categories may eventually include RTL, PDKs, libraries, flows, backend/toolchains, and complete examples or recipes. Registry entries should normally describe manifests, recipes, checksums, licenses, and upstream sources rather than mirror every artifact.
+The Phase 1 local package system supports RTL, PDK, and flow assets through a
+trusted file-backed built-in registry. Generic `PackageManifest`, registry,
+store, and installer behavior loads concrete assets from declarative YAML;
+there are no per-Ibex, per-ASAP7, or per-ORFS classes. Installations use pinned,
+versioned paths under `WOLF_HOME/packages`, retain human-readable installed
+metadata, and remain distinct from implementation workspaces.
+
+Git sources are staged, checked out at an exact revision, optionally initialized
+with recursive submodules, validated, and atomically placed. Package views may
+identify content owned by another pinned package without duplicating it. This
+is how Phase 1 represents the ORFS-vendored ASAP7 platform while preserving an
+independent `pdk/asap7` semantic identity.
+
+Later categories may include libraries, backend/toolchains, and complete
+examples or recipes. Registry entries should normally describe manifests,
+recipes, checksums, licenses, and upstream sources rather than mirror every
+artifact.
 
 Public assets may be fetched automatically. Proprietary assets must be locally importable/registerable without upload or redistribution. No proprietary PDK or library content belongs in the WOLF repository or public registry.
 
-Registry/install behavior is intentionally deferred until the backend and core abstractions stabilize.
+Phase 1 intentionally omits dependency solving, version negotiation, updates,
+uninstall, publishing, remote indexes, signing, and package discovery plugins.
+See `docs/PACKAGES.md`.
 
 ## Architectural invariants
 

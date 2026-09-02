@@ -9,7 +9,8 @@ wolf \- manage WOLF EDA environments and inspect available workflow support
 .SH DESCRIPTION
 WOLF is an EDA workflow and environment manager. The installed command currently
 provides legacy-compatible environment management, process discovery, backend
-inspection, resolved run planning/execution, and basic installation diagnostics.
+inspection, pinned local package installation, resolved run planning/execution,
+and basic installation diagnostics.
 .PP
 A WOLF environment represents an EDA experiment environment. It is not a Python
 virtual environment.
@@ -52,6 +53,18 @@ and
 .BI "wolf backend info " name
 Show a backend's description, compatibility adapter, and backend-local
 dependency status.
+.SH PACKAGE COMMANDS
+.TP
+.B wolf package list
+List installed packages with pinned revision, status, and absolute location.
+.TP
+.BI "wolf package info " kind/name
+Show built-in registry metadata and local installation status for a package.
+.TP
+.BI "wolf install " kind/name
+Fetch, check out, validate, and install a package at its pinned revision under
+.IR WOLF_HOME/packages .
+Repeated installation of the same valid revision is idempotent.
 .SH RUN COMMAND
 .TP
 .B wolf run --plan
@@ -81,14 +94,14 @@ from Bash or
 .I shell/wolf.zsh
 from zsh to enable current-shell activation and native command completion.
 Completion currently includes public commands, subcommands and options, stored
-environment names, and built-in backend names. It will be extended as later
+environment names, built-in backend names, and built-in package identifiers. It will be extended as later
 CLI interfaces become stable. Automatic shell startup-file integration is not
 yet installed.
 .SH DIAGNOSTICS
 .TP
 .B wolf doctor
 Report the WOLF and Python versions, operating system, state root, Git
-availability, and optional Docker and Podman availability. EDA tools are not
+availability, package-store writability, and optional Docker and Podman availability. EDA tools are not
 global WOLF requirements and are not checked here.
 .SH ENVIRONMENT
 .TP
@@ -106,6 +119,9 @@ Default legacy environment collection.
 .TP
 .I ~/.wolf/config
 Default legacy process definition collection.
+.TP
+.I ~/.wolf/packages
+Default versioned local package store.
 .SH SEE ALSO
 Project architecture, backend, and testing documentation is maintained under
 the repository's
