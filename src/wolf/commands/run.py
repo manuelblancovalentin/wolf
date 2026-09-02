@@ -14,7 +14,7 @@ from wolf.paths import state_root
 
 
 def _context(args: argparse.Namespace) -> ResolvedContext:
-    environment_name = args.environment or os.environ.get("WOLF_ENV_NAME")
+    environment_name = args.environment or os.environ.get("WOLF_ACTIVE_ENV") or os.environ.get("WOLF_ENV_NAME")
     environment_directory = None
     values: dict[str, str] = {}
     if environment_name:

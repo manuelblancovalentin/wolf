@@ -27,6 +27,8 @@ class InstalledCliTests(unittest.TestCase):
         )
         self.environment.pop("WOLF_ENV_NAME", None)
         self.environment.pop("WOLF_ENV_DIR", None)
+        self.environment.pop("WOLF_ACTIVE_ENV", None)
+        self.environment.pop("WOLF_MANAGED_SHELL", None)
         self.environment.pop("WOLF_LEGACY_ROOT", None)
 
     def tearDown(self):
@@ -61,7 +63,7 @@ class InstalledCliTests(unittest.TestCase):
         self.assert_success(result)
         self.assertIn("░░░░░", result.stdout)
         self.assertIn("WOLF EDA workflow and environment manager", result.stdout)
-        self.assertIn("{env,process,backend,run,doctor,activate,deactivate}", result.stdout)
+        self.assertIn("{env,process,backend,run,doctor,info,activate,deactivate}", result.stdout)
         self.assertNotIn("\x1b", result.stdout)
 
     def test_cli_version(self):
@@ -221,6 +223,42 @@ class InstalledCliTests(unittest.TestCase):
         )
         self.assert_success(result)
         self.assertIn(f"Workspace root: {invocation / 'work'}", result.stdout)
+
+    def test_active_environment_drives_info_and_run_plan(self):
+        environment = self.create_environment("active")
+        environment.joinpath("vars.env").write_text(
+            'DESIGN_NAME="ibex"\nPROCESS="asap7"\nBACKEND="orfs"\nWORKSPACE_DIR="work"\n',
+            encoding="utf-8",
+        )
+        self.environment["WOLF_ACTIVE_ENV"] = "active"
+        info = self.wolf("info", cwd="/")
+        self.assert_success(info)
+        self.assertIn("Environment: active", info.stdout)
+        planned = self.wolf("run", "--plan", cwd="/tmp")
+        self.assert_success(planned)
+        self.assertIn(f"Workspace root: {environment / 'work'}", planned.stdout)
+
+    def test_explicit_run_environment_overrides_active_without_mutating_it(self):
+        for name, design in (("active", "ibex"), ("other", "boom")):
+            environment = self.create_environment(name)
+            environment.joinpath("vars.env").write_text(
+                f'DESIGN_NAME="{design}"\nPROCESS="asap7"\nBACKEND="orfs"\nWORKSPACE_DIR="work"\n',
+                encoding="utf-8",
+            )
+        self.environment["WOLF_ACTIVE_ENV"] = "active"
+        result = self.wolf("run", "--environment", "other", "--plan")
+        self.assert_success(result)
+        self.assertIn("Environment: other", result.stdout)
+        self.assertIn("Design: boom", result.stdout)
+        self.assertEqual(self.environment["WOLF_ACTIVE_ENV"], "active")
+
+    def test_info_and_deactivate_are_safe_without_active_environment(self):
+        info = self.wolf("info")
+        self.assert_success(info)
+        self.assertIn("No WOLF environment is active", info.stdout)
+        deactivate = self.wolf("deactivate")
+        self.assert_success(deactivate)
+        self.assertIn("No WOLF-managed shell is active", deactivate.stdout)
 
     def test_ui_emits_color_for_a_color_capable_terminal(self):
         script = """

@@ -8,18 +8,10 @@ import sys
 from typing import Optional
 
 from wolf import __version__
-from wolf.commands import backend, doctor, env, process, run
+from wolf.commands import backend, doctor, env, info, process, run, session
 from wolf.backend import UnknownBackendError
 from wolf.legacy import LegacyCommandError
 from wolf import ui
-
-
-def _activation_unavailable(_args: argparse.Namespace) -> int:
-    ui.error(
-        "Activation and deactivation are not yet available through the installed CLI; "
-        "the existing sourced-shell commands remain available."
-    )
-    return 2
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -34,21 +26,8 @@ def build_parser() -> argparse.ArgumentParser:
     backend.register(subparsers)
     run.register(subparsers)
     doctor.register(subparsers)
-
-    activate = subparsers.add_parser("activate", help="reserved for shell activation support")
-    activate.add_argument("environment")
-    activate.set_defaults(
-        handler=_activation_unavailable,
-        ui_kind="env",
-        ui_section="Shell activation",
-    )
-
-    deactivate = subparsers.add_parser("deactivate", help="reserved for shell deactivation support")
-    deactivate.set_defaults(
-        handler=_activation_unavailable,
-        ui_kind="env",
-        ui_section="Shell activation",
-    )
+    info.register(subparsers)
+    session.register(subparsers)
     return parser
 
 
