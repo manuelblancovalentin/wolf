@@ -10,6 +10,8 @@ import subprocess
 from typing import Mapping, Optional, Sequence
 
 from wolf.backend.base import Backend, ValidationItem
+from wolf.package.registry import PackageRegistry
+from wolf.package.store import PackageStore
 
 
 ORFS_STAGES = ("synth", "floorplan", "place", "cts", "route", "finish")
@@ -18,6 +20,7 @@ ORFS_STAGES = ("synth", "floorplan", "place", "cts", "route", "finish")
 @dataclass(frozen=True)
 class OrfsMetadata:
     root: Optional[Path]
+    root_source: Optional[str]
     runtime: Optional[str]
     container_image: Optional[str]
     revision: Optional[str]
@@ -91,6 +94,17 @@ def _git_revision(root: Optional[Path]) -> Optional[str]:
     return result.stdout.strip() if result.returncode == 0 else None
 
 
+def _installed_orfs_root() -> Optional[Path]:
+    manifest = PackageRegistry().get("flow/orfs")
+    installed = PackageStore().read(manifest)
+    if installed is None:
+        return None
+    relative = manifest.metadata.get("flow_root")
+    if not isinstance(relative, str) or not relative:
+        raise ValueError("flow/orfs package manifest does not define metadata.flow_root")
+    return (installed.content_path / relative).resolve()
+
+
 class OrfsBackend(Backend):
     name = "orfs"
     description = "OpenROAD Flow Scripts container compatibility backend"
@@ -102,9 +116,12 @@ class OrfsBackend(Backend):
 
     def metadata(self, context: Optional[Mapping[str, str]] = None) -> OrfsMetadata:
         configured_root = _value(context, "ORFS_ROOT")
-        root = Path(configured_root).expanduser().resolve() if configured_root else None
+        root = Path(configured_root).expanduser().resolve() if configured_root else _installed_orfs_root()
         return OrfsMetadata(
             root=root,
+            root_source="explicit/environment ORFS_ROOT" if configured_root else (
+                "installed flow/orfs package" if root else None
+            ),
             runtime=_detect_runtime(context),
             container_image=_value(context, "ORFS_CONTAINER_IMAGE"),
             revision=_git_revision(root),
@@ -114,9 +131,12 @@ class OrfsBackend(Backend):
         self, context: Optional[Mapping[str, str]] = None
     ) -> Sequence[ValidationItem]:
         configured_root = _value(context, "ORFS_ROOT")
-        root = Path(configured_root).expanduser() if configured_root else None
+        installed_root = None if configured_root else _installed_orfs_root()
+        root = Path(configured_root).expanduser() if configured_root else installed_root
         root_available = root is not None and root.is_dir()
-        root_detail = str(root) if root_available else "not configured"
+        root_detail = str(root) if root_available else "not configured or installed"
+        if root_available and installed_root is not None:
+            root_detail += " (installed flow/orfs package)"
         if configured_root and not root_available:
             root_detail = f"not a directory: {root}"
 
@@ -160,6 +180,12 @@ class OrfsBackend(Backend):
             )
         )
         return tuple(checks)
+
+    def execution_environment(
+        self, context: Optional[Mapping[str, str]] = None
+    ) -> Mapping[str, str]:
+        metadata = self.metadata(context)
+        return {"ORFS_ROOT": str(metadata.root)} if metadata.root is not None else {}
 
 
 ORFS = OrfsBackend()

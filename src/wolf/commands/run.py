@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 
 from wolf import ui
+from wolf.backend import get_backend
 from wolf.commands.env import _environment_path, _read_variables
 from wolf.context import ResolvedContext, resolve_context
 from wolf.legacy import run_legacy
@@ -59,6 +60,7 @@ def command_run(args: argparse.Namespace) -> int:
         return 0
     environment = os.environ.copy()
     environment.update(context.values)
+    environment.update(get_backend(context.backend).execution_environment(context.values))
     environment["WOLF_HOME"] = str(context.state_root)
     if context.environment_directory:
         environment["WOLF_ENV_DIR"] = str(context.environment_directory)

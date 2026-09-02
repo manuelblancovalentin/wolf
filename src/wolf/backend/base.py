@@ -32,3 +32,8 @@ class Backend(ABC):
     ) -> Sequence[ValidationItem]:
         """Return backend-local dependency/configuration checks."""
 
+    def execution_environment(
+        self, context: Optional[Mapping[str, str]] = None
+    ) -> Mapping[str, str]:
+        """Return backend-local values resolved for the execution subprocess."""
+        return {}

@@ -18,6 +18,9 @@ sys.path.insert(0, str(SOURCE_ROOT))
 
 from wolf.backend import get_backend
 from wolf.backend.orfs import ORFS_STAGES, RuntimeDiagnostic
+from wolf.commands import run as run_command
+from wolf.context import ResolvedContext
+from wolf.package import InstalledPackage, PackageRegistry
 
 
 class OrfsPythonBackendTests(unittest.TestCase):
@@ -27,10 +30,79 @@ class OrfsPythonBackendTests(unittest.TestCase):
         self.assertEqual(backend.stages(), ORFS_STAGES)
 
     def test_missing_orfs_root_is_reported_clearly(self):
-        with mock.patch.dict(os.environ, {"ORFS_ROOT": ""}, clear=False):
+        with tempfile.TemporaryDirectory(prefix="wolf-empty-packages-") as temporary, mock.patch.dict(
+            os.environ, {"ORFS_ROOT": "", "WOLF_HOME": temporary}, clear=False
+        ):
             checks = {item.name: item for item in get_backend("orfs").validate({})}
         self.assertFalse(checks["ORFS_ROOT"].available)
-        self.assertEqual(checks["ORFS_ROOT"].detail, "not configured")
+        self.assertEqual(checks["ORFS_ROOT"].detail, "not configured or installed")
+
+    def test_installed_flow_package_supplies_orfs_root(self):
+        manifest = PackageRegistry().get("flow/orfs")
+        with tempfile.TemporaryDirectory(prefix="wolf-installed-orfs-") as temporary:
+            content = Path(temporary) / "source"
+            flow = content / "flow"
+            (flow / "util").mkdir(parents=True)
+            (flow / "Makefile").write_text("", encoding="utf-8")
+            (flow / "util" / "docker_shell").write_text("", encoding="utf-8")
+            installed = InstalledPackage(
+                manifest=manifest,
+                installation_path=Path(temporary),
+                content_path=content,
+                installed_at="test",
+                source_revision=manifest.revision,
+            )
+            with mock.patch("wolf.backend.orfs.PackageStore.read", return_value=installed):
+                metadata = get_backend("orfs").metadata({})
+                execution = get_backend("orfs").execution_environment({})
+        self.assertEqual(metadata.root, flow)
+        self.assertEqual(metadata.root_source, "installed flow/orfs package")
+        self.assertEqual(execution["ORFS_ROOT"], str(flow))
+
+    def test_explicit_orfs_root_overrides_installed_package(self):
+        with tempfile.TemporaryDirectory(prefix="wolf-explicit-orfs-") as temporary, mock.patch(
+            "wolf.backend.orfs.PackageStore.read"
+        ) as read:
+            metadata = get_backend("orfs").metadata({"ORFS_ROOT": temporary})
+        self.assertEqual(metadata.root, Path(temporary))
+        self.assertEqual(metadata.root_source, "explicit/environment ORFS_ROOT")
+        read.assert_not_called()
+
+    def test_generic_run_injects_installed_orfs_root_into_backend_subprocess(self):
+        manifest = PackageRegistry().get("flow/orfs")
+        with tempfile.TemporaryDirectory(prefix="wolf-run-installed-orfs-") as temporary:
+            root = Path(temporary)
+            content = root / "source"
+            flow = content / "flow"
+            flow.mkdir(parents=True)
+            installed = InstalledPackage(
+                manifest=manifest,
+                installation_path=root,
+                content_path=content,
+                installed_at="test",
+                source_revision=manifest.revision,
+            )
+            context = ResolvedContext(
+                state_root=root,
+                environment_name="test",
+                environment_directory=root / "env",
+                workspace_root=root / "work",
+                design_name="ibex",
+                process="asap7",
+                backend="orfs",
+                run_tag="ibex",
+                run_directory=root / "work" / "ibex" / "ibex.asap7" / "ibex",
+                values={"WORKSPACE_DIR": str(root / "work")},
+            )
+            args = mock.Mock(
+                plan=False, yes=False, from_stage=None, to_stage=None, passthrough=[]
+            )
+            with mock.patch("wolf.backend.orfs.PackageStore.read", return_value=installed), mock.patch(
+                "wolf.commands.run._context", return_value=context
+            ), mock.patch("wolf.commands.run.run_legacy", return_value=0) as legacy:
+                self.assertEqual(run_command.command_run(args), 0)
+        execution_environment = legacy.call_args.args[1]
+        self.assertEqual(execution_environment["ORFS_ROOT"], str(flow))
 
     def test_invalid_orfs_root_is_reported_clearly(self):
         checks = {
