@@ -27,7 +27,7 @@ _wolf_process () {
     #####################################################################################
     # Make sure the local folder ".wolf" exists on user's path
     #####################################################################################
-    _WOLF_PROCESS_DIR="${HOME}/.wolf/config"
+    _WOLF_PROCESS_DIR="${WOLF_HOME:-${HOME}/.wolf}/config"
     if [[ ! -d "$_WOLF_PROCESS_DIR" && ! -L "$_WOLF_PROCESS_DIR" ]]; then 
         _wolf_info "First runtime detected. Creating wolf ip dir at ÷yellow÷\"$_WOLF_PROCESS_DIR\"÷÷"
         mkdir -p "$_WOLF_PROCESS_DIR"

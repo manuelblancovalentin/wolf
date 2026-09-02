@@ -395,6 +395,33 @@ sys.exit(exit_code)
         self.assert_success(result)
         self.assertEqual(len(self.calls()), 1)
 
+    def test_characterization_default_backend_is_cadence_flowtool(self):
+        result = self.run_wolf("-flow", "main.synth")
+        self.assert_success(result)
+        self.assertIn("Preparing backend cadence-flowtool", result.stdout)
+        self.assertEqual(len(self.calls()), 1)
+
+    def test_characterization_explicit_cadence_backend_uses_same_path(self):
+        result = self.run_wolf(
+            "--backend",
+            "cadence-flowtool",
+            "-flow",
+            "main.synth",
+        )
+        self.assert_success(result)
+        self.assertIn("Preparing backend cadence-flowtool", result.stdout)
+        calls = self.calls()
+        self.assertEqual(len(calls), 1)
+        self.assertNotIn("--backend", calls[0])
+        self.assertEqual(calls[0][calls[0].index("-from") + 1], "main.synth")
+
+    def test_regression_unknown_backend_fails_before_tool_execution(self):
+        result = self.run_wolf("--backend", "unknown", "-flow", "main.synth")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn('Unknown WOLF backend "unknown"', result.stdout)
+        self.assertEqual(self.calls(), [])
+        self.assertFalse(self.process_root().exists())
+
     def test_regression_nonzero_tool_stage_stops_and_propagates_status(self):
         result = self.run_wolf(
             "-from",

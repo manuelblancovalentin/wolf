@@ -14,4 +14,6 @@ Human-readable environment and resolved-run manifests are the authoritative repr
 
 The long-term primary command is an installed Python CLI, but preserve `wolf activate <environment>` and `wolf deactivate` as the public UX. Any shell hook needed to mutate the caller's environment should remain a transparent implementation detail.
 
+Preserve WOLF's vibrant, command-specific terminal identity. New Python CLI output should use the centralized Rich-backed UI layer rather than scattered escape sequences; retain appropriate WOLF, environment, run, and process headers. Keep machine-oriented output such as `wolf --version` concise, honor terminal color detection and `NO_COLOR`, and never interpret user-provided values as Rich markup. Legacy Bash may retain its existing presentation helpers.
+
 Avoid unnecessary dependencies. Keep shell where shell state or native environment setup is the actual problem, and use more structured tooling where parsing, validation, manifests, or orchestration require it.

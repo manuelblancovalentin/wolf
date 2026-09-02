@@ -6,13 +6,35 @@ Run the complete suite from the repository root:
 tests/run
 ```
 
-The suite uses Python's standard `unittest` runner around isolated Bash subprocesses. It requires Bash, Python 3, PyYAML (already used by legacy WOLF), and the GNU command-line utilities used by the current scripts. It does not require Bats, Cadence software, licenses, proprietary PDKs, `shyaml`, or institutional filesystems.
+For development from a clone, install the CLI in editable mode (preferably in a
+virtual environment used only for development):
 
-Every test creates a temporary `HOME`, WOLF state directory, project, workspace, and tool path. The real user `~/.wolf` and project directories are never read or written.
+```bash
+python3 -m pip install -e .
+```
+
+This installs the `wolf` console command. A normal WOLF environment remains an
+EDA experiment environment; it is unrelated to the optional Python environment
+used to isolate developer tooling.
+
+The suite uses Python's standard `unittest` runner around isolated Bash subprocesses. It requires Bash, Python 3, PyYAML (already used by legacy WOLF), Rich (installed with the Python package), and the GNU command-line utilities used by the current scripts. It does not require Bats, Cadence software, licenses, proprietary PDKs, `shyaml`, or institutional filesystems.
+
+Every test creates a temporary `HOME`, WOLF state directory, project, workspace, and tool path. CLI tests also set `WOLF_HOME` to an independent temporary state root. The real user `~/.wolf` and project directories are never read or written.
 
 ## Mocked behavior
 
 Tests install temporary `flowtool` and `shyaml` stubs. The Flowtool stub records exact arguments, creates representative logs, and can return success, nonzero status, or the legacy `Flow failed` log marker. Small synthetic Flowtool-style configuration files exercise run allocation, stage ranges, snapshots, links, and history without invoking EDA tools.
+
+Installed-CLI tests invoke the Python module directly and exercise environment
+mutations through an isolated legacy Bash bridge. No external EDA command is
+used by the CLI tests. Captured CLI output is also checked to ensure Rich emits
+plain text rather than ANSI control sequences when output is redirected.
+
+Backend tests inspect the built-in Python registry and use a tiny shell fake
+backend with stages `a`, `b`, and `c`. The fake proves that range selection,
+passthrough arguments, execution dispatch, and failure stopping do not depend
+on Flowtool. Legacy Cadence tests continue to use the temporary `flowtool` stub
+for default and explicit `cadence-flowtool` selection.
 
 Test names distinguish intent:
 

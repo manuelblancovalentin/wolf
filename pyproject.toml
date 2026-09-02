@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wolf-eda"
+dynamic = ["version"]
+description = "EDA workflow and environment manager"
+readme = "README.md"
+requires-python = ">=3.9"
+license = {file = "LICENSE"}
+authors = [
+  {name = "Manuel Blanco Valentin"},
+]
+dependencies = [
+  "rich>=13.0",
+]
+
+[project.scripts]
+wolf = "wolf.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.dynamic]
+version = {attr = "wolf.__version__"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.data-files]
+"share/wolf/bin" = [
+  "bin/backend.sh",
+  "bin/flow_yaml_parser.py",
+  "bin/utils",
+  "bin/wolf.env",
+  "bin/wolf.run",
+]
+"share/wolf/bin/backends" = [
+  "bin/backends/cadence-flowtool.sh",
+]
+"share/wolf/templates" = [
+  "templates/activate.template",
+  "templates/deactivate.template",
+]

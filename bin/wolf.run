@@ -13,6 +13,7 @@ fi
 # Source utils
 #####################################################################################
 source "${WOLF_BIN}/utils"
+source "${WOLF_BIN}/backend.sh"
 
 ######################################################################################
 # Print header
@@ -26,6 +27,7 @@ cprintf "$_WOLF_RUN_HEADER\n"
 ##########################################
 CLEAN=false
 SKIP=false
+BACKEND="${WOLF_BACKEND:-cadence-flowtool}"
 PROCESS=
 DESIGN=
 RUNTAG=
@@ -48,7 +50,7 @@ while [[ $# -gt 0 ]]; do
             -h|--help)
                 # Help dialog
                 echo -e "Usage $(basename $BASH_SOURCE) [OPTIONS]... [EXTRA_ARGUMENTS]..."
-                echo "Runs the digital flow using a specified process for the specified design using Cadence's flowtool and passing EXTRA_ARGUMENTS to flowtool."
+                echo "Runs a digital implementation flow using the selected WOLF backend."
                 echo ""
                 echo "Main arguments taken $(basename $BASH_SOURCE):"
                 echo -e "\t-h, --help\t\tInvokes this dialog.\n"
@@ -56,10 +58,11 @@ while [[ $# -gt 0 ]]; do
                 echo -e "\t-c, --clean\t\tIf set to true, the flow will be run from scratch, ignoring any previous runs, in a new folder.\n\t\t\t\t    DEFAULT: false"
                 echo -e "\t-y, --yes \t\tIf this flag is present, the script will skip user confirmation at its end, and proceed running the flow.\n\t\t\t\t    DEFAULT: false"
                 echo -e "\t-t, --runtag\t\tManually sets the runtag to a specific value, instead of automatically setting it according to previous runs.\n\t\t\t\t    DEFAULT: Obtained automatically by script."
+                echo -e "\t--backend\t\tSelects the execution backend.\n\t\t\t\t    DEFAULT: cadence-flowtool"
                 echo "Project-specific arguments:"
                 echo -e "\t-p, --process \t\tSpecification of process to be used while running the flow. Must be one of \"TSCM65\", \"GF22\"\n\t\t\t\t    DEFAULT: TSCM65"
                 echo -e "\t-d, --design \t\tSpecification of the design to be synthesized. Must be one of \"tdsp_core\"\n\t\t\t\t    DEFAULT: tdsp_core"
-                echo -e "\t-f, --conf\t\tSpecify the full path of the template yaml file used to generate the final setup final that will be passed to flowtool.\n\t\t\t\t    DEFAULT: "
+                echo -e "\t-f, --conf\t\tSpecify the backend configuration template used for this run.\n\t\t\t\t    DEFAULT: "
                 exit 0
                 ;;
             -from)
@@ -83,6 +86,11 @@ while [[ $# -gt 0 ]]; do
                 ;;
             -p|--process)
                 PROCESS="$2"
+                shift
+                shift
+                ;;
+            --backend)
+                BACKEND="$2"
                 shift
                 shift
                 ;;
@@ -123,6 +131,14 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 set -- "${POSITIONAL[@]}" # restore positional parameters
+
+# Resolve the backend before allocating or modifying any run state.
+if ! _wolf_load_backend "$BACKEND"; then
+    exit 2
+fi
+if ! _wolf_backend_validate; then
+    exit 1
+fi
 
 ###############################################################################
 # Check if this design was ran before. If it was, detect the latest index.
@@ -220,112 +236,11 @@ fi
 
 
 
-#######################################################
-# INIT LOGFILE
-#   flowtool will append the index automatically.
-######################################################
-log_cmd="find ${RUNDIR} -maxdepth 1 -regextype posix-extended -regex '^.*wolf.run\.log([0-9])*$' -exec basename {} \; 2>/dev/null | grep -o "[0-9]*" | sort -n | tail -1"
-log_max_index=`eval "$log_cmd"`
-_LOGFILE="${RUNDIR}/wolf.run.log"
-if [[ $log_max_index -gt 0 ]] ; then
-    let log_max_index++
-    _LOGFILE=$_LOGFILE$log_max_index
-fi 
-LOGFILE="÷white÷$RUNDIR÷÷/÷yellow÷"$(basename ${_LOGFILE})"÷÷"
-
-
-#######################################################
-# READ SOURCES.YAML FILE AND PARSE
-######################################################
-# Read srcs.yaml file and set RTL var according to design
-RTL_CONF=
-
-## RTL SYSTEMVERILOG FILES
-RTL_SV_FILES_ARGS=""
-RTL_SV_FILES=""
-
-RTL_VHDL_FILES_ARGS=""
-RTL_VHDL_FILES=""
-
-re_args_rtl='\s+(.*)\:\s+(.*)\s+'
-
-# Loop through keys
-while read -r key
-do
-    # Access key
-    if [[ "$key" =~ ^(init_hdl_search_path).*$ ]]; then
-        INIT_HDL_SEARCH_PATH=$(cat $RTL_YAML_FILE | shyaml get-values RTL.${DESIGN_NAME}.init_hdl_search_path 2>/dev/null )
-        INIT_HDL_SEARCH_PATH=`eval echo $INIT_HDL_SEARCH_PATH`
-    elif [[ "$key" =~ ^(systemverilog).*$ ]]; then
-        RTL_SV_FILES=$(cat $RTL_YAML_FILE | shyaml get-values RTL.${DESIGN_NAME}.${key}.files 2>/dev/null )
-        RTL_SV_FILES=`eval echo $RTL_SV_FILES`
-        RTL_SV_FILES_ARGS=$(cat $RTL_YAML_FILE | shyaml get-values RTL.${DESIGN_NAME}.${key}.args 2>/dev/null )
-        RTL_SV_FILES_ARGS=`eval echo $RTL_SV_FILES_ARGS`
-    elif [[ "$key" =~ ^(vhdl).*$ ]]; then
-        RTL_VHDL_FILES=$(cat $RTL_YAML_FILE | shyaml get-values RTL.${DESIGN_NAME}.${key}.files 2>/dev/null )
-        RTL_VHDL_FILES=`eval echo $RTL_VHDL_FILES`
-        RTL_VHDL_FILES_ARGS=$(cat $RTL_YAML_FILE | shyaml get-values RTL.${DESIGN_NAME}.${key}.args 2>/dev/null )
-        RTL_VHDL_FILES_ARGS=`eval echo $RTL_VHDL_FILES_ARGS`
-    fi
-done < <(cat $RTL_YAML_FILE | shyaml keys RTL.${DESIGN_NAME} )
-
-INIT_HDL_SEARCH_PATH=$INIT_HDL_SEARCH_PATH
-RTL_SV_FILES_ARGS="${RTL_SV_FILES_ARGS[@]}"
-RTL_SV_FILES="${RTL_SV_FILES[@]}"
-RTL_VHDL_FILES_ARGS="${RTL_VHDL_FILES_ARGS[@]}"
-RTL_VHDL_FILES="${RTL_VHDL_FILES[@]}"
-
-# Vectorize
-RTL_VHDL_FILES_CAT=$(vectorize "$RTL_VHDL_FILES")
-RTL_SV_FILES_CAT=$(vectorize "$RTL_SV_FILES")
-INIT_HDL_SEARCH_PATH_CAT=$(vectorize "$INIT_HDL_SEARCH_PATH")
-CONSTRAINTS_FILE_CAT=$(vectorize "$CONSTRAINTS_FILE")
-
-# Prepare vars for user confirmation printing
-HDL_SEARCH_PATH="$INIT_HDL_SEARCH_PATH_CAT"
-HDL_SEARCH_PATH="${HDL_SEARCH_PATH//${DATA_DIR}/÷yellow÷\$DATA_DIR÷÷}"
-RTL_FILES="${RTL_SV_FILES_CAT} ${RTL_VHDL_FILES_CAT}"
-RTL_FILES="${RTL_FILES//${INIT_HDL_SEARCH_PATH_CAT}\//}"
-RTL_FILES="÷yellow÷${RTL_FILES}÷÷"
-_FLOORPLAN_FILE="$FLOORPLAN_FILE"
-FLOORPLAN_FILE="${FLOORPLAN_FILE//${DATA_DIR}/÷yellow÷\$DATA_DIR÷÷}"
-FLOORPLAN_FILE="$(dirname ${FLOORPLAN_FILE})""÷yellow÷/""$(basename $FLOORPLAN_FILE)""÷÷"
-
-_FLOORPLAN_IO_FILE="$FLOORPLAN_IO_FILE"
-FLOORPLAN_IO_FILE="${FLOORPLAN_IO_FILE//${DATA_DIR}/÷yellow÷\$DATA_DIR÷÷}"
-FLOORPLAN_IO_FILE="$(dirname ${FLOORPLAN_IO_FILE})""÷yellow÷/""$(basename $FLOORPLAN_IO_FILE)""÷÷"
-
-_CONSTRAINTS_FILE="$CONSTRAINTS_FILE"
-CONSTRAINTS_FILE="${CONSTRAINTS_FILE//${DATA_DIR}/÷yellow÷\$DATA_DIR÷÷}"
-CONSTRAINTS_FILE="$(dirname ${CONSTRAINTS_FILE})""÷yellow÷/""$(basename $CONSTRAINTS_FILE)""÷÷"
-
-
-###########################################
-# IF FLOORPLAN DOESN'T EXIST, SET 
-#   "CREATE_FLOORPLAN" FEATURE TO TRUE
-##########################################
-if [[ ! -f ${FLOORPLAN_FILE} && ! -L ${FLOORPLAN_FILE} ]]; then 
-    FEATURES+=( "-create_floorplan_flag" )
+# Let the selected backend derive its compatibility inputs and planned config
+# paths without changing run state. Materialization happens after confirmation.
+if ! _wolf_backend_plan; then
+    exit 1
 fi
-
-
-###########################################
-# SETUP.YAML
-##########################################
-# We must now create the setup.yaml file for this configuration and link it so that flowtool can pick it up
-YAML_SETUP_FILE="setup.${DESIGN_NAME}.yaml"
-cmd="find ${SCRIPTS_DIR} -type f -maxdepth 1 -regextype posix-extended -regex '^.*${YAML_SETUP_FILE}.([0-9])$' -exec basename {} \; 2>/dev/null | grep -o "[0-9]*" | sort -n | tail -1"
-YAML_SETUP_OUT_FILE=$(get_next_indexed_file "$cmd" "${SCRIPTS_DIR}/${YAML_SETUP_FILE}")
-SETUP_YAML="÷white÷${SCRIPTS_DIR}÷÷/÷yellow÷"$(basename ${YAML_SETUP_OUT_FILE})"÷÷"
-
-
-###########################################
-# FLOW.YAML
-##########################################
-# We must now create the flow.yaml file for this configuration and link it so that flowtool can pick it up
-cmd="find ${SCRIPTS_DIR} -type f -maxdepth 1 -regextype posix-extended -regex '^.*$flow.${DESIGN_NAME}.yaml.([0-9])$' -exec basename {} \; 2>/dev/null | grep -o "[0-9]*" | sort -n | tail -1"
-FLOW_SETUP_OUT_FILE=$(get_next_indexed_file "$cmd" "${SCRIPTS_DIR}/flow.${DESIGN_NAME}.yaml")
-FLOW_YAML="÷white÷${SCRIPTS_DIR}÷÷/÷yellow÷"$(basename ${FLOW_SETUP_OUT_FILE})"÷÷"
 
 
 ## Now let's print the configuration
@@ -350,43 +265,21 @@ printVars "Flow configurations" "${vars_to_print[@]}"
 vars_to_print=( "FROM_STEP" "TO_STEP" )
 printVars "Flow run sequence" "${vars_to_print[@]}"
 
-# Print tools too
-# vars_to_print=()
-# if [ ! -z `which flowtool` ] ; then
-#     FLOWTOOL_VERSION=`flowtool -version | grep -Po "(?<=Flowtool )[ A-Za-z0-9\._-]*"`
-#     vars_to_print+=( "FLOWTOOL_VERSION" )
-# fi
-# if [ ! -z `which genus` ] ; then
-#     GENUS_VERSION=`genus -v | grep -Po "(?<=Version: )[ A-Za-z0-9\._-]*"`
-#     vars_to_print+=( "GENUS_VERSION" )
-# fi
-# if [ ! -z `which innovus` ] ; then
-#     INNOVUS_VERSION=`innovus -version | grep -Po "(?<=Innovus )[ A-Za-z0-9\._-]*"`
-#     vars_to_print+=( "INNOVUS_VERSION" )
-# fi
-# if [ ! -z `which quantus` ] ; then
-#     QUANTUS_VERSION=`quantus -version | grep -Po "(?<=Version)\s*:\s*[ A-Za-z0-9\._-]*" | grep -Po "(?<=:)\s*[A-Za-z0-9\._-]*"`
-#     vars_to_print+=( "QUANTUS_VERSION" )
-# fi
-# if [ ! -z `which calibre` ] ; then
-#     CALIBRE_VERSION=`calibre -version | grep -Po "(?<=Calibre )v[A-Za-z0-9\._-]*"`
-#     vars_to_print+=( "CALIBRE_VERSION" )
-# fi
-
-printVars "CAD tools" "${vars_to_print[@]}"
+vars_to_print=("BACKEND")
+printVars "Execution backend" "${vars_to_print[@]}"
 
 
 ## ASK USER IF EVERYTHING LOOKS OKAY, IN CASE -y FLAG WAS NOT PASSED.
 if $SKIP; then
     REPLY="Y"
 else
-    cprintf "÷Red÷ Proceed with previous configuration and run flowtool? ÷÷"
+    cprintf "÷Red÷ Proceed with previous configuration and run backend ÷yellow÷$BACKEND÷÷÷Red÷? ÷÷"
     read -p "[y/N]:" -n 1 -r
     printf "\n"  # (optional) move to a new line
 fi
 if [[ $REPLY =~ ^[Yy]$ ]]; then
 
-    cprintf "÷Blue÷÷bold÷ ÷white÷Preparing flowtool                                                                        ÷÷ \n\n"
+    cprintf "÷Blue÷÷bold÷ ÷white÷Preparing backend $BACKEND                                                               ÷÷ \n\n"
 
     #####################################################################
     # CREATE DIRS
@@ -435,66 +328,10 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
     find "$RUNDIR" -maxdepth 1 -type f \( -name '*.out' -o -name '*.cmd*' \) -delete &> /dev/null
     find "$RUNDIR" -maxdepth 1 -type f -name '*.log' ! -name 'wolf.run.log*' -delete &> /dev/null
 
-    ##########################
-    # YAML FILES CREATION/COPYING
-    ##########################
-    _wolf_info "Creating ÷blue÷setup.yaml÷÷ file at ÷yellow÷\"$YAML_SETUP_OUT_FILE\"."
-    # Initialize with project specific yaml
-    cp -L "$PROCESS_SETUP_COMMON_TEMPLATE" "$YAML_SETUP_OUT_FILE"
-    # Merge with common template
-    tail -n +3 "$YAML_TEMPLATE_FILE" >> "$YAML_SETUP_OUT_FILE"
-    # Merge with host libraries location 
-    tail -n +3 "$PROCESS_SETUP_HOST_TEMPLATE" >> "$YAML_SETUP_OUT_FILE"
-
-    _wolf_info "Creating ÷blue÷flow.yaml÷÷ file at ÷yellow÷\"$FLOW_SETUP_OUT_FILE\"."
-    cp -L "$PROCESS_FLOW_TEMPLATE" "$FLOW_SETUP_OUT_FILE"
-
-    #######################
-    # YAML FILES SUBSTITUTION
-    #######################
-    # Setup.yaml
-    declare -A flow_maps
-    flow_maps=( ["RTL_VHDL_FILES"]="$RTL_VHDL_FILES_CAT" \
-                ["RTL_VHDL_FILES_ARGS"]="$RTL_VHDL_FILES_ARGS" \
-                ["RTL_SV_FILES"]="$RTL_SV_FILES_CAT" \
-                ["RTL_SV_FILES_ARGS"]="$RTL_SV_FILES_ARGS" \
-                ["INIT_HDL_SEARCH_PATH"]="$INIT_HDL_SEARCH_PATH_CAT" \
-                ["FLOW_YAML_FILE"]="$FLOW_SETUP_OUT_FILE" \
-                ["CONSTRAINTS_FILES"]="$CONSTRAINTS_FILE_CAT" \
-                ["SCRIPTS_DIR"]="$SCRIPTS_DIR" \
-                ["DATA_DIR"]="$DATA_DIR" \
-                ["INPUTS_DIR"]="$INPUTS_DIR" \
-                ["WORKSPACE_DIR"]="$WORKSPACE_DIR" \
-                ["RUNDIR"]="$RUNDIR" \
-                ["LIB_DIR"]="$LIB_DIR" \
-                ["IO_LIB_DIR"]="$IO_LIB_DIR" \
-                ["METAL_STACK"]="$METAL_STACK" \
-                ["METAL_STACK_DIR"]="$METAL_STACK_DIR" \
-                ["PDK_DIR"]="$PDK_DIR" \
-                ["DESIGN_NAME"]="$DESIGN_NAME" \
-                ["FLOORPLAN_FILE"]="$_FLOORPLAN_FILE" \
-                ["FLOORPLAN_IO_FILE"]="$_FLOORPLAN_IO_FILE" \
-                ["VTHS"]="${VTHS}"\
-                ["TRACKS"]="${TRACKS}"
-    )
-
-    file="$YAML_SETUP_OUT_FILE"
-    for subt in "${!flow_maps[@]}"; do 
-        ssv=`eval echo "${flow_maps[$subt]}"`
-        sed -i -e "s;\${$subt};${ssv};g" "$file"
-    done
-
-    declare -A setup_maps
-    setup_maps=(["DESIGN_YAML"]="${YAML_SETUP_OUT_FILE}" \
-                ["SCRIPTS_DIR"]="${SCRIPTS_DIR}" 
-                ["FEATURES"]="${FEATURES[@]}"
-    )
-
-    file="$FLOW_SETUP_OUT_FILE"
-    for subt in "${!setup_maps[@]}"; do 
-        ssv=`eval echo "${setup_maps[$subt]}"`
-        sed -i -e "s;\${$subt};${ssv};g" "$file"
-    done
+    # Backend-specific configuration generation and command construction.
+    if ! _wolf_backend_prepare; then
+        exit 1
+    fi
 
     #######################
     # PERFORM FILE LINKING
@@ -511,28 +348,12 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
     ln -sf "$SCRIPTS_DIR" "${RUNDIR}/scripts.latest" 
     _wolf_info "Linking latest ÷green÷\"scripts.latest\"÷÷ dir to ÷green÷\"$(basename $SCRIPTS_DIR)\"÷÷."
 
-    # Link latest setup.yaml file
-    ln -sf "$YAML_SETUP_OUT_FILE" "${RUNDIR}/$YAML_SETUP_FILE.latest" 
-    _wolf_info "Linking latest ÷green÷\"$YAML_SETUP_FILE.latest\"÷÷ file to ÷green÷\"$(basename $YAML_SETUP_OUT_FILE)\"÷÷."
-
-    # Link latest flow.yaml
-    ln -sf "$FLOW_SETUP_OUT_FILE" "${RUNDIR}/flow.yaml.latest" 
-    _wolf_info "Linking latest ÷green÷\"flow.yaml.latest\"÷÷ file to ÷green÷\"$(basename $FLOW_SETUP_OUT_FILE)\"÷÷."
-
-    #######################
-    # CALL FLOWTOOL
-    #######################
-    cprintf "\n÷Blue÷÷bold÷ ÷white÷Invoking flowtool with previous configs                                                   ÷÷ \n\n"
- 
-    # Build command
-    FLOWTOOL_CMD_ARGS=(flowtool -files "${FLOW_SETUP_OUT_FILE}" -run_tag "${RUNTAG}" "${POSITIONAL[@]}" -directory "${WORKSPACE_DIR}/${DESIGN_NAME}/${DESIGN_NAME}.${PROCESS}" -log "${RUNDIR}/wolf.run")
-    printf -v FLOWTOOL_CMD '%q ' "${FLOWTOOL_CMD_ARGS[@]}"
-    FLOWTOOL_CMD="${FLOWTOOL_CMD% }"
+    cprintf "\n÷Blue÷÷bold÷ ÷white÷Invoking backend stages                                                                  ÷÷ \n\n"
     
     # Let's also link the latest status 
     # Build unique id for this run
-    FLOWTOOL_RUN_UUID=$(cat /proc/sys/kernel/random/uuid)
-    FLOWTOOL_RUN_UUID=${FLOWTOOL_RUN_UUID,,}
+    WOLF_RUN_UUID=$(cat /proc/sys/kernel/random/uuid)
+    WOLF_RUN_UUID=${WOLF_RUN_UUID,,}
 
     # Populate history
     if [[ ! -f "$WOLF_ENV_DIR/history" ]]; then 
@@ -554,280 +375,49 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
         done <<< "$2"
     }
     {
-        printf "%s:\n" "$FLOWTOOL_RUN_UUID"
+        printf "%s:\n" "$WOLF_RUN_UUID"
         _wolf_write_history_field "cmd1" "$_WOLF_HISTORY_CMD1"
-        _wolf_write_history_field "cmd2" "$FLOWTOOL_CMD"
-        _wolf_write_history_field "dir" "$WOLF_ENV_DIR/runs/$FLOWTOOL_RUN_UUID.d"
+        _wolf_write_history_field "cmd2" "$WOLF_BACKEND_COMMAND"
+        _wolf_write_history_field "backend" "$BACKEND"
+        _wolf_write_history_field "dir" "$WOLF_ENV_DIR/runs/$WOLF_RUN_UUID.d"
         _wolf_write_history_field "date" "$(date)"
     } >> "$WOLF_ENV_DIR/history"
     
     # Link uuid folder to runtag
     mkdir -p "$WOLF_ENV_DIR/runs"
-    ln -sf "${WORKSPACE_DIR}/${DESIGN_NAME}/${DESIGN_NAME}.${PROCESS}/${RUNTAG}" "$WOLF_ENV_DIR/runs/$FLOWTOOL_RUN_UUID.d"
+    ln -sf "${WORKSPACE_DIR}/${DESIGN_NAME}/${DESIGN_NAME}.${PROCESS}/${RUNTAG}" "$WOLF_ENV_DIR/runs/$WOLF_RUN_UUID.d"
 
     # Link latest run for easy access
     ln -sf "${WORKSPACE_DIR}/${DESIGN_NAME}/${DESIGN_NAME}.${PROCESS}/${RUNTAG}" "$WOLF_ENV_DIR/run.latest.d"
 
-    # Get flow steps for later reference by wolf
-    if [[ $CLEAN || $COPY_SCRIPTS_OVER || ! -L "$WOLF_ENV_DIR/flow.sum.latest" ]]; then
-        _wolf_info "Creating new ÷blue÷flow summary file÷÷ and saving to ÷yellow÷\"$WOLF_ENV_DIR/flow.sum.latest\"."
-
-        FLOW_SUMMARY="$WOLF_ENV_DIR/runs/$FLOWTOOL_RUN_UUID.flow.sum"
-        FLOW_STEPS="$WOLF_ENV_DIR/runs/$FLOWTOOL_RUN_UUID.flow.steps"
-        # Get flow current 
-        FLOWS_CURRENT=($(sed -n 's/flow_current://p' "$FLOW_SETUP_OUT_FILE"))
-        
-        #echo $FLOW_SUMMARY
-        #echo $FLOW_STEPS
-        # Create temp file with flow steps
-        grep -Pzo 'flows:(.*\n)*' $FLOW_SETUP_OUT_FILE | sed '/^[[:space:]]*$/d' | sed 's/\t/  /g' | sed '/^#/d' | sed '/enabled:/d' | sed '/args:/d' | sed '/features:/d' | awk -F':' '{print $1":"}' | tee "$FLOW_SUMMARY.tmp" > /dev/null
-        # Remove last line (which contains an invalid character)
-        sed -i '$ d' $FLOW_SUMMARY.tmp
-
-        # Parse with python
-        steps=`python3 "${WOLF_BIN}/flow_yaml_parser.py" "$FLOW_SUMMARY.tmp" "${FLOWS_CURRENT[@]}"`
-        echo "${steps[@]}" | tr ' ' '\n' > "$FLOW_STEPS"
-        echo "${steps[@]}" | tr ' ' '\n' | sort -u | tr '\n' ' ' > "$FLOW_SUMMARY"
-        #rm "$FLOW_SUMMARY.tmp"
-        #echo "${steps[@]}"
-
-        #flowtool -directory "$WOLF_ENV_DIR/run.latest.d" -files "${FLOW_SETUP_OUT_FILE}" -predict summary > "$FLOW_SUMMARY.tmp"
-        #flowtool -no_check -no_db -files "${FLOW_SETUP_OUT_FILE}" -predict summary > "$FLOW_SUMMARY.tmp"
-        #tac "$FLOW_SUMMARY.tmp" | sed -e '/Predicted flows and steps which will run/q' | tac | tee "$FLOW_SUMMARY.tmp" &> /dev/null
- 
-        #flowtool -directory "$WOLF_ENV_DIR/run.latest.d" -files "${FLOW_SETUP_OUT_FILE}" -status > "$FLOW_SUMMARY.tmp"
-        #tail -n +2  "$FLOW_SUMMARY.tmp2" >> "$FLOW_SUMMARY.tmp"
-        #rm -f "$FLOW_SUMMARY.tmp2"
-
-        # Link to latest summary
-        #steps=($(cat "$FLOW_SUMMARY.tmp" | grep "^o" | cut -d ' ' -f3 | sed "s/flow_current\.//"))
-        #all_steps=()
-
-        # for subflow in ${steps[@]}; do 
-        #     #printf "$subflow\n"
-        #     cum_str=""
-        #     substeps=(${subflow//./ })
-        #     for substep in ${substeps[@]}; do
-        #         if [ -z $cum_str ]; then
-        #             cum_str="$substep"
-        #         else 
-        #             cum_str="$cum_str.$substep"
-        #         fi
-        #         all_steps+=($cum_str)
-        #         all_steps+=($cum_str)
-        #         #printf "\t\t$cum_str\n"
-        #     done
-        # done
-        # # Get unique values
-        # all_steps=`echo "${all_steps[@]}" | tr ' ' '\n' | sort -u | tr '\n' ' '`
-        # # Save to file now
-        # echo "$all_steps" > "$FLOW_SUMMARY"
-        # # remove tmp file
-        # rm "$FLOW_SUMMARY.tmp"
-        # # Now print steps, sorted, to file 
-        # echo ${steps[@]} | tr " " "\n" > "$FLOW_STEPS"
-        # Link to latest
-        ln -sf "$FLOW_SUMMARY" "$WOLF_ENV_DIR/flow.sum.latest"
-        ln -sf "$FLOW_STEPS" "$WOLF_ENV_DIR/flow.steps.latest"
-        
-        #unset all_steps
-        unset steps
-        #unset cum_str
-    else
-        FLOW_SUMMARY="$WOLF_ENV_DIR/flow.sum.latest"
-        FLOW_STEPS="$WOLF_ENV_DIR/flow.steps.latest"
-    fi
-
-    # Link folder over 
-    #set root_dir [file join [pwd] "xray_imaging/workspace/pixelArray_full_readout/pixelArray_full_readout.TSMC65/pixelArray_full_readout.latest"]
-    #set out_dir [file join $env(HOME) test]
-    # call autorecursivelink.tcl "$root_dir" "$out_dir" ""
-
-    ##############################################################################
-    # LOOP THRU FLOW STEPS
-    #   
-    #   This is so we have greater control over what's being run. You might ask
-    #   why not simply passing this to flowtool, and forget about it? And that's
-    #   a legit question, cause that would be actually the ideal scenario, in case
-    #   flowtool behaved the way I expected it to behave. You see, when I run 
-    #   flowtool with the "-interactive" or "-interactive_run" flag, I expect 
-    #   flowtool to be interactive FOR EACH STEP I WANT TO RUN. That means, if
-    #   I ask flowtool to run from step A to D, I don't only want to have an 
-    #   interactive CLI for the first step (A) -which is the only possible behavior
-    #   offered when running sth like "flowtool -from A -to D"-; instead, I would
-    #   like to have an interactive CL for step A, then once that is done another
-    #   one for step B, and so on and so forth until step D. 
-    #
-    #   This is why this loop here exists. I'm basically checking what the -from
-    #   and the -to steps are, and then calling flowtool individually on each 
-    #   one of them, one after the other. This allows us to have full control of
-    #   each step, instead of just the first one.
-    ##############################################################################
-    # Check if flow steps exist
-    if [ ! -f "$FLOW_STEPS" ]; then
-        _wolf_error "No flow steps found. Check if the flow setup file is correct."
+    _wolf_confirm_backend_stage() {
+        local stage="$1"
+        if $SKIP; then
+            return 0
+        fi
+        echo ""
+        cprintf "÷Red÷ Proceed with flow stage ÷invert÷$stage÷÷÷Red÷ using backend ÷yellow÷$BACKEND÷÷÷Red÷ or exit? ÷÷"
+        read -p "[y/N]:" -n 1 -r
+        printf "\n"
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            return 0
+        fi
+        cprintf "÷Red÷ Exiting wolf now ÷÷\n"
         return 1
-    fi 
-    
-    # Make sure we have both -from and -to steps 
-    if [ -z "${FROM_STEP// }" ]; then
-        if [ -z "${TO_STEP// }" ]; then
-            # Run whole flow 
-            FROM_STEP=`head -1 "$FLOW_STEPS"`
-            TO_STEP=`tail -1 "$FLOW_STEPS"`
-        else 
-            FROM_STEP=`head -1 "$FLOW_STEPS"`
-        fi
-    else 
-        if [ -z "${TO_STEP// }" ]; then
-            TO_STEP=`tail -1 "$FLOW_STEPS"`
-        fi
-    fi
-    FROM_TO_STEP_ARGS="-from $FROM_STEP -to $TO_STEP"
-    
-    # Check FROM and TO steps exist
-    if [[ ! -z "${FROM_STEP// }" && ! -z "${TO_STEP// }" ]]; then 
-        
-        if ! grep -Fq "$FROM_STEP" "$FLOW_STEPS"; then
-            # code if not found
-            _wolf_error "Flow step \"$FROM_STEP\" could not be found. List of available flow steps is:\n"
-            cat "$FLOW_STEPS"
-            return 1
-        fi
-        if ! grep -Fq "$TO_STEP" "$FLOW_STEPS"; then
-            # code if not found
-            _wolf_error "Flow step \"$TO_STEP\" could not be found. List of available flow steps is:\n"
-            cat "$FLOW_STEPS"
-            return 1
-        fi
+    }
 
-        # Count number of fields (separatd by ".")
-        ndots=(`echo "${FROM_STEP}" | awk -F"." '{print NF-1}'` `echo "${TO_STEP}" | awk -F"." '{print NF-1}'`)
-        ndots=`echo ${ndots[@]} | tr ' ' '\n' | sort -nr | head -n1`
-        let ndots++
-
-        # Check if FROM_STEP is different than TO_STEP
-        if [ "$FROM_STEP" == "$TO_STEP" ]; then
-            STEP_ARRAY=("$FROM_STEP")
-        else 
-            STEP_ARRAY=($(cat "$FLOW_STEPS" | cut -d '.' -f 1-$ndots | awk '!a[$0]++' | sed -n "/$FROM_STEP/,/$TO_STEP/p"))
-        fi
-        
-
-        # Make sure TRACKER exists to keep track of pids
-        _WOLF_TRACKER_DIR="${HOME}/.wolf/tracker"
-        if [[ ! -d "$_WOLF_TRACKER_DIR" && ! -L "$_WOLF_TRACKER_DIR" ]]; then 
-            _wolf_info "First runtime detected. Creating wolf tracker dir at ÷yellow÷\"$_WOLF_TRACKER_DIR\"÷÷"
-            mkdir -p "$_WOLF_TRACKER_DIR"
-        fi
-
-        # Now loop
-        steps_run=0
-        for STEP in ${STEP_ARRAY[@]}; do
-
-            #######################################################
-            # INIT LOGFILE
-            #   flowtool will append the index automatically.
-            ######################################################
-            log_cmd="find ${RUNDIR} -maxdepth 1 -regextype posix-extended -regex '^.*wolf.run\.log([0-9])*$' -exec basename {} \; 2>/dev/null | grep -o "[0-9]*" | sort -n | tail -1"
-            log_max_index=`eval "$log_cmd"`
-            _LOGFILE="${RUNDIR}/wolf.run.log"
-            if [[ $log_max_index -gt 0 ]] ; then
-                let log_max_index++
-                _LOGFILE=$_LOGFILE$log_max_index
-            fi 
-            LOGFILE="÷white÷$RUNDIR÷÷/÷yellow÷"$(basename ${_LOGFILE})"÷÷"
-
-            # build CMD to call flowtool 
-            FLOWTOOL_CMD="flowtool\n  -files "${FLOW_SETUP_OUT_FILE}"\n  -run_tag ${RUNTAG}\n  -from ${STEP}\n  -to ${STEP}\n  ${POSITIONAL[@]}\n  -directory ${WORKSPACE_DIR}/${DESIGN_NAME}/${DESIGN_NAME}.${PROCESS}\n  -log $_LOGFILE"
-
-            ## ASK USER IF EVERYTHING LOOKS OKAY, IN CASE -y FLAG WAS NOT PASSED.
-            if [ $steps_run -gt 0 ]; then 
-                if $SKIP; then
-                    REPLY="Y"
-                else
-                    echo ""
-                    cprintf "÷Red÷ Proceed with flow step ÷invert÷$STEP÷÷÷Red÷ and call flowtool now or exit? ÷÷"
-                    read -p "[y/N]:" -n 1 -r
-                    printf "\n"  # (optional) move to a new line
-                fi
-            else 
-                if $SKIP; then
-                    REPLY="Y"
-                else   
-                    echo ""
-                    cprintf "÷Red÷ Proceed with flow step ÷invert÷$STEP÷÷÷Red÷ and call flowtool now or exit? ÷÷"
-                    read -p "[y/N]:" -n 1 -r
-                    printf "\n"  # (optional) move to a new line
-                fi
-            fi
-            if [[ $REPLY =~ ^[Yy]$ ]]; then
-                _wolf_info "Now running $STEP: \n÷white÷÷Blue÷$FLOWTOOL_CMD÷÷\n"
-
-                # Before calling, let's lock the PID so we know forehand the PID of the process we are
-                # about to launch
-                #_WOLF_ACT_LAST_PID=`cat /proc/sys/kernel/ns_last_pid`
-                #let _WOLF_ACT_LAST_PID++
-                #let _WOLF_ACT_LAST_PID++
-                #(
-                #    flock -xn 200
-                #    #trap "rm $_WOLF_TRACKER_DIR/$FLOWTOOL_RUN_UUID.pid" 0
-                #    RETVAL=$?
-                #    if [ $RETVAL -eq 1 ] ; then
-                #        echo $RETVAL
-                #        exit 1
-                #    else
-                #        echo "$_WOLF_ACT_LAST_PID" > "/proc/sys/kernel/ns_last_pid"
-                #    fi
-                #) 200>"/proc/sys/kernel/ns_last_pid"
-
-                #touch "$_WOLF_TRACKER_DIR/$FLOWTOOL_RUN_UUID.pid"
-                #echo "$_WOLF_ACT_LAST_PID" > "$_WOLF_TRACKER_DIR/$FLOWTOOL_RUN_UUID.pid"
-
-                # Inject tcl for PID record
-
-                # Finally, call flowtool
-                #eval "$FLOWTOOL_CMD"
-                _WOLF_TRACKER_INJECT_TCL="exec echo \"[pid]\" > $_WOLF_TRACKER_DIR/$FLOWTOOL_RUN_UUID.pid"
-                
-                # Link latest log
-                ln -sf "$_LOGFILE" "${RUNDIR}/wolf.run.log.latest"
-
-                flowtool -files "${FLOW_SETUP_OUT_FILE}" -run_tag "${RUNTAG}" -inject_tcl "$_WOLF_TRACKER_INJECT_TCL" -from "${STEP}" -to "${STEP}" "${POSITIONAL[@]}" -directory "${WORKSPACE_DIR}/${DESIGN_NAME}/${DESIGN_NAME}.${PROCESS}" -log "${RUNDIR}/wolf.run"
-                FLOWTOOL_STATUS=$?
-                # Remove pid file
-                rm -f "$_WOLF_TRACKER_DIR/$FLOWTOOL_RUN_UUID.pid"
-
-                if [[ $FLOWTOOL_STATUS -ne 0 ]]; then
-                    _wolf_error "Flowtool exited with status $FLOWTOOL_STATUS while running $STEP. Stopping sequence."
-                    exit "$FLOWTOOL_STATUS"
-                elif [[ -f "$_LOGFILE" ]] && grep -Fq "Flow failed" "$_LOGFILE"; then
-                    # There was an error, stop now
-                    _wolf_error "Error in the flow detected. Stopping sequence."
-                    exit 1
-                fi
-                let steps_run++
-            else
-                cprintf "÷Red÷ Exiting wolf now ÷÷\n"
-                exit 0
-            fi
-
-        done
-    else
-        _wolf_error "No flow steps found. Exiting."
-        exit 1
+    _wolf_run_backend_stages "$FROM_STEP" "$TO_STEP" _wolf_confirm_backend_stage "${POSITIONAL[@]}"
+    backend_status=$?
+    if [[ $backend_status -ne 0 ]]; then
+        exit "$backend_status"
     fi
 
-
-    unset FLOWTOOL_RUN_UUID
-    unset FLOWTOOL_CMD
+    unset WOLF_RUN_UUID
+    unset WOLF_BACKEND_COMMAND
     unset FLOW_STEPS
     unset FLOW_SUMMARY
-    unset STEP
-    unset STEP_ARRAY
-    unset ndots
+    unset WOLF_BACKEND_STAGES
+    unset WOLF_SELECTED_STAGES
     unset TO_STEP
     unset FROM_STEP
-    unset _WOLF_TRACKER_INJECT_TCL
-
 fi
