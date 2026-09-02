@@ -12,7 +12,8 @@ host-installed Yosys, OpenROAD, or KLayout.
 
 - An ORFS checkout whose root is its `flow` directory. It must contain
   `Makefile`, `designs`, and `util`.
-- Docker, or Podman with an explicitly selected ORFS image.
+- A usable Docker or Podman runtime. Rootless Podman is preferred when it is
+  available and usable.
 - Python 3 for the opt-in result checker.
 
 Configure the checkout with:
@@ -23,9 +24,10 @@ wolf backend show orfs
 ```
 
 `wolf backend show orfs` is read-only: it reports configured checkout and
-runtime status and does not attempt to pull images or invoke EDA tools. The
-shell runner additionally checks that its selected container runtime can answer
-`info` before allocating a WOLF run.
+runtime status and does not attempt to pull images or invoke EDA tools. It
+distinguishes a missing binary, a daemon/socket failure, and permission denial.
+The shell runner checks that its selected runtime can answer `info` before
+allocating a WOLF run.
 
 ## Backend inputs
 
@@ -39,14 +41,23 @@ environment model is still being introduced.
 | `ORFS_FLOW_VARIANT` | yes | Dedicated ORFS `FLOW_VARIANT` result namespace. |
 | `ORFS_SDC_FILE` | no | Explicit host-owned SDC override, absolute or relative to `ORFS_ROOT`. |
 | `ORFS_MAKE_VARS` | no | Newline-separated `NAME=VALUE` Make overrides. |
-| `ORFS_CONTAINER_RUNTIME` | no | `docker` or `podman`. WOLF chooses Docker, then Podman, when unset. |
-| `ORFS_CONTAINER_IMAGE` | Podman | Exact image used by the direct Podman executor. |
-| `ORFS_CONTAINER_WORKDIR` | no | Container work directory for Podman; defaults to `/OpenROAD-flow-scripts/flow`. |
+| `ORFS_CONTAINER_RUNTIME` | no | `docker` or `podman`. WOLF chooses usable Podman, then usable Docker, when unset. |
+| `ORFS_CONTAINER_IMAGE` | no | Image used by either runtime; defaults to `openroad/orfs:latest`. Pin a digest for reproducibility. |
+| `ORFS_CONTAINER_WORKDIR` | no | Defaults to `/OpenROAD-flow-scripts/flow`. |
 
-Docker uses ORFS's `util/docker_shell`, preserving the checkout's image setup.
-For Podman, WOLF mounts `ORFS_ROOT` at `/work` with the Fedora-compatible `:Z`
-label and runs the supplied image directly. Specify a concrete image reference;
-WOLF does not treat a floating tag as a reproducibility guarantee.
+WOLF runs both container runtimes directly, mounts `ORFS_ROOT` at `/work` with
+the Fedora-compatible `:Z` label, and passes ORFS's supported headless Qt
+settings (`DISPLAY=` and `QT_QPA_PLATFORM=offscreen`). This prevents ORFS final
+report image generation from trying to initialize an X11 GUI during SSH runs.
+It does not suppress a nonzero OpenROAD or Make exit status. WOLF does not
+treat a floating tag as a reproducibility guarantee.
+
+On Fedora, use rootless Podman when `podman info` succeeds. If Docker is
+installed but reports permission denial, WOLF will not select it automatically.
+If Podman is unavailable, Docker remains supported; Docker users normally need
+the daemon running and access to its socket (often through the local `docker`
+group and a new login session). Do not change Docker group membership merely
+to use WOLF when rootless Podman is already usable.
 
 Make assignments may also be passed through the legacy shell runner as separate
 `NAME=VALUE` arguments. Non-assignment passthrough arguments are rejected by
@@ -108,11 +119,10 @@ directory already exists. It never runs an ORFS clean target.
 ```bash
 cd /projects/wolf
 export ORFS_ROOT=/path/to/OpenROAD-flow-scripts/flow
-export ORFS_CONTAINER_RUNTIME=docker
 tests/integration/run_orfs_ibex
 ```
 
-For Podman, provide the exact image first:
+To force a particular runtime or pinned image:
 
 ```bash
 export ORFS_CONTAINER_RUNTIME=podman

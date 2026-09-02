@@ -7,7 +7,7 @@ WOLF_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
 : "${ORFS_ROOT:?Set ORFS_ROOT to an OpenROAD-flow-scripts/flow checkout.}"
 ORFS_ROOT=$(cd -- "$ORFS_ROOT" && pwd)
 
-ORFS_FLOW_VARIANT="${ORFS_FLOW_VARIANT:-wolf_ibex_asap7_1050ps}"
+ORFS_FLOW_VARIANT="${ORFS_FLOW_VARIANT:-wolf_ibex_asap7_1050ps_headless}"
 case "$ORFS_FLOW_VARIANT" in
     wolf_ibex_asap7_1050ps*)
         ;;
@@ -44,13 +44,16 @@ export ORFS_SDC_FILE="${ORFS_ROOT}/designs/asap7/ibex/constraint.wolf_ibex_asap7
 python3 "${WOLF_ROOT}/tests/integration/prepare_orfs_ibex_sdc.py" \
     "$ORFS_STOCK_SDC" "$ORFS_SDC_FILE"
 export ORFS_FLOW_VARIANT
-export ORFS_CONTAINER_RUNTIME="${ORFS_CONTAINER_RUNTIME:-docker}"
+if [[ -z "${ORFS_CONTAINER_RUNTIME:-}" ]]; then
+    if command -v podman >/dev/null 2>&1 && podman info >/dev/null 2>&1; then
+        export ORFS_CONTAINER_RUNTIME=podman
+    else
+        export ORFS_CONTAINER_RUNTIME=docker
+    fi
+fi
 export ORFS_MAKE_VARS=$'SWAP_ARITH_OPERATORS=\nOPENROAD_HIERARCHICAL=0'
 
-if [[ "$ORFS_CONTAINER_RUNTIME" == "podman" && -z "${ORFS_CONTAINER_IMAGE:-}" ]]; then
-    echo "ORFS_CONTAINER_IMAGE is required when ORFS_CONTAINER_RUNTIME=podman." >&2
-    exit 2
-fi
+export ORFS_CONTAINER_IMAGE="${ORFS_CONTAINER_IMAGE:-openroad/orfs:latest}"
 
 mkdir -p "$WOLF_ENV_DIR"
 printf 'Running ORFS Ibex regression with variant %s\n' "$ORFS_FLOW_VARIANT"
@@ -75,13 +78,18 @@ ORFS_METADATA_ARGS=(
     "OPENROAD_HIERARCHICAL=0"
     metadata-generate
 )
-if [[ "$ORFS_CONTAINER_RUNTIME" == "docker" ]]; then
-    "${ORFS_ROOT}/util/docker_shell" "${ORFS_METADATA_ARGS[@]}"
-else
-    podman run --rm \
-        -v "${ORFS_ROOT}:/work:Z" \
-        -w "${ORFS_CONTAINER_WORKDIR:-/OpenROAD-flow-scripts/flow}" \
-        "$ORFS_CONTAINER_IMAGE" "${ORFS_METADATA_ARGS[@]}"
+ORFS_METADATA_USER_ARGS=(--user "$(id -u):$(id -g)")
+if [[ "$ORFS_CONTAINER_RUNTIME" == podman ]]; then
+    ORFS_METADATA_USER_ARGS=(--userns=keep-id --user "$(id -u):$(id -g)")
 fi
+"$ORFS_CONTAINER_RUNTIME" run --rm -i \
+    "${ORFS_METADATA_USER_ARGS[@]}" \
+    -e FLOW_HOME=/OpenROAD-flow-scripts/flow \
+    -e WORK_HOME=/work \
+    -e DISPLAY= \
+    -e QT_QPA_PLATFORM=offscreen \
+    -v "${ORFS_ROOT}:/work:Z" \
+    -w "${ORFS_CONTAINER_WORKDIR:-/OpenROAD-flow-scripts/flow}" \
+    "$ORFS_CONTAINER_IMAGE" "${ORFS_METADATA_ARGS[@]}"
 
 python3 "${WOLF_ROOT}/tests/integration/check_orfs_ibex.py" "$ORFS_REPORTS_DIR"

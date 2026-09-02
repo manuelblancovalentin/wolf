@@ -64,10 +64,11 @@ Cadence. It provides the ordered public stages `synth`, `floorplan`, `place`,
 `cts`, `route`, and `finish`; each is translated to the matching ORFS Make
 target. WOLF does not recreate ORFS's internal flow.
 
-`orfs` is container-oriented but is not synonymous with Docker. Docker uses the
-checkout's `util/docker_shell`; Podman can execute an explicitly supplied ORFS
-container image through the transitional shell container executor. The selected
-runtime, checkout revision when available, image configuration, and constructed
-Make arguments are backend metadata for future run-manifest persistence.
+`orfs` is container-oriented but is not synonymous with Docker. WOLF prefers a
+usable rootless Podman runtime, then usable Docker, and uses a shared direct
+container executor for both. This preserves ORFS's supported headless Qt mode
+for SSH execution. The selected runtime, checkout revision when available,
+image configuration, and constructed Make arguments are backend metadata for
+future run-manifest persistence.
 
 See `docs/ORFS.md` for configuration and the opt-in Ibex regression harness.
