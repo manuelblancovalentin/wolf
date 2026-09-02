@@ -23,6 +23,13 @@ class OrfsMetadata:
     revision: Optional[str]
 
 
+@dataclass(frozen=True)
+class RuntimeDiagnostic:
+    name: str
+    usable: bool
+    detail: str
+
+
 def _value(context: Optional[Mapping[str, str]], name: str) -> Optional[str]:
     if context is not None and name in context:
         return context[name]
@@ -35,12 +42,35 @@ def _configured_runtime(context: Optional[Mapping[str, str]]) -> Optional[str]:
     )
 
 
+def _runtime_diagnostic(name: str) -> RuntimeDiagnostic:
+    location = shutil.which(name)
+    if location is None:
+        return RuntimeDiagnostic(name, False, "binary absent")
+    try:
+        result = subprocess.run(
+            [name, "info"],
+            text=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+    except OSError as error:
+        return RuntimeDiagnostic(name, False, f"installed but unavailable: {error}")
+    if result.returncode == 0:
+        return RuntimeDiagnostic(name, True, f"usable ({location})")
+    error = result.stderr.strip().splitlines()
+    detail = error[0] if error else f"exit status {result.returncode}"
+    if "permission denied" in detail.lower():
+        return RuntimeDiagnostic(name, False, f"installed but permission denied: {detail}")
+    return RuntimeDiagnostic(name, False, f"installed but daemon/socket unavailable: {detail}")
+
+
 def _detect_runtime(context: Optional[Mapping[str, str]]) -> Optional[str]:
     configured = _configured_runtime(context)
     if configured:
         return configured
-    for name in ("docker", "podman"):
-        if shutil.which(name):
+    for name in ("podman", "docker"):
+        if _runtime_diagnostic(name).usable:
             return name
     return None
 
@@ -92,14 +122,11 @@ class OrfsBackend(Backend):
 
         runtime = _detect_runtime(context)
         configured_runtime = _configured_runtime(context)
-        runtime_available = runtime in {"docker", "podman"} and shutil.which(runtime) is not None
+        diagnostics = {name: _runtime_diagnostic(name) for name in ("podman", "docker")}
+        runtime_available = runtime in {"docker", "podman"} and diagnostics[runtime].usable
         if configured_runtime and configured_runtime not in {"docker", "podman"}:
             runtime_available = False
-        runtime_detail = (
-            shutil.which(runtime) or "unavailable"
-            if runtime_available and runtime
-            else "unavailable"
-        )
+        runtime_detail = diagnostics[runtime].detail if runtime in diagnostics else "unsupported runtime"
 
         checks = [
             ValidationItem("ORFS_ROOT", root_available, root_detail),
@@ -114,29 +141,24 @@ class OrfsBackend(Backend):
                 str(root / "util" / "docker_shell") if root else "ORFS_ROOT not configured",
             ),
             ValidationItem(
-                "container runtime",
+                "selected container runtime",
                 runtime_available,
                 f"{runtime or 'none'} ({runtime_detail})",
             ),
+            *(
+                ValidationItem(f"{name} runtime", diagnostic.usable, diagnostic.detail)
+                for name, diagnostic in diagnostics.items()
+            ),
         ]
 
-        image = _value(context, "ORFS_CONTAINER_IMAGE")
-        if runtime == "podman":
-            checks.append(
-                ValidationItem(
-                    "ORFS_CONTAINER_IMAGE",
-                    bool(image),
-                    image or "required for Podman execution",
-                )
+        image = _value(context, "ORFS_CONTAINER_IMAGE") or "openroad/orfs:latest"
+        checks.append(
+            ValidationItem(
+                "container image",
+                True,
+                image + (" (floating tag)" if "@sha256:" not in image else " (pinned)"),
             )
-        else:
-            checks.append(
-                ValidationItem(
-                    "container image",
-                    True,
-                    image or "selected by ORFS util/docker_shell",
-                )
-            )
+        )
         return tuple(checks)
 
 

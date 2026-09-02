@@ -17,7 +17,7 @@ import sys
 sys.path.insert(0, str(SOURCE_ROOT))
 
 from wolf.backend import get_backend
-from wolf.backend.orfs import ORFS_STAGES
+from wolf.backend.orfs import ORFS_STAGES, RuntimeDiagnostic
 
 
 class OrfsPythonBackendTests(unittest.TestCase):
@@ -48,14 +48,32 @@ class OrfsPythonBackendTests(unittest.TestCase):
             with mock.patch(
                 "wolf.backend.orfs.shutil.which",
                 side_effect=lambda name: "/mock/docker" if name == "docker" else None,
+            ), mock.patch(
+                "wolf.backend.orfs.subprocess.run",
+                return_value=subprocess.CompletedProcess(["docker", "info"], 0, "", ""),
             ):
                 checks = {
                     item.name: item
                     for item in get_backend("orfs").validate({"ORFS_ROOT": str(root)})
                 }
-        self.assertTrue(checks["container runtime"].available)
+        self.assertTrue(checks["selected container runtime"].available)
         self.assertNotIn("yosys", {name.lower() for name in checks})
         self.assertNotIn("openroad", {name.lower() for name in checks})
+
+    def test_validation_prefers_usable_podman_and_reports_docker_rejection(self):
+        with mock.patch(
+            "wolf.backend.orfs._runtime_diagnostic",
+            side_effect=lambda name: RuntimeDiagnostic(
+                name,
+                name == "podman",
+                "usable (/mock/podman)" if name == "podman" else "binary absent",
+            ),
+        ):
+            checks = {item.name: item for item in get_backend("orfs").validate({})}
+        self.assertTrue(checks["selected container runtime"].available)
+        self.assertIn("podman", checks["selected container runtime"].detail)
+        self.assertFalse(checks["docker runtime"].available)
+        self.assertIn("binary absent", checks["docker runtime"].detail)
 
 
 class OrfsShellBackendTests(unittest.TestCase):
@@ -85,11 +103,31 @@ fi
         )
         self.stub_bin = self.root / "bin"
         self.stub_bin.mkdir()
-        self._write_executable(self.stub_bin / "docker", "#!/bin/sh\nexit 0\n")
+        self._write_executable(
+            self.stub_bin / "docker",
+            """#!/bin/sh
+printf '%s\\n' "$@" >> "$ORFS_CALL_LOG"
+if [ "$1" = info ] && [ -n "${ORFS_DOCKER_INFO_ERROR:-}" ]; then
+    printf '%s\\n' "$ORFS_DOCKER_INFO_ERROR" >&2
+    exit 1
+fi
+last=""
+for argument in "$@"; do last="$argument"; done
+if [ "${ORFS_FAIL_TARGET:-}" = "$last" ]; then exit 27; fi
+exit 0
+""",
+        )
         self._write_executable(
             self.stub_bin / "podman",
             """#!/bin/sh
 printf '%s\\n' "$@" >> "$ORFS_CALL_LOG"
+if [ "$1" = info ] && [ -n "${ORFS_PODMAN_INFO_ERROR:-}" ]; then
+    printf '%s\\n' "$ORFS_PODMAN_INFO_ERROR" >&2
+    exit 1
+fi
+last=""
+for argument in "$@"; do last="$argument"; done
+if [ "${ORFS_FAIL_TARGET:-}" = "$last" ]; then exit 27; fi
 exit 0
 """,
         )
@@ -193,7 +231,42 @@ exit 0
             },
         )
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("container runtime is unavailable", result.stdout + result.stderr)
+        self.assertIn("binary absent", result.stdout + result.stderr)
+
+    def test_podman_is_preferred_when_usable(self):
+        result = self.shell(self.prepare_script(), extra_env={"ORFS_CONTAINER_RUNTIME": ""})
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        prepared = (self.root / "snapshot" / "orfs.command").read_text(encoding="utf-8")
+        self.assertIn("Container runtime: podman", prepared)
+
+    def test_docker_is_used_when_podman_is_unusable(self):
+        result = self.shell(
+            self.prepare_script(),
+            extra_env={
+                "ORFS_CONTAINER_RUNTIME": "",
+                "ORFS_PODMAN_INFO_ERROR": "socket unavailable",
+            },
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        prepared = (self.root / "snapshot" / "orfs.command").read_text(encoding="utf-8")
+        self.assertIn("Container runtime: docker", prepared)
+
+    def test_permission_denied_runtime_error_is_clear(self):
+        result = self.shell(
+            """
+            source "$WOLF_BIN/utils"
+            source "$WOLF_BIN/backend.sh"
+            source "$WOLF_BIN/container_executor.sh"
+            _wolf_load_backend orfs
+            _wolf_backend_validate
+            """,
+            extra_env={
+                "ORFS_CONTAINER_RUNTIME": "docker",
+                "ORFS_DOCKER_INFO_ERROR": "permission denied while trying to connect to the docker API",
+            },
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("permission denied", result.stdout + result.stderr)
 
     def test_missing_flow_variant_fails_before_execution(self):
         result = self.shell(
@@ -256,6 +329,20 @@ exit 0
         self.assertIn("/OpenROAD-flow-scripts/flow", calls)
         self.assertIn("example/orfs@sha256:test", calls)
         self.assertIn("DESIGN_CONFIG=/work/designs/asap7/ibex/config.mk", calls)
+
+    def test_headless_execution_sets_supported_qt_environment(self):
+        result = self.shell(self.prepare_script() + "\n_wolf_backend_run_stage finish\n")
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        calls = self.call_log.read_text(encoding="utf-8").splitlines()
+        self.assertIn("DISPLAY=", calls)
+        self.assertIn("QT_QPA_PLATFORM=offscreen", calls)
+
+    def test_non_gui_failure_still_propagates(self):
+        result = self.shell(
+            self.prepare_script() + "\n_wolf_backend_run_stage finish\n",
+            extra_env={"ORFS_FAIL_TARGET": "finish"},
+        )
+        self.assertEqual(result.returncode, 27, msg=result.stderr)
 
     def test_legacy_runner_dispatches_orfs_through_generic_orchestration(self):
         result = self.shell(

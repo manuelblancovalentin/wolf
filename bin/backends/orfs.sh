@@ -42,13 +42,22 @@ _wolf_orfs_select_runtime() {
         :
     elif [[ -n "${WOLF_CONTAINER_RUNTIME:-}" ]]; then
         ORFS_CONTAINER_RUNTIME="$WOLF_CONTAINER_RUNTIME"
-    elif _wolf_container_runtime_available docker; then
-        ORFS_CONTAINER_RUNTIME="docker"
-    elif _wolf_container_runtime_available podman; then
-        ORFS_CONTAINER_RUNTIME="podman"
     else
-        _wolf_orfs_error "requires Docker or Podman, but neither runtime is available"
-        return 1
+        # Fedora's rootless Podman is the preferred usable runtime. A runtime
+        # is not selected merely because its binary happens to be installed.
+        local podman_diagnostic docker_diagnostic
+        podman_diagnostic=$(_wolf_container_runtime_diagnostic podman)
+        if [[ $? -eq 0 ]]; then
+            ORFS_CONTAINER_RUNTIME="podman"
+        else
+            docker_diagnostic=$(_wolf_container_runtime_diagnostic docker)
+            if [[ $? -eq 0 ]]; then
+                ORFS_CONTAINER_RUNTIME="docker"
+            else
+                _wolf_orfs_error "requires a usable Podman or Docker runtime (Podman: ${podman_diagnostic}; Docker: ${docker_diagnostic})"
+                return 1
+            fi
+        fi
     fi
 
     case "$ORFS_CONTAINER_RUNTIME" in
@@ -59,12 +68,10 @@ _wolf_orfs_select_runtime() {
             return 1
             ;;
     esac
-    if ! _wolf_container_runtime_available "$ORFS_CONTAINER_RUNTIME"; then
-        _wolf_orfs_error "container runtime is unavailable: $ORFS_CONTAINER_RUNTIME"
-        return 1
-    fi
-    if ! "$ORFS_CONTAINER_RUNTIME" info >/dev/null 2>&1; then
-        _wolf_orfs_error "container runtime is installed but not usable: $ORFS_CONTAINER_RUNTIME"
+    local diagnostic
+    diagnostic=$(_wolf_container_runtime_diagnostic "$ORFS_CONTAINER_RUNTIME")
+    if [[ $? -ne 0 ]]; then
+        _wolf_orfs_error "container runtime ${ORFS_CONTAINER_RUNTIME} is ${diagnostic}"
         return 1
     fi
 }
@@ -86,16 +93,8 @@ _wolf_backend_validate() {
         fi
     done
 
-    ORFS_DOCKER_SHELL="${ORFS_DOCKER_SHELL:-${ORFS_ROOT}/util/docker_shell}"
     _wolf_orfs_select_runtime || return $?
-    if [[ "$ORFS_CONTAINER_RUNTIME" == "docker" && ! -x "$ORFS_DOCKER_SHELL" ]]; then
-        _wolf_orfs_error "Docker execution requires an executable util/docker_shell: $ORFS_DOCKER_SHELL"
-        return 1
-    fi
-    if [[ "$ORFS_CONTAINER_RUNTIME" == "podman" && -z "${ORFS_CONTAINER_IMAGE:-}" ]]; then
-        _wolf_orfs_error "Podman execution requires ORFS_CONTAINER_IMAGE"
-        return 1
-    fi
+    ORFS_CONTAINER_IMAGE="${ORFS_CONTAINER_IMAGE:-openroad/orfs:latest}"
 
     if [[ -z "${ORFS_DESIGN_CONFIG:-}" ]]; then
         _wolf_orfs_error "ORFS_DESIGN_CONFIG must name a design config within ORFS_ROOT"
@@ -166,15 +165,12 @@ _wolf_backend_plan() {
 _wolf_backend_prepare() {
     _wolf_orfs_make_arguments || return $?
 
-    if [[ "$ORFS_CONTAINER_RUNTIME" == "docker" ]]; then
-        WOLF_CONTAINER_LAUNCHER="$ORFS_DOCKER_SHELL"
-    else
-        unset WOLF_CONTAINER_LAUNCHER
-        WOLF_CONTAINER_IMAGE="$ORFS_CONTAINER_IMAGE"
-        WOLF_CONTAINER_HOST_ROOT="$ORFS_ROOT"
-        WOLF_CONTAINER_CONTAINER_ROOT="/work"
-        WOLF_CONTAINER_WORKDIR="${ORFS_CONTAINER_WORKDIR:-/OpenROAD-flow-scripts/flow}"
-    fi
+    WOLF_CONTAINER_IMAGE="$ORFS_CONTAINER_IMAGE"
+    WOLF_CONTAINER_HOST_ROOT="$ORFS_ROOT"
+    WOLF_CONTAINER_CONTAINER_ROOT="/work"
+    WOLF_CONTAINER_WORKDIR="${ORFS_CONTAINER_WORKDIR:-/OpenROAD-flow-scripts/flow}"
+    WOLF_CONTAINER_FLOW_HOME="/OpenROAD-flow-scripts/flow"
+    WOLF_CONTAINER_HEADLESS=1
 
     WOLF_BACKEND_COMMAND_ARGS=(make "${WOLF_ORFS_MAKE_ARGS[@]}")
     printf -v WOLF_BACKEND_COMMAND '%q ' "${WOLF_BACKEND_COMMAND_ARGS[@]}"
