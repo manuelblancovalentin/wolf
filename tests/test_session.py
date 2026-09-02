@@ -50,8 +50,8 @@ wolf deactivate
     def test_invalid_activation_and_inactive_deactivation_are_safe(self):
         result = self.bash(
             f'''source "{REPO_ROOT}/shell/wolf.bash"
-PS1='original> '; wolf activate missing; status=$?
-[ $status -ne 0 ] && [ -z "${{WOLF_ACTIVE_ENV+x}}" ] && [ "$PS1" = 'original> ' ] || exit 10
+PS1='original> '; wolf activate missing; wolf_result=$?
+[ $wolf_result -ne 0 ] && [ -z "${{WOLF_ACTIVE_ENV+x}}" ] && [ "$PS1" = 'original> ' ] || exit 10
 wolf deactivate
 '''
         )
@@ -67,18 +67,18 @@ class ZshIntegrationTests(BashIntegrationTests):
     def test_activation_marks_theme_managed_prompt_and_restores_it(self):
         result = self.zsh(
             f'''source "{REPO_ROOT}/shell/wolf.zsh"
-original_pid=$$; original_pwd=$PWD; original_path=$PATH; original_ps1='theme> '; PROMPT=$original_ps1; KEEP=value
+original_pid=$$; original_pwd=$PWD; original_path=$PATH; original_ps1='theme> '; original_rps1='right> '; PROMPT=$original_ps1; RPROMPT=$original_rps1; KEEP=value
 wolf activate foo || exit $?
 # Simulate a theme rebuilding the prompt before zsh's precmd hooks run.
 PROMPT=$original_ps1; _wolf_zsh_prompt
-[[ "$$" = "$original_pid" && "$PWD" = "$original_pwd" && "$PATH" = "$original_path" && "$KEEP" = value && "$WOLF_ACTIVE_ENV" = foo && "$PROMPT" == *foo* ]] || exit 10
+[[ "$$" = "$original_pid" && "$PWD" = "$original_pwd" && "$PATH" = "$original_path" && "$KEEP" = value && "$WOLF_ACTIVE_ENV" = foo && "$RPROMPT" == *foo* && "$PROMPT" = "$original_ps1" ]] || exit 10
 wolf activate bar || exit $?
 PROMPT=$original_ps1; _wolf_zsh_prompt
-[[ "$WOLF_ACTIVE_ENV" = bar && "$PROMPT" == *bar* && "$PROMPT" != *foo* ]] || exit 11
+[[ "$WOLF_ACTIVE_ENV" = bar && "$RPROMPT" == *bar* && "$RPROMPT" != *foo* ]] || exit 11
 wolf info >/dev/null || exit $?
 cd /; wolf run --plan >/dev/null || exit $?
 wolf deactivate
-[[ -z "${{WOLF_ACTIVE_ENV+x}}" && "$PROMPT" = "$original_ps1" && "$$" = "$original_pid" && "$KEEP" = value ]] || exit 12
+[[ -z "${{WOLF_ACTIVE_ENV+x}}" && "$PROMPT" = "$original_ps1" && "$RPROMPT" = "$original_rps1" && "$$" = "$original_pid" && "$KEEP" = value ]] || exit 12
 '''
         )
         self.assertEqual(result.returncode, 0, msg=result.stderr)

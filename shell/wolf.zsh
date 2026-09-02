@@ -1,17 +1,25 @@
 # Zsh integration for WOLF. Source once per shell session or from ~/.zshrc.
 
+# Remove the marker used by the first zsh integration revision, which appended
+# to PROMPT and could appear immediately before the command line in multiline
+# themes.  Keep WOLF's marker in RPROMPT instead.
+if [ -n "${_WOLF_ZSH_MARKER-}" ]; then
+    PROMPT=${PROMPT%" ${_WOLF_ZSH_MARKER}"}
+fi
+unset _WOLF_ZSH_BASE_PROMPT _WOLF_ZSH_MARKER
+
 _wolf_command() {
     command wolf "$@"
 }
 
 _wolf_zsh_prompt() {
     [ -n "${WOLF_ACTIVE_ENV-}" ] || return 0
-    if [ -n "${_WOLF_ZSH_MARKER-}" ]; then
-        PROMPT=${PROMPT%" ${_WOLF_ZSH_MARKER}"}
+    if [ -n "${_WOLF_ZSH_RPROMPT_MARKER-}" ]; then
+        RPROMPT=${RPROMPT%" ${_WOLF_ZSH_RPROMPT_MARKER}"}
     fi
-    _WOLF_ZSH_BASE_PROMPT=$PROMPT
-    _WOLF_ZSH_MARKER="[%F{yellow}${WOLF_ACTIVE_ENV}%f]"
-    PROMPT="${PROMPT} ${_WOLF_ZSH_MARKER}"
+    _WOLF_ZSH_BASE_RPROMPT=$RPROMPT
+    _WOLF_ZSH_RPROMPT_MARKER="[%F{yellow}${WOLF_ACTIVE_ENV}%f]"
+    RPROMPT="${RPROMPT} ${_WOLF_ZSH_RPROMPT_MARKER}"
 }
 
 wolf() {
@@ -22,8 +30,8 @@ wolf() {
                 return $?
             fi
             _wolf_command _shell-activate "$2" >/dev/null
-            local status=$?
-            [ "$status" -eq 0 ] || return "$status"
+            local wolf_status=$?
+            [ "$wolf_status" -eq 0 ] || return "$wolf_status"
             export WOLF_ACTIVE_ENV="$2"
             _wolf_zsh_prompt
             ;;
@@ -33,9 +41,9 @@ wolf() {
                 return 0
             fi
             unset WOLF_ACTIVE_ENV
-            if [ -n "${_WOLF_ZSH_BASE_PROMPT+x}" ]; then
-                PROMPT=$_WOLF_ZSH_BASE_PROMPT
-                unset _WOLF_ZSH_BASE_PROMPT _WOLF_ZSH_MARKER
+            if [ -n "${_WOLF_ZSH_BASE_RPROMPT+x}" ]; then
+                RPROMPT=$_WOLF_ZSH_BASE_RPROMPT
+                unset _WOLF_ZSH_BASE_RPROMPT _WOLF_ZSH_RPROMPT_MARKER
             fi
             ;;
         *)
@@ -46,3 +54,4 @@ wolf() {
 
 autoload -Uz add-zsh-hook
 add-zsh-hook precmd _wolf_zsh_prompt
+_wolf_zsh_prompt
