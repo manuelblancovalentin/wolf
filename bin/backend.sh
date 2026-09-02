@@ -15,7 +15,7 @@ _wolf_load_backend() {
     fi
 
     case "$backend_name" in
-        cadence-flowtool)
+        cadence-flowtool|orfs)
             ;;
         *)
             _wolf_error "Unknown WOLF backend \"$backend_name\"."
