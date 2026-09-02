@@ -105,9 +105,13 @@ def command_run(args: argparse.Namespace) -> int:
     if context.environment_name:
         environment["WOLF_ENV_NAME"] = context.environment_name
     runner_args = ["--backend", context.backend, "--design", context.design_name,
-                   "--process", context.process, "--runtag", context.run_tag]
+                   "--process", context.process]
+    if args.runtag:
+        runner_args.extend(["--runtag", context.run_tag])
     if args.yes:
         runner_args.append("--yes")
+    if getattr(args, "clean", False):
+        runner_args.append("--clean")
     if args.from_stage:
         runner_args.extend(["-from", args.from_stage])
     if args.to_stage:
@@ -127,6 +131,8 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     parser.add_argument("-from", dest="from_stage")
     parser.add_argument("-to", dest="to_stage")
     parser.add_argument("-y", "--yes", action="store_true")
+    parser.add_argument("-c", "--clean", action="store_true",
+                        help="allocate a new numbered implementation run")
     parser.add_argument("--plan", action="store_true", help="show resolved paths without execution")
     parser.add_argument("passthrough", nargs=argparse.REMAINDER)
     parser.set_defaults(handler=command_run, ui_kind="run", ui_section="Resolved run")

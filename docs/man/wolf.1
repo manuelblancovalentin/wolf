@@ -91,6 +91,10 @@ Real declarative executions freeze
 inside the exact allocated run before invoking backend stages. The historical
 manifest is never overwritten by a changed environment.
 .TP
+.B wolf run --clean
+Allocate a new numbered implementation run and freeze provenance into that
+exact allocation before backend execution.
+.TP
 .BI "wolf activate " name
 With the Bash integration loaded, activate the selected WOLF environment in the
 current shell. It does not change the working directory. Use

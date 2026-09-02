@@ -221,6 +221,22 @@ backend:
         self.assertFalse(run.exists())
         self.assertIn("Resolved manifest:", result.stdout)
 
+    def test_clean_native_execution_freezes_exact_numbered_allocation(self):
+        first = self.wolf(
+            "run", "--environment", "native", "--yes", "-from", "synth", "-to", "synth"
+        )
+        self.assertEqual(first.returncode, 0, first.stderr)
+        clean = self.wolf(
+            "run", "--environment", "native", "--clean", "--yes",
+            "-from", "synth", "-to", "synth",
+        )
+        self.assertEqual(clean.returncode, 0, clean.stderr)
+        run = self.root / "work" / "ibex" / "ibex.asap7" / "ibex.1"
+        frozen = yaml.safe_load(
+            (run / RUN_MANIFEST_FILENAME).read_text(encoding="utf-8")
+        )
+        self.assertEqual(frozen["workspace"]["run_directory"], str(run))
+
 
 if __name__ == "__main__":
     unittest.main()
