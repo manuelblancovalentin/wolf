@@ -93,6 +93,13 @@ The harness is intentionally excluded from `tests/run`. It runs the Ibex ASAP7
 1050 ps baseline with `SWAP_ARITH_OPERATORS` disabled and
 `OPENROAD_HIERARCHICAL=0`.
 
+The stock Ibex SDC may use a 1000 ps clock. Before starting ORFS, the harness
+creates (or validates without overwriting) the dedicated host file
+`designs/asap7/ibex/constraint.wolf_ibex_asap7_1050ps.sdc`. It changes only the
+single `set clk_period` assignment to `1050`, leaves the stock SDC untouched,
+and passes the derived file explicitly as
+`SDC_FILE=/work/designs/asap7/ibex/constraint.wolf_ibex_asap7_1050ps.sdc`.
+
 Before invoking it, choose an unused dedicated ORFS variant. The default is
 `wolf_ibex_asap7_1050ps`; the harness refuses variants that do not begin with
 that name and refuses to run if the corresponding ORFS `results` or `reports`
@@ -113,8 +120,9 @@ export ORFS_CONTAINER_IMAGE=registry.example/orfs@sha256:...
 tests/integration/run_orfs_ibex
 ```
 
-On completion, the harness checks ORFS `metrics.json` under the selected
-variant for zero setup violating paths, zero hold violating paths, and zero
-detailed-route DRC errors. It prints the final worst setup slack in ps; roughly
-`+14.7 ps` is the reference, but timing-clean completion is the criterion.
-Residual max-slew violations are not checked by this baseline.
+On completion, the harness runs ORFS's report-only `metadata-generate` target,
+then checks `reports/asap7/ibex/<variant>/metadata.json` for zero setup
+violating paths, zero hold violating paths, and zero detailed-route DRC errors.
+It prints the final worst setup slack in ps; roughly `+14.7 ps` is the
+reference, but timing-clean completion is the criterion. Residual max-slew
+violations are not checked by this baseline.

@@ -39,7 +39,10 @@ export WOLF_ENV_NAME="orfs-ibex"
 export WOLF_WORKSPACE_DIR="${WOLF_INTEGRATION_ROOT}/workspace"
 export ORFS_ROOT
 export ORFS_DESIGN_CONFIG="${ORFS_ROOT}/designs/asap7/ibex/config.mk"
-export ORFS_SDC_FILE="${ORFS_ROOT}/designs/asap7/ibex/constraint.sdc"
+ORFS_STOCK_SDC="${ORFS_ROOT}/designs/asap7/ibex/constraint.sdc"
+export ORFS_SDC_FILE="${ORFS_ROOT}/designs/asap7/ibex/constraint.wolf_ibex_asap7_1050ps.sdc"
+python3 "${WOLF_ROOT}/tests/integration/prepare_orfs_ibex_sdc.py" \
+    "$ORFS_STOCK_SDC" "$ORFS_SDC_FILE"
 export ORFS_FLOW_VARIANT
 export ORFS_CONTAINER_RUNTIME="${ORFS_CONTAINER_RUNTIME:-docker}"
 export ORFS_MAKE_VARS=$'SWAP_ARITH_OPERATORS=\nOPENROAD_HIERARCHICAL=0'
@@ -60,4 +63,25 @@ bash "${WOLF_ROOT}/bin/wolf.run" \
     -from synth \
     -to finish
 
-python3 "${WOLF_ROOT}/tests/integration/check_orfs_ibex.py" "$ORFS_RESULTS_DIR"
+# ORFS creates its canonical acceptance metadata from the completed logs,
+# reports, and results. This is report collection, not another implementation
+# stage; the physical-design stage sequence above remains synth through finish.
+ORFS_METADATA_ARGS=(
+    make
+    "DESIGN_CONFIG=/work/designs/asap7/ibex/config.mk"
+    "FLOW_VARIANT=${ORFS_FLOW_VARIANT}"
+    "SDC_FILE=/work/designs/asap7/ibex/constraint.wolf_ibex_asap7_1050ps.sdc"
+    "SWAP_ARITH_OPERATORS="
+    "OPENROAD_HIERARCHICAL=0"
+    metadata-generate
+)
+if [[ "$ORFS_CONTAINER_RUNTIME" == "docker" ]]; then
+    "${ORFS_ROOT}/util/docker_shell" "${ORFS_METADATA_ARGS[@]}"
+else
+    podman run --rm \
+        -v "${ORFS_ROOT}:/work:Z" \
+        -w "${ORFS_CONTAINER_WORKDIR:-/OpenROAD-flow-scripts/flow}" \
+        "$ORFS_CONTAINER_IMAGE" "${ORFS_METADATA_ARGS[@]}"
+fi
+
+python3 "${WOLF_ROOT}/tests/integration/check_orfs_ibex.py" "$ORFS_REPORTS_DIR"

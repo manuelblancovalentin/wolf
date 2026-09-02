@@ -29,19 +29,17 @@ def metric(metrics: Dict[str, Any], *needles: str) -> Tuple[str, Any]:
     raise KeyError(" / ".join(needles))
 
 
-def metrics_file(results_dir: Path) -> Path:
-    matches = sorted(results_dir.rglob("metrics.json"))
-    if len(matches) != 1:
-        raise RuntimeError(
-            f"expected one metrics.json below {results_dir}, found {len(matches)}"
-        )
-    return matches[0]
+def metrics_file(reports_dir: Path) -> Path:
+    metadata = reports_dir / "metadata.json"
+    if not metadata.is_file():
+        raise RuntimeError(f"expected ORFS metadata file: {metadata}")
+    return metadata
 
 
 def main(argv: Optional[Iterable[str]] = None) -> int:
     arguments = list(sys.argv[1:] if argv is None else argv)
     if len(arguments) != 1:
-        print("usage: check_orfs_ibex.py RESULTS_DIR", file=sys.stderr)
+        print("usage: check_orfs_ibex.py REPORTS_DIR", file=sys.stderr)
         return 2
 
     result_file = metrics_file(Path(arguments[0]))
