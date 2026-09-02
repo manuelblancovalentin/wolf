@@ -33,10 +33,11 @@ automatically.
 
 ## Storage and commands
 
-Packages live separately from implementation workspaces:
+Packages live separately from implementation workspaces (under the configured
+XDG data root by default):
 
 ```text
-WOLF_HOME/packages/<kind>/<name>/<revision>/
+<data-root>/packages/<kind>/<name>/<revision>/
   installed.yaml
   source/       # Git sources, or
   content       # relative view into another installed package
@@ -78,7 +79,9 @@ tests/integration/run_packages
 The harness never removes the directory and rejects `/` and the normal
 `~/.wolf` state root. Repeated runs exercise idempotency.
 
-Phase 1 has no uninstall, update, search, version negotiation, dependency
+Configured external registries can now supply additional manifests; see
+`docs/REGISTRIES.md`. Package provenance records the supplying registry and
+its revision where available. Phase 1 has no uninstall, update, search, version negotiation, dependency
 solving, publishing, remote index, signing, or proprietary-asset distribution.
 Completion currently suggests built-in identifiers for `wolf install` and
 `wolf package info`; later package kinds and registry capabilities will extend

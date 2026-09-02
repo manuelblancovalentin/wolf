@@ -75,3 +75,11 @@ protocol with stage names, executor choices, canonical configuration keys, and
 other contextual values as those interfaces become stable. Automatic shell RC
 initialization remains an installation concern; for now completion is enabled
 when the appropriate shell integration file is sourced.
+
+## Global configuration and registries
+
+`wolf config list|get|set|unset|path|edit` manages installation-wide XDG
+configuration. `wolf init` provides a confirmed first-use wizard and can add a
+marked Bash startup snippet without duplicating it. Package manifests come
+from the always-available built-in registry plus configured local or Git
+registries managed by `wolf registry list|add|info|sync|remove`.

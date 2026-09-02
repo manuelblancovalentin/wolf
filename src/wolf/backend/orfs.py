@@ -14,6 +14,7 @@ from wolf.package.registry import PackageRegistry
 from wolf.package.store import PackageStore
 from wolf.backend.orfs_native import prepare_native_orfs
 from wolf.context import ResolvedContext
+from wolf.config import ConfigStore
 
 
 ORFS_STAGES = ("synth", "floorplan", "place", "cts", "route", "finish")
@@ -44,7 +45,7 @@ def _value(context: Optional[Mapping[str, str]], name: str) -> Optional[str]:
 def _configured_runtime(context: Optional[Mapping[str, str]]) -> Optional[str]:
     return _value(context, "ORFS_CONTAINER_RUNTIME") or _value(
         context, "WOLF_CONTAINER_RUNTIME"
-    )
+    ) or ConfigStore().get("container.preferred_runtime")
 
 
 def _runtime_diagnostic(name: str) -> RuntimeDiagnostic:

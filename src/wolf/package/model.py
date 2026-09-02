@@ -51,6 +51,10 @@ class PackageManifest:
     required_paths: tuple[str, ...]
     license: Mapping[str, str] = field(default_factory=dict)
     metadata: Mapping[str, Any] = field(default_factory=dict)
+    registry_name: str = "builtin"
+    registry_type: str = "builtin"
+    registry_revision: Optional[str] = None
+    manifest_path: Optional[str] = None
 
     @property
     def revision(self) -> str:

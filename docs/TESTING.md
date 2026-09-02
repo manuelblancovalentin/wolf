@@ -62,6 +62,12 @@ failure, and plan-only non-allocation.
 
 Test names distinguish intent:
 
+Configuration and registry tests isolate `HOME`, XDG directories, and
+`WOLF_HOME`. They cover atomic versioned config writes, init defaults and
+declined reconfiguration, idempotent shell setup, local/Git discovery and
+sync, collisions, registry provenance, credential-safe SSH URLs, completion,
+and doctor diagnostics without network access.
+
 - `test_characterization_*` protects intended legacy semantics.
 - `test_regression_*` protects a confirmed bug fix.
 

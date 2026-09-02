@@ -8,6 +8,17 @@ A WOLF environment is an EDA experiment definition, not a Python virtual environ
 
 This document describes the target architecture. It is a direction for incremental migration, not a demand to replace the current Bash implementation at once.
 
+## Installation configuration and registries
+
+Global installation configuration is a versioned `wolf.config/v1` document in
+the XDG config directory. It controls WOLF data/package/environment/cache
+locations, default workspace, runtime preference, shell setup, and registry
+sources; it never represents an experiment. The built-in manifest registry is
+combined with explicitly configured local or Git registries. Registry sync is
+explicit and package lookup is cwd-independent; ambiguous duplicate package
+IDs require registry qualification. `WOLF_HOME` remains a compatibility/test
+override for WOLF-owned data roots, not for the XDG config file.
+
 ## Architecture overview
 
 ```text

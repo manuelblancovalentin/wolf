@@ -46,6 +46,7 @@ where = ["src"]
   "templates/activate.template",
   "templates/deactivate.template",
 ]
+"share/wolf/shell" = ["shell/wolf.bash", "shell/wolf.zsh"]
 "share/wolf/registry/rtl" = ["registry/rtl/ibex.yaml"]
 "share/wolf/registry/pdk" = ["registry/pdk/asap7.yaml"]
 "share/wolf/registry/flow" = ["registry/flow/orfs.yaml"]

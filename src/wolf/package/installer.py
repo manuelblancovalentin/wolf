@@ -56,6 +56,12 @@ def _write_record(
         "source_revision": source_revision,
         "installed_at": datetime.now(timezone.utc).isoformat(),
         "content_path": content_path,
+        "registry": {
+            "name": manifest.registry_name,
+            "type": manifest.registry_type,
+            "revision": manifest.registry_revision,
+            "manifest_path": manifest.manifest_path,
+        },
     }
     path.write_text(yaml.safe_dump(record, sort_keys=False), encoding="utf-8")
 

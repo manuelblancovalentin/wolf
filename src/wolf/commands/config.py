@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import shlex
 import subprocess
 
 from wolf import ui
@@ -66,7 +67,7 @@ def command_edit(_args: argparse.Namespace) -> int:
     editor = os.environ.get("VISUAL") or os.environ.get("EDITOR")
     if not editor:
         raise ValueError("set VISUAL or EDITOR before using wolf config edit")
-    return subprocess.run([editor, str(store.path)], check=False).returncode
+    return subprocess.run([*shlex.split(editor), str(store.path)], check=False).returncode
 
 
 def register(subparsers: argparse._SubParsersAction) -> None:

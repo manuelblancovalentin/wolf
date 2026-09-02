@@ -13,6 +13,12 @@ Do not reorder this plan into a wholesale Python rewrite before ORFS exists.
 
 ## NOW
 
+### Global configuration and registries
+
+The installed CLI now has a small XDG-backed configuration store, a confirmed
+first-use `wolf init` wizard, and explicit local/Git package registries. This
+precedes the all-managed package smoke and any future configuration TUI.
+
 ### 1. Characterize behavior before changing it
 
 Add tests around the behavior users and future backends depend on:

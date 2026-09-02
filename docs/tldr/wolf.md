@@ -80,3 +80,21 @@
 - Report basic installation and runtime facts:
 
 `wolf doctor`
+
+- Inspect or update persistent installation settings:
+
+`wolf config list`
+
+`wolf config set paths.packages {{/tools/wolf/packages}}`
+
+- Manage package-manifest registries:
+
+`wolf registry list`
+
+`wolf registry add {{lab}} {{/projects/eda/wolf-registry}} --type local`
+
+`wolf registry sync {{shared}}`
+
+- Configure WOLF interactively for first use:
+
+`wolf init`

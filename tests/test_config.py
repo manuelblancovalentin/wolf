@@ -8,6 +8,8 @@ import yaml
 
 from wolf.config import ConfigStore, config_path
 from wolf.paths import environments_dir, packages_dir, state_root
+from wolf.commands.init import command_init
+from wolf.shell import BEGIN, install_bash_integration
 
 
 class ConfigStoreTests(unittest.TestCase):
@@ -77,3 +79,33 @@ class ConfigStoreTests(unittest.TestCase):
         store.path.write_text("schema: wolf.config/v2\n")
         with self.assertRaisesRegex(ValueError, "unsupported"):
             store.load()
+
+    def test_init_accepts_defaults_and_prefers_usable_podman(self):
+        diagnostic = lambda name: mock.Mock(
+            usable=name == "podman", detail="usable" if name == "podman" else "unavailable"
+        )
+        answers = iter(["", "", "", "", "n", "n"])
+        with mock.patch("wolf.commands.init.input", side_effect=lambda _prompt: next(answers)), \
+             mock.patch("wolf.commands.init._runtime_diagnostic", side_effect=diagnostic):
+            self.assertEqual(command_init(mock.Mock()), 0)
+        config = ConfigStore().load()
+        self.assertEqual(config["container"]["preferred_runtime"], "podman")
+        self.assertEqual(config["paths"]["packages"], str(self.root / "data" / "wolf" / "packages"))
+
+    def test_init_preserves_existing_config_when_reconfigure_is_declined(self):
+        store = ConfigStore()
+        store.set("workspace.default", str(self.root / "existing"))
+        before = store.path.read_bytes()
+        with mock.patch("wolf.commands.init.input", return_value="n"):
+            self.assertEqual(command_init(mock.Mock()), 0)
+        self.assertEqual(store.path.read_bytes(), before)
+
+    def test_shell_integration_installation_is_idempotent(self):
+        rc = self.root / "home" / ".bashrc"
+        rc.parent.mkdir(parents=True)
+        rc.write_text("export CUSTOM=value\n")
+        self.assertTrue(install_bash_integration(rc))
+        self.assertFalse(install_bash_integration(rc))
+        text = rc.read_text()
+        self.assertEqual(text.count(BEGIN), 1)
+        self.assertIn("export CUSTOM=value", text)

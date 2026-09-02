@@ -72,8 +72,26 @@ Show built-in registry metadata and local installation status for a package.
 .TP
 .BI "wolf install " kind/name
 Fetch, check out, validate, and install a package at its pinned revision under
-.IR WOLF_HOME/packages .
+the configured package store (the XDG data root by default).
 Repeated installation of the same valid revision is idempotent.
+.SH CONFIGURATION AND REGISTRIES
+.TP
+.B wolf config list|path|get|set|unset|edit
+Inspect or update the versioned XDG global configuration. Values are validated
+and written atomically.
+.TP
+.B wolf init
+Run the line-oriented first-use configuration wizard. Existing configuration
+and shell startup files are never overwritten without confirmation.
+.TP
+.B wolf registry list
+List the built-in and configured package-manifest registries.
+.TP
+.BI "wolf registry add " "name source"
+Add a local or Git registry (use --type when inference is not unambiguous).
+.TP
+.B "wolf registry info|sync|remove NAME"
+Inspect, explicitly synchronize, or remove a configured registry.
 .SH RUN COMMAND
 .TP
 .B wolf run --plan
@@ -123,21 +141,21 @@ global WOLF requirements and are not checked here.
 .SH ENVIRONMENT
 .TP
 .B WOLF_HOME
-Override the WOLF state root. If unset, WOLF uses
-.IR ~/.wolf .
-This override is useful for isolated development and testing.
+Compatibility/testing override for WOLF-owned data stores. Persistent global
+configuration is found through XDG at
+.IR ~/.config/wolf/config.yaml .
 .SH EXIT STATUS
 WOLF exits with status 0 on success and nonzero on invalid input, missing state,
 an unavailable operation, or command failure.
 .SH FILES
 .TP
-.I ~/.wolf/envs
-Default legacy environment collection.
+.I ~/.local/share/wolf/environments
+Default environment collection (legacy `WOLF_HOME/envs` remains supported).
 .TP
-.I ~/.wolf/config
-Default legacy process definition collection.
+.I ~/.local/share/wolf/processes
+Default process definition collection (legacy `WOLF_HOME/config` remains supported).
 .TP
-.I ~/.wolf/packages
+.I ~/.local/share/wolf/packages
 Default versioned local package store.
 .TP
 .I ~/.wolf/generated/environments

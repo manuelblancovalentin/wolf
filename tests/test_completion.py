@@ -8,6 +8,7 @@ from unittest import mock
 
 from wolf.cli import build_parser, main
 from wolf.commands.completion import candidates, command_complete
+from wolf.config import ConfigStore
 
 
 class CompletionProtocolTests(unittest.TestCase):
@@ -21,6 +22,7 @@ class CompletionProtocolTests(unittest.TestCase):
             {
                 "WOLF_HOME": str(self.root),
                 "WOLF_REGISTRY": str(Path(__file__).resolve().parents[1] / "registry"),
+                "XDG_CONFIG_HOME": str(self.root / "xdg-config"),
             },
             clear=False,
         )
@@ -69,6 +71,18 @@ class CompletionProtocolTests(unittest.TestCase):
             candidates(self.parser, ["install", ""]),
             ["flow/orfs", "pdk/asap7", "rtl/ibex"],
         )
+
+    def test_config_and_registry_candidates_are_offline(self):
+        local = self.root / "local-registry"
+        local.mkdir()
+        document = ConfigStore().load()
+        document["registries"]["lab"] = {
+            "type": "local", "source": str(local), "priority": 100,
+        }
+        ConfigStore().write(document)
+        self.assertIn("paths.packages", candidates(self.parser, ["config", "get", "paths.p"]))
+        self.assertEqual(candidates(self.parser, ["registry", "info", "l"]), ["lab"])
+        self.assertEqual(candidates(self.parser, ["registry", "remove", ""]), ["lab"])
 
     def test_machine_protocol_has_no_ui_header(self):
         args = self.parser.parse_args(["_complete", "--", "activate", "b"])

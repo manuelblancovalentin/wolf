@@ -65,7 +65,7 @@ class InstalledCliTests(unittest.TestCase):
         self.assertIn("░░░░░", result.stdout)
         self.assertIn("WOLF EDA workflow and environment manager", result.stdout)
         self.assertIn(
-            "{env,process,backend,config,package,install,run,doctor,info,activate,deactivate}",
+            "{env,process,backend,config,init,registry,package,install,run,doctor,info,activate,deactivate}",
             result.stdout,
         )
         self.assertNotIn("_shell-activate", result.stdout)
@@ -76,6 +76,49 @@ class InstalledCliTests(unittest.TestCase):
         result = self.wolf("--version")
         self.assert_success(result)
         self.assertEqual(result.stdout.strip(), "wolf 0.1.0.dev0")
+
+    def test_config_cli_persists_validated_values(self):
+        result = self.wolf("config", "set", "paths.packages", "./managed", cwd=self.root)
+        self.assert_success(result)
+        result = self.wolf("config", "get", "paths.packages")
+        self.assert_success(result)
+        self.assertEqual(result.stdout.strip(), str(self.root / "managed"))
+        path = self.wolf("config", "path")
+        self.assert_success(path)
+        self.assertEqual(Path(path.stdout.strip()), self.home / ".config" / "wolf" / "config.yaml")
+        invalid = self.wolf("config", "set", "container.preferred_runtime", "bad")
+        self.assertNotEqual(invalid.returncode, 0)
+        self.assertEqual(self.wolf("config", "get", "paths.packages").stdout.strip(),
+                         str(self.root / "managed"))
+
+    def test_local_registry_cli_and_external_package_info(self):
+        registry = self.root / "lab-registry"
+        (registry / "rtl").mkdir(parents=True)
+        (registry / "rtl" / "demo.yaml").write_text('''schema_version: 1
+kind: rtl
+name: demo
+description: lab design
+source:
+  type: git
+  url: git@host:org/demo.git
+  revision: "0000000000000000000000000000000000000000"
+validation:
+  required_paths: [README.md]
+''')
+        added = self.wolf("registry", "add", "lab", str(registry), "--type", "local")
+        self.assert_success(added)
+        listed = self.wolf("registry", "list")
+        self.assert_success(listed)
+        self.assertIn("builtin", listed.stdout)
+        self.assertIn("lab", listed.stdout)
+        package = self.wolf("package", "info", "rtl/demo")
+        self.assert_success(package)
+        self.assertIn("Registry: lab", package.stdout)
+
+        doctor = self.wolf("doctor")
+        self.assert_success(doctor)
+        self.assertIn("Configuration: valid", doctor.stdout)
+        self.assertIn("Registry lab: ready", doctor.stdout)
 
     def test_empty_environment_list(self):
         result = self.wolf("env", "list")

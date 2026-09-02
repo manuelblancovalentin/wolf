@@ -8,6 +8,12 @@ from collections.abc import Iterable
 from wolf.backend import backend_names
 from wolf.commands.env import _environment_names
 from wolf.package.registry import PackageRegistry
+from wolf.config import CONFIG_KEYS
+from wolf.registry import RegistryManager
+
+
+def _registry_names():
+    return ("builtin",) + tuple(spec.name for spec in RegistryManager().specs())
 
 
 _DYNAMIC_POSITIONALS = {
@@ -17,8 +23,16 @@ _DYNAMIC_POSITIONALS = {
     ("env", "set"): _environment_names,
     ("env", "clone"): _environment_names,
     ("backend", "info"): backend_names,
-    ("package", "info"): lambda: PackageRegistry().identifiers(),
-    ("install",): lambda: PackageRegistry().identifiers(),
+    ("package", "info"): lambda: PackageRegistry().completion_identifiers(),
+    ("install",): lambda: PackageRegistry().completion_identifiers(),
+    ("config", "get"): lambda: CONFIG_KEYS,
+    ("config", "set"): lambda: CONFIG_KEYS,
+    ("config", "unset"): lambda: CONFIG_KEYS,
+    ("registry", "info"): _registry_names,
+    ("registry", "sync"): _registry_names,
+    ("registry", "remove"): lambda: tuple(
+        spec.name for spec in RegistryManager().specs()
+    ),
 }
 
 

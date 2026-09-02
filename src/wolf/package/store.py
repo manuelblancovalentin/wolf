@@ -19,6 +19,9 @@ class InstalledPackage:
     content_path: Path
     installed_at: str
     source_revision: str
+    registry_name: str = "builtin"
+    registry_type: str = "builtin"
+    registry_revision: Optional[str] = None
 
 
 class CorruptPackageError(ValueError):
@@ -69,12 +72,18 @@ class PackageStore:
             raise CorruptPackageError(
                 f"package {expected} is missing required content: {', '.join(missing)}"
             )
+        registry = data.get("registry", {})
+        if not isinstance(registry, dict):
+            raise CorruptPackageError(f"invalid registry provenance in {record}")
         return InstalledPackage(
             manifest=manifest,
             installation_path=installation,
             content_path=content,
             installed_at=str(data.get("installed_at", "unknown")),
             source_revision=str(data.get("source_revision", "")),
+            registry_name=str(registry.get("name", "builtin")),
+            registry_type=str(registry.get("type", "builtin")),
+            registry_revision=registry.get("revision"),
         )
 
     def status(self, manifest: PackageManifest) -> str:

@@ -1,4 +1,4 @@
-"""Inspect and install packages from WOLF's built-in registry."""
+"""Inspect and install packages from configured and built-in registries."""
 
 from __future__ import annotations
 
@@ -40,6 +40,10 @@ def command_info(args: argparse.Namespace) -> int:
     ui.key_value("Source type", manifest.source.type)
     ui.key_value("Upstream", manifest.source.url)
     ui.key_value("Pinned revision", manifest.revision)
+    ui.key_value("Registry", manifest.registry_name)
+    ui.key_value("Registry type", manifest.registry_type)
+    if manifest.registry_revision:
+        ui.key_value("Registry revision", manifest.registry_revision)
     ui.key_value("Recursive submodules", "yes" if manifest.source.submodules else "no")
     if manifest.source.package is not None:
         ui.key_value("Parent package", manifest.source.package)
@@ -53,6 +57,7 @@ def command_info(args: argparse.Namespace) -> int:
         assert installed is not None
         ui.key_value("Content path", installed.content_path)
         ui.key_value("Installed at", installed.installed_at)
+        ui.key_value("Installed from registry", installed.registry_name)
     if manifest.license:
         ui.key_value("License", manifest.license.get("spdx") or manifest.license.get("name", ""))
     for category, values in manifest.metadata.items():
