@@ -8,7 +8,7 @@ import sys
 from typing import Optional
 
 from wolf import __version__
-from wolf.commands import backend, doctor, env, process
+from wolf.commands import backend, doctor, env, process, run
 from wolf.backend import UnknownBackendError
 from wolf.legacy import LegacyCommandError
 from wolf import ui
@@ -32,6 +32,7 @@ def build_parser() -> argparse.ArgumentParser:
     env.register(subparsers)
     process.register(subparsers)
     backend.register(subparsers)
+    run.register(subparsers)
     doctor.register(subparsers)
 
     activate = subparsers.add_parser("activate", help="reserved for shell activation support")

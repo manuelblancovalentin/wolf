@@ -67,3 +67,15 @@ def run_env(arguments: Sequence[str], *, environment_name: Optional[str] = None)
         if details:
             message = f"{message}: {details}"
         raise LegacyCommandError(message)
+
+
+def run_legacy(arguments: Sequence[str], environment: dict[str, str]) -> int:
+    """Invoke the legacy runner from a stable installation path, not caller cwd."""
+    root = _legacy_root()
+    result = subprocess.run(
+        ["bash", str(root / "bin" / "wolf.run"), *arguments],
+        cwd=str(root),
+        env=environment,
+        check=False,
+    )
+    return result.returncode

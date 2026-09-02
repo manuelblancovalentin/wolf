@@ -32,10 +32,10 @@ class InstalledCliTests(unittest.TestCase):
     def tearDown(self):
         self._temporary_directory.cleanup()
 
-    def wolf(self, *arguments, input_text=None):
+    def wolf(self, *arguments, input_text=None, cwd=None):
         return subprocess.run(
             [sys.executable, "-m", "wolf.cli", *arguments],
-            cwd=self.root,
+            cwd=cwd or self.root,
             env=self.environment,
             input=input_text,
             text=True,
@@ -61,7 +61,7 @@ class InstalledCliTests(unittest.TestCase):
         self.assert_success(result)
         self.assertIn("░░░░░", result.stdout)
         self.assertIn("WOLF EDA workflow and environment manager", result.stdout)
-        self.assertIn("{env,process,backend,doctor,activate,deactivate}", result.stdout)
+        self.assertIn("{env,process,backend,run,doctor,activate,deactivate}", result.stdout)
         self.assertNotIn("\x1b", result.stdout)
 
     def test_cli_version(self):
@@ -180,6 +180,47 @@ class InstalledCliTests(unittest.TestCase):
         self.assertNotIn("Yosys", result.stdout)
         self.assertNotIn("Cadence", result.stdout)
         self.assertNotIn("\x1b", result.stdout)
+
+    def test_run_plan_is_location_independent_for_a_named_environment(self):
+        environment = self.create_environment("orfs")
+        environment.joinpath("vars.env").write_text(
+            "\n".join(
+                (
+                    'DESIGN_NAME="ibex"',
+                    'PROCESS="asap7"',
+                    'BACKEND="orfs"',
+                    'WORKSPACE_DIR="./workspace"',
+                    'DATA_DIR="./rtl"',
+                    'ORFS_ROOT="./orfs/flow"',
+                    'ORFS_DESIGN_CONFIG="./orfs/flow/designs/asap7/ibex/config.mk"',
+                    'ORFS_SDC_FILE="./orfs/flow/designs/asap7/ibex/constraint.sdc"',
+                    '',
+                )
+            ),
+            encoding="utf-8",
+        )
+        from_root = self.wolf("run", "--environment", "orfs", "--plan", cwd="/")
+        from_tmp = self.wolf("run", "--environment", "orfs", "--plan", cwd="/tmp")
+        self.assert_success(from_root)
+        self.assert_success(from_tmp)
+        expected_workspace = environment / "workspace"
+        expected_run = expected_workspace / "ibex" / "ibex.asap7" / "ibex"
+        for result in (from_root, from_tmp):
+            self.assertIn(f"Workspace root: {expected_workspace}", result.stdout)
+            self.assertIn(f"Run directory: {expected_run}", result.stdout)
+            self.assertIn("Design: ibex", result.stdout)
+            self.assertIn("Technology: asap7", result.stdout)
+            self.assertIn("Backend: orfs", result.stdout)
+
+    def test_run_plan_cli_workspace_is_invocation_relative(self):
+        invocation = self.root / "invocation"
+        invocation.mkdir()
+        result = self.wolf(
+            "run", "--plan", "--design", "ibex", "--process", "asap7",
+            "--backend", "orfs", "--workspace", "work", cwd=invocation,
+        )
+        self.assert_success(result)
+        self.assertIn(f"Workspace root: {invocation / 'work'}", result.stdout)
 
     def test_ui_emits_color_for_a_color_capable_terminal(self):
         script = """
