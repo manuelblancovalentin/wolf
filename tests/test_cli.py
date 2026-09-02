@@ -63,7 +63,7 @@ class InstalledCliTests(unittest.TestCase):
         self.assert_success(result)
         self.assertIn("░░░░░", result.stdout)
         self.assertIn("WOLF EDA workflow and environment manager", result.stdout)
-        self.assertIn("{env,process,backend,run,doctor,info,activate,deactivate}", result.stdout)
+        self.assertIn("{env,process,backend,run,doctor,info,_shell-activate,activate,deactivate}", result.stdout)
         self.assertNotIn("\x1b", result.stdout)
 
     def test_cli_version(self):
@@ -258,7 +258,7 @@ class InstalledCliTests(unittest.TestCase):
         self.assertIn("No WOLF environment is active", info.stdout)
         deactivate = self.wolf("deactivate")
         self.assert_success(deactivate)
-        self.assertIn("No WOLF-managed shell is active", deactivate.stdout)
+        self.assertIn("No WOLF shell integration is active", deactivate.stdout)
 
     def test_ui_emits_color_for_a_color_capable_terminal(self):
         script = """

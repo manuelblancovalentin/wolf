@@ -69,10 +69,10 @@ Stored relative paths resolve from the environment directory. An explicit
 path is relative to the invocation directory unless absolute.
 .TP
 .BI "wolf activate " name
-Open a managed interactive Bash shell with the selected WOLF environment active.
-It does not change the working directory. Use
+With the Bash integration loaded, activate the selected WOLF environment in the
+current shell. It does not change the working directory. Use
 .B wolf deactivate
-inside that shell to return to the parent shell.
+to restore the original prompt and remove WOLF shell state.
 .TP
 .B wolf info
 Show the active resolved environment. This differs from

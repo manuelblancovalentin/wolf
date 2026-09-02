@@ -43,11 +43,11 @@
 
 `wolf run --environment {{environment}} --workspace ./work --yes`
 
-- Open a managed Bash shell with an environment active:
+- Load Bash integration once per shell, then activate an environment in place:
 
-`wolf activate {{environment}}`
+`source ./shell/wolf.bash && wolf activate {{environment}}`
 
-- Inspect the active environment or leave its managed shell:
+- Inspect or deactivate the active environment:
 
 `wolf {{info|deactivate}}`
 

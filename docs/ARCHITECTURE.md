@@ -227,11 +227,10 @@ wolf deactivate
 
 A small automatically installed shell hook may cooperate with the Python CLI. Users should not normally need to type `eval "$(wolf ...)"`, initialize a shell manually, or understand the hook protocol.
 
-Until an optional in-place hook exists, `wolf activate NAME` opens a WOLF-managed
-interactive Bash subshell using explicit `WOLF_ACTIVE_ENV` identity. Activation
-selects configuration only: it never selects or changes a working directory.
-`wolf deactivate` exits that managed shell. Nested activation is rejected rather
-than creating an unbounded shell stack.
+The Bash integration changes the current shell minimally using explicit
+`WOLF_ACTIVE_ENV` identity. Activation selects configuration only: it never
+changes a working directory or opens a child shell. Deactivation restores the
+original prompt and removes only WOLF-owned shell state.
 
 ## Run, execution, and stage semantics
 

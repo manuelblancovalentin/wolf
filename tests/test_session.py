@@ -1,40 +1,57 @@
 import os
 from pathlib import Path
+import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
-from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(REPO_ROOT / "src"))
-
-from wolf.commands import session
+BASH = shutil.which("bash") or "/bin/bash"
 
 
-class SessionTests(unittest.TestCase):
+class BashIntegrationTests(unittest.TestCase):
     def setUp(self):
-        self.temporary = tempfile.TemporaryDirectory(prefix="wolf-session-")
+        self.temporary = tempfile.TemporaryDirectory(prefix="wolf-shell-")
         self.root = Path(self.temporary.name)
-        self.environment = mock.patch.dict(os.environ, {"WOLF_HOME": str(self.root), "WOLF_ACTIVE_ENV": ""}, clear=False)
-        self.environment.start()
-        (self.root / "envs" / "demo").mkdir(parents=True)
+        (self.root / "envs" / "foo").mkdir(parents=True)
+        (self.root / "envs" / "bar").mkdir()
+        for name in ("foo", "bar"):
+            (self.root / "envs" / name / "vars.env").write_text(
+                'DESIGN_NAME="ibex"\nPROCESS="asap7"\nBACKEND="orfs"\nWORKSPACE_DIR="work"\n'
+            )
+        self.env = os.environ.copy()
+        self.env.update({"WOLF_HOME": str(self.root), "PYTHONPATH": str(REPO_ROOT / "src")})
 
     def tearDown(self):
-        self.environment.stop()
         self.temporary.cleanup()
 
-    def test_activate_valid_environment_starts_managed_bash(self):
-        with mock.patch("wolf.commands.session.subprocess.call", return_value=0) as call:
-            self.assertEqual(session.command_activate(mock.Mock(environment="demo")), 0)
-        command = call.call_args.args[0]
-        self.assertIn("bash", command)
-        env = call.call_args.kwargs["env"]
-        self.assertEqual(env["WOLF_ACTIVE_ENV"], "demo")
-        self.assertEqual(env["WOLF_MANAGED_SHELL"], "1")
+    def bash(self, script):
+        return subprocess.run([BASH, "--noprofile", "--norc", "-c", script], env=self.env,
+                              text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
 
-    def test_activate_rejects_missing_or_nested_environment(self):
-        with self.assertRaisesRegex(ValueError, "does not exist"):
-            session.command_activate(mock.Mock(environment="missing"))
-        with mock.patch.dict(os.environ, {"WOLF_ACTIVE_ENV": "demo"}, clear=False):
-            with self.assertRaisesRegex(ValueError, "already active"):
-                session.command_activate(mock.Mock(environment="demo"))
+    def test_activation_is_in_place_and_restores_state(self):
+        result = self.bash(
+            f'''source "{REPO_ROOT}/shell/wolf.bash"
+original_pid=$$; original_pwd=$PWD; original_path=$PATH; original_ps1='custom> '; PS1=$original_ps1; KEEP=value
+wolf activate foo || exit $?
+[ "$$" = "$original_pid" ] && [ "$PWD" = "$original_pwd" ] && [ "$PATH" = "$original_path" ] && [ "$KEEP" = value ] && [ "$WOLF_ACTIVE_ENV" = foo ] || exit 10
+wolf activate bar || exit $?
+[ "$WOLF_ACTIVE_ENV" = bar ] && [ "$PS1" = 'custom>  [bar]' ] || exit 11
+wolf info >/dev/null || exit $?
+cd /; wolf run --plan >/dev/null || exit $?
+wolf deactivate
+[ -z "${{WOLF_ACTIVE_ENV+x}}" ] && [ "$PS1" = "$original_ps1" ] && [ "$$" = "$original_pid" ] && [ "$KEEP" = value ] || exit 12
+'''
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+
+    def test_invalid_activation_and_inactive_deactivation_are_safe(self):
+        result = self.bash(
+            f'''source "{REPO_ROOT}/shell/wolf.bash"
+PS1='original> '; wolf activate missing; status=$?
+[ $status -ne 0 ] && [ -z "${{WOLF_ACTIVE_ENV+x}}" ] && [ "$PS1" = 'original> ' ] || exit 10
+wolf deactivate
+'''
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stderr)

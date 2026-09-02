@@ -27,10 +27,11 @@ be shared with Python.
 
 ## Active environments
 
-`wolf activate NAME` opens a managed interactive Bash subshell with
-`WOLF_ACTIVE_ENV=NAME`. It selects configuration only and does not change the
-working directory. `wolf deactivate` exits that shell. Nested activation is
-rejected; deactivate first, then activate another environment.
+After loading the Bash integration, `wolf activate NAME` sets
+`WOLF_ACTIVE_ENV=NAME` in the current shell. It selects configuration only and
+does not change the working directory. `wolf deactivate` restores the original
+prompt and removes WOLF-owned state. Activating another environment switches
+in place.
 
 `wolf env show NAME` describes a stored profile. `wolf info` describes the
 current active resolved environment. `wolf run --plan` describes a prospective
