@@ -24,17 +24,27 @@ _wolf_orfs_absolute_file() {
 }
 
 _wolf_orfs_container_path() {
-    local host_path="$1" relative_path
+    local host_path="$1" relative_path mount_host mount_container
     case "$host_path" in
         "${ORFS_ROOT}"/*)
             relative_path="${host_path#"${ORFS_ROOT}"/}"
             printf '/work/%s\n' "$relative_path"
+            return 0
             ;;
-        *)
-            _wolf_orfs_error "host file must be inside ORFS_ROOT so it is mounted in the container: $host_path"
-            return 1
-            ;;
+        *) ;;
     esac
+    while IFS='|' read -r mount_host mount_container || [[ -n "$mount_host" ]]; do
+        [[ -z "$mount_host" ]] && continue
+        case "$host_path" in
+            "${mount_host}"/*)
+                relative_path="${host_path#"${mount_host}"/}"
+                printf '%s/%s\n' "$mount_container" "$relative_path"
+                return 0
+                ;;
+        esac
+    done <<< "${WOLF_CONTAINER_MOUNTS:-}"
+    _wolf_orfs_error "host file is not covered by an ORFS container mount: $host_path"
+    return 1
 }
 
 _wolf_orfs_select_runtime() {
@@ -117,7 +127,7 @@ _wolf_backend_validate() {
     _wolf_orfs_smoke_container "$ORFS_CONTAINER_RUNTIME" || return $?
 
     if [[ -z "${ORFS_DESIGN_CONFIG:-}" ]]; then
-        _wolf_orfs_error "ORFS_DESIGN_CONFIG must name a design config within ORFS_ROOT"
+        _wolf_orfs_error "ORFS_DESIGN_CONFIG must name an ORFS design config"
         return 1
     fi
     ORFS_DESIGN_CONFIG=$(_wolf_orfs_absolute_file "$ORFS_DESIGN_CONFIG") || return $?

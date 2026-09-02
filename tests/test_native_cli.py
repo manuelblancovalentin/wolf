@@ -26,12 +26,26 @@ class NativeEnvironmentCliTests(unittest.TestCase):
         })
         for key in ("WOLF_ACTIVE_ENV", "WOLF_ENV_NAME", "ORFS_ROOT"):
             self.env.pop(key, None)
-        self._package("rtl", "ibex", "rtl-rev", {"design": {"name": "ibex", "top": "ibex_core"}})
+        self._package("rtl", "ibex", "rtl-rev", {"design": {
+            "name": "ibex", "top": "ibex_core", "sources": ["rtl/*.sv"],
+            "include_dirs": ["rtl"],
+        }})
         self._package("pdk", "asap7", "pdk-rev", {"technology": {"name": "asap7"}})
         self._package("flow", "orfs", "flow-rev", {
             "flow": {"name": "orfs", "backend": "orfs"}, "flow_root": "flow"
         })
-        (self.state / "packages" / "flow" / "orfs" / "flow-rev" / "source" / "flow").mkdir()
+        design_source = self.state / "packages" / "rtl" / "ibex" / "rtl-rev" / "source" / "rtl"
+        design_source.mkdir()
+        (design_source / "ibex_core.sv").write_text("module ibex_core; endmodule\n", encoding="utf-8")
+        flow_root = self.state / "packages" / "flow" / "orfs" / "flow-rev" / "source" / "flow"
+        collateral = flow_root / "designs" / "asap7" / "ibex"
+        collateral.mkdir(parents=True)
+        (collateral / "config.mk").write_text("export CORE_UTILIZATION = 40\n", encoding="utf-8")
+        (collateral / "constraint.sdc").write_text(
+            "set clk_name old\nset clk_port_name old_clk\nset clk_period 1000\n"
+            "create_clock -name $clk_name -period $clk_period [get_ports $clk_port_name]\n",
+            encoding="utf-8",
+        )
         source = self.root / "wolf.yaml"
         source.write_text("""schema: wolf.environment/v1
 name: native
@@ -108,6 +122,17 @@ backend:
             "Clock core_clock: clk_i @ 1050 ps", str(self.root / "work"),
         ):
             self.assertIn(expected, first.stdout)
+        manifest_line = next(
+            line for line in first.stdout.splitlines() if "Resolved manifest:" in line
+        )
+        manifest = Path(manifest_line.split("Resolved manifest:", 1)[1].strip())
+        resolved = yaml.safe_load(manifest.read_text(encoding="utf-8"))
+        self.assertEqual(resolved["backend"]["name"], "orfs")
+        generated = manifest.parent
+        self.assertIn("set clk_period 1050", (generated / "constraints.sdc").read_text())
+        config = (generated / "config.mk").read_text()
+        self.assertIn("override DESIGN_NAME := ibex_core", config)
+        self.assertIn("/wolf/design/rtl/ibex_core.sv", config)
 
     def test_active_native_environment_and_package_design_override(self):
         active = dict(self.env, WOLF_ACTIVE_ENV="native")

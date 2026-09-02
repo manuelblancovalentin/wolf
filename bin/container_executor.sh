@@ -36,7 +36,7 @@ _wolf_container_execute() {
         return 2
     fi
 
-    local -a user_args environment_args
+    local -a user_args environment_args volume_args
     environment_args=(
         -e "FLOW_HOME=${WOLF_CONTAINER_FLOW_HOME:-/OpenROAD-flow-scripts/flow}"
         -e "WORK_HOME=${WOLF_CONTAINER_CONTAINER_ROOT:-/work}"
@@ -52,10 +52,21 @@ _wolf_container_execute() {
         user_args=(--user "$(id -u):$(id -g)")
     fi
 
+    volume_args=(-v "${WOLF_CONTAINER_HOST_ROOT}:${WOLF_CONTAINER_CONTAINER_ROOT:-/work}:Z")
+    local mount_host mount_container
+    while IFS='|' read -r mount_host mount_container || [[ -n "$mount_host" ]]; do
+        [[ -z "$mount_host" ]] && continue
+        if [[ "$mount_host" != /* || "$mount_container" != /* || ! -e "$mount_host" ]]; then
+            _wolf_error "Invalid additional container mount: ${mount_host}|${mount_container}"
+            return 2
+        fi
+        volume_args+=(-v "${mount_host}:${mount_container}:ro,Z")
+    done <<< "${WOLF_CONTAINER_MOUNTS:-}"
+
     "$runtime" run --rm -i \
         "${user_args[@]}" \
         "${environment_args[@]}" \
-        -v "${WOLF_CONTAINER_HOST_ROOT}:${WOLF_CONTAINER_CONTAINER_ROOT:-/work}:Z" \
+        "${volume_args[@]}" \
         -w "$WOLF_CONTAINER_WORKDIR" \
         "$WOLF_CONTAINER_IMAGE" "$@"
 }

@@ -17,4 +17,9 @@ metadata:
   design:
     name: ibex
     top: ibex_core
-  rtl_root: rtl
+    sources:
+      - rtl/*.sv
+      - vendor/lowrisc_ip/prim/rtl/*.sv
+      - syn/rtl/prim_clock_gating.v
+    include_dirs:
+      - vendor/lowrisc_ip/prim/rtl

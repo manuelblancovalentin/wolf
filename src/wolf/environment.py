@@ -166,6 +166,11 @@ def normalize_environment(source: Path, destination: Path, *, name: str) -> Envi
         data.setdefault("workspace", {})["root"] = str(
             resolve_stored_path(profile.workspace_root, profile.path.parent)
         )
+    for overrides in data.get("backend", {}).values():
+        if isinstance(overrides, dict) and isinstance(overrides.get("design_config"), str):
+            overrides["design_config"] = str(
+                resolve_stored_path(overrides["design_config"], profile.path.parent)
+            )
     destination.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
     return load_environment(destination, expected_name=name)
 
@@ -293,6 +298,21 @@ def resolve_declarative_environment(
     package_paths = {
         role: package.content_path for role, package in installed.items()
     }
+    source_files: list[Path] = []
+    include_directories: list[Path] = []
+    if "design" in installed:
+        design_metadata = manifests["design"].metadata.get("design", {})
+        patterns = design_metadata.get("sources", []) if isinstance(design_metadata, dict) else []
+        includes = design_metadata.get("include_dirs", []) if isinstance(design_metadata, dict) else []
+        if not isinstance(patterns, list) or not all(isinstance(item, str) for item in patterns):
+            raise ValueError("design package metadata.design.sources must be a sequence of paths")
+        if not isinstance(includes, list) or not all(isinstance(item, str) for item in includes):
+            raise ValueError("design package metadata.design.include_dirs must be a sequence of paths")
+        for pattern in patterns:
+            source_files.extend(sorted(installed["design"].content_path.glob(pattern)))
+        include_directories.extend(
+            (installed["design"].content_path / relative).resolve() for relative in includes
+        )
     return ResolvedContext(
         state_root=state_root.resolve(),
         environment_name=profile.name,
@@ -312,6 +332,10 @@ def resolve_declarative_environment(
         flow_package=flow.package if flow else None,
         package_revisions=package_revisions,
         package_paths=package_paths,
+        source_files=tuple(dict.fromkeys(path.resolve() for path in source_files if path.is_file())),
+        include_directories=tuple(
+            dict.fromkeys(path for path in include_directories if path.is_dir())
+        ),
         clocks=profile.clocks,
         threads=profile.threads,
         backend_overrides=profile.backend_overrides,

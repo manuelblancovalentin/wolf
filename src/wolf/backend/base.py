@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Mapping, Optional, Sequence
+from typing import TYPE_CHECKING, Mapping, Optional, Sequence
+
+if TYPE_CHECKING:
+    from wolf.context import ResolvedContext
 
 
 @dataclass(frozen=True)
@@ -37,3 +40,7 @@ class Backend(ABC):
     ) -> Mapping[str, str]:
         """Return backend-local values resolved for the execution subprocess."""
         return {}
+
+    def prepare_execution(self, context: "ResolvedContext") -> Mapping[str, str]:
+        """Prepare backend-native inputs and return subprocess-only values."""
+        return self.execution_environment(context.values)

@@ -12,6 +12,8 @@ from typing import Mapping, Optional, Sequence
 from wolf.backend.base import Backend, ValidationItem
 from wolf.package.registry import PackageRegistry
 from wolf.package.store import PackageStore
+from wolf.backend.orfs_native import prepare_native_orfs
+from wolf.context import ResolvedContext
 
 
 ORFS_STAGES = ("synth", "floorplan", "place", "cts", "route", "finish")
@@ -186,6 +188,16 @@ class OrfsBackend(Backend):
     ) -> Mapping[str, str]:
         metadata = self.metadata(context)
         return {"ORFS_ROOT": str(metadata.root)} if metadata.root is not None else {}
+
+    def prepare_execution(self, context: ResolvedContext) -> Mapping[str, str]:
+        execution = dict(self.execution_environment(context.values))
+        if context.format != "declarative-v1":
+            return execution
+        root = Path(execution["ORFS_ROOT"]) if execution.get("ORFS_ROOT") else None
+        if root is None:
+            raise ValueError("ORFS_ROOT is not configured and flow/orfs is not installed")
+        execution.update(prepare_native_orfs(context, root))
+        return execution
 
 
 ORFS = OrfsBackend()

@@ -427,6 +427,27 @@ exit 0
         self.assertIn("example/orfs@sha256:test", calls)
         self.assertIn("DESIGN_CONFIG=/work/designs/asap7/ibex/config.mk", calls)
 
+    def test_native_generated_inputs_use_explicit_read_only_mounts(self):
+        generated = self.root / "generated"
+        generated.mkdir()
+        config = generated / "config.mk"
+        sdc = generated / "constraints.sdc"
+        config.write_text("DESIGN_NAME := ibex_core\n", encoding="utf-8")
+        sdc.write_text("create_clock -period 1050 clk_i\n", encoding="utf-8")
+        result = self.shell(
+            self.prepare_script() + "\n_wolf_backend_run_stage synth\n",
+            extra_env={
+                "ORFS_DESIGN_CONFIG": str(config),
+                "ORFS_SDC_FILE": str(sdc),
+                "WOLF_CONTAINER_MOUNTS": f"{generated}|/wolf/generated",
+            },
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        calls = self.call_log.read_text(encoding="utf-8").splitlines()
+        self.assertIn("DESIGN_CONFIG=/wolf/generated/config.mk", calls)
+        self.assertIn("SDC_FILE=/wolf/generated/constraints.sdc", calls)
+        self.assertIn(f"{generated}:/wolf/generated:ro,Z", calls)
+
     def test_headless_execution_sets_supported_qt_environment(self):
         result = self.shell(self.prepare_script() + "\n_wolf_backend_run_stage finish\n")
         self.assertEqual(result.returncode, 0, msg=result.stderr)

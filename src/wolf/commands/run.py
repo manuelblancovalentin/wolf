@@ -86,12 +86,19 @@ def _summary(context: ResolvedContext) -> None:
 
 def command_run(args: argparse.Namespace) -> int:
     context = _context(args)
+    backend_environment = get_backend(context.backend).prepare_execution(context)
     _summary(context)
+    if backend_environment.get("WOLF_RESOLVED_MANIFEST"):
+        ui.key_value("Resolved manifest", backend_environment["WOLF_RESOLVED_MANIFEST"])
+    if backend_environment.get("ORFS_DESIGN_CONFIG"):
+        ui.key_value("ORFS design config", backend_environment["ORFS_DESIGN_CONFIG"])
+        ui.key_value("ORFS SDC", backend_environment["ORFS_SDC_FILE"])
+        ui.key_value("ORFS flow variant", backend_environment["ORFS_FLOW_VARIANT"])
     if args.plan:
         return 0
     environment = os.environ.copy()
     environment.update(context.values)
-    environment.update(get_backend(context.backend).execution_environment(context.values))
+    environment.update(backend_environment)
     environment["WOLF_HOME"] = str(context.state_root)
     if context.environment_directory:
         environment["WOLF_ENV_DIR"] = str(context.environment_directory)
