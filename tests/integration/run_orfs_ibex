@@ -1,0 +1,63 @@
+#!/bin/bash
+set -euo pipefail
+
+# Opt-in real ORFS integration test. It is never run by tests/run.
+
+WOLF_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
+: "${ORFS_ROOT:?Set ORFS_ROOT to an OpenROAD-flow-scripts/flow checkout.}"
+ORFS_ROOT=$(cd -- "$ORFS_ROOT" && pwd)
+
+ORFS_FLOW_VARIANT="${ORFS_FLOW_VARIANT:-wolf_ibex_asap7_1050ps}"
+case "$ORFS_FLOW_VARIANT" in
+    wolf_ibex_asap7_1050ps*)
+        ;;
+    *)
+        echo "Refusing non-dedicated ORFS_FLOW_VARIANT: $ORFS_FLOW_VARIANT" >&2
+        echo "Use a variant beginning with wolf_ibex_asap7_1050ps." >&2
+        exit 2
+        ;;
+esac
+
+ORFS_RESULTS_DIR="${ORFS_ROOT}/results/asap7/ibex/${ORFS_FLOW_VARIANT}"
+ORFS_REPORTS_DIR="${ORFS_ROOT}/reports/asap7/ibex/${ORFS_FLOW_VARIANT}"
+if [[ -e "$ORFS_RESULTS_DIR" || -e "$ORFS_REPORTS_DIR" ]]; then
+    echo "Refusing to reuse existing ORFS regression output:" >&2
+    echo "  $ORFS_RESULTS_DIR" >&2
+    echo "Choose a new dedicated ORFS_FLOW_VARIANT; this harness never cleans results." >&2
+    exit 2
+fi
+
+WOLF_INTEGRATION_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/wolf-orfs-ibex.XXXXXX")
+cleanup() {
+    rm -rf -- "$WOLF_INTEGRATION_ROOT"
+}
+trap cleanup EXIT
+
+export WOLF_HOME="${WOLF_INTEGRATION_ROOT}/state"
+export WOLF_ENV_DIR="${WOLF_HOME}/envs/orfs-ibex"
+export WOLF_ENV_NAME="orfs-ibex"
+export WOLF_WORKSPACE_DIR="${WOLF_INTEGRATION_ROOT}/workspace"
+export ORFS_ROOT
+export ORFS_DESIGN_CONFIG="${ORFS_ROOT}/designs/asap7/ibex/config.mk"
+export ORFS_SDC_FILE="${ORFS_ROOT}/designs/asap7/ibex/constraint.sdc"
+export ORFS_FLOW_VARIANT
+export ORFS_CONTAINER_RUNTIME="${ORFS_CONTAINER_RUNTIME:-docker}"
+export ORFS_MAKE_VARS=$'SWAP_ARITH_OPERATORS=\nOPENROAD_HIERARCHICAL=0'
+
+if [[ "$ORFS_CONTAINER_RUNTIME" == "podman" && -z "${ORFS_CONTAINER_IMAGE:-}" ]]; then
+    echo "ORFS_CONTAINER_IMAGE is required when ORFS_CONTAINER_RUNTIME=podman." >&2
+    exit 2
+fi
+
+mkdir -p "$WOLF_ENV_DIR"
+printf 'Running ORFS Ibex regression with variant %s\n' "$ORFS_FLOW_VARIANT"
+bash "${WOLF_ROOT}/bin/wolf.run" \
+    --backend orfs \
+    --design ibex \
+    --process asap7 \
+    --runtag "$ORFS_FLOW_VARIANT" \
+    --yes \
+    -from synth \
+    -to finish
+
+python3 "${WOLF_ROOT}/tests/integration/check_orfs_ibex.py" "$ORFS_RESULTS_DIR"
