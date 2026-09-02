@@ -43,11 +43,11 @@
 
 `wolf run --environment {{environment}} --workspace ./work --yes`
 
-- Load Bash integration once per shell, then activate an environment in place:
+- Load Bash integration to enable in-place activation and command completion:
 
 `source ./shell/wolf.bash && wolf activate {{environment}}`
 
-- For zsh, load its native prompt integration instead:
+- For zsh, load its native prompt and completion integration instead:
 
 `source ./shell/wolf.zsh && wolf activate {{environment}}`
 

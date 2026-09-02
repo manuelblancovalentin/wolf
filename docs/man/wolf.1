@@ -78,6 +78,16 @@ to restore the original prompt and remove WOLF shell state.
 Show the active resolved environment. This differs from
 .B wolf env show
 which displays a stored profile by name.
+.SH SHELL INTEGRATION AND COMPLETION
+Source
+.I shell/wolf.bash
+from Bash or
+.I shell/wolf.zsh
+from zsh to enable current-shell activation and native command completion.
+Completion currently includes public commands, subcommands and options, stored
+environment names, and built-in backend names. It will be extended as later
+CLI interfaces become stable. Automatic shell startup-file integration is not
+yet installed.
 .SH DIAGNOSTICS
 .TP
 .B wolf doctor

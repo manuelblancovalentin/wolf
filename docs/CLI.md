@@ -44,3 +44,23 @@ WOLF environment does.
 Use `shell/wolf.bash` for Bash and `shell/wolf.zsh` for zsh. The zsh integration
 uses a `precmd` hook so theme-managed prompts retain the active-environment
 marker.
+
+## Shell completion
+
+The Bash and zsh integration files also register native completion for the
+installed `wolf` command. Completion currently covers public commands and
+subcommands, their current options, stored environment names, and built-in
+backend names. Dynamic candidates come from a private machine-readable Python
+protocol; shell code does not scrape WOLF's formatted output or duplicate state
+discovery.
+
+Examples include `wolf <TAB>`, `wolf env <TAB>`,
+`wolf activate <TAB>`, `wolf backend show <TAB>`, and environment/backend values
+for `wolf run`. Completion uses `WOLF_HOME`, so an isolated or non-default state
+root is reflected automatically.
+
+This is the initial completion surface. Later CLI work should extend the same
+protocol with stage names, executor choices, canonical configuration keys, and
+other contextual values as those interfaces become stable. Automatic shell RC
+initialization remains an installation concern; for now completion is enabled
+when the appropriate shell integration file is sourced.
