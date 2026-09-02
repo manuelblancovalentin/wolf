@@ -83,9 +83,12 @@ config. Legacy `ORFS_DESIGN_CONFIG`, `ORFS_SDC_FILE`, and other variable inputs
 remain supported. Backend-native Make knobs are not promoted into canonical
 WOLF fields.
 
-The generated resolved manifest is currently a deterministic planning record.
-Moving the final manifest into the exact numbered run after legacy allocation
-is a subsequent run-manager milestone.
+Planning uses a deterministic generated manifest without allocating a physical
+run. During real execution, the exact allocated run receives an immutable
+`wolf.resolved.yaml` before backend files are materialized or stages start.
+Generated backend files are then associated with paths recorded in that frozen
+snapshot. Failed runs retain both the directory and manifest. Reusing a run
+with different resolved provenance is rejected rather than overwriting history.
 
 ## Editing, cloning, and legacy compatibility
 

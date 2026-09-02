@@ -275,6 +275,17 @@ Each run directory must eventually contain a portable resolved manifest sufficie
 
 Environment and package definitions are also human-readable manifests. These files are the authoritative reproducibility record and should be safe to archive with a run.
 
+The implemented declarative execution path freezes this record as
+`wolf.resolved.yaml` immediately after the legacy allocator materializes the
+exact run directory and before backend execution. It records schema
+`wolf.resolved-run/v1`, the exact allocated path, semantic/package identities
+and revisions, package/source locations, constraints, backend overrides,
+executor/runtime/image metadata, and run-associated generated configuration
+paths. The file is created atomically without overwrite and made read-only.
+Continuation accepts an identical snapshot; a changed resolved composition is
+required to select a new run identity. Backend or stage failure does not remove
+the allocated run or its provenance.
+
 ### SQLite operational state
 
 SQLite provides efficient indexing and live operational state. Initial conceptual tables are:

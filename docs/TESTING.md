@@ -54,6 +54,12 @@ defaults, provenance, cloning and structured mutation, cwd-independent plans,
 generated ORFS config/SDC and manifests, and explicit container mounts without
 running EDA tools.
 
+Allocated-run provenance tests use a fake container runtime to exercise the
+installed CLI and legacy number allocator. They verify exact manifest paths,
+frozen package revisions, read-only atomic creation, identical continuation,
+refusal to overwrite after environment mutation, retention after backend
+failure, and plan-only non-allocation.
+
 Test names distinguish intent:
 
 - `test_characterization_*` protects intended legacy semantics.

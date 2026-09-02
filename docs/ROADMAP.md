@@ -145,9 +145,9 @@ wolf deactivate
 ```
 
 The v1 schema should grow only through real migrations rather than being
-expanded speculatively. Next work must place the final resolved manifest into
-the exact numbered run and validate the package-only golden execution before
-expanding component kinds or inheritance.
+expanded speculatively. Exact allocated runs now freeze immutable resolved
+manifests before backend execution. The next validation is the package-only
+golden execution before expanding component kinds or inheritance.
 
 ### 8. Add package and registry behavior after abstraction stability
 

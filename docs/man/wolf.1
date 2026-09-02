@@ -79,13 +79,17 @@ Repeated installation of the same valid revision is idempotent.
 .B wolf run --plan
 Resolve and display the selected environment's experiment paths without
 executing tools. The displayed workspace and run paths are independent of the
-caller's current directory.
+caller's current directory. Planning does not allocate a physical run.
 .TP
 .BI "wolf run --environment " name
 Resolve a named legacy or declarative environment and invoke the existing runner.
 Stored relative paths resolve from the environment directory. An explicit
 .B --workspace
 path is relative to the invocation directory unless absolute.
+Real declarative executions freeze
+.I wolf.resolved.yaml
+inside the exact allocated run before invoking backend stages. The historical
+manifest is never overwritten by a changed environment.
 .TP
 .BI "wolf activate " name
 With the Bash integration loaded, activate the selected WOLF environment in the
