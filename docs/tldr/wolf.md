@@ -43,6 +43,14 @@
 
 `wolf run --environment {{environment}} --workspace ./work --yes`
 
+- Open a managed Bash shell with an environment active:
+
+`wolf activate {{environment}}`
+
+- Inspect the active environment or leave its managed shell:
+
+`wolf {{info|deactivate}}`
+
 - Report basic installation and runtime facts:
 
 `wolf doctor`

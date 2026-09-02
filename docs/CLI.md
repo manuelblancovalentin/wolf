@@ -24,3 +24,18 @@ Redirected and captured output remains plain text without escape sequences.
 The Bash implementation continues to use `bin/defs` and `bin/utils`. It should
 remain visually compatible, but its rendering implementation does not need to
 be shared with Python.
+
+## Active environments
+
+`wolf activate NAME` opens a managed interactive Bash subshell with
+`WOLF_ACTIVE_ENV=NAME`. It selects configuration only and does not change the
+working directory. `wolf deactivate` exits that shell. Nested activation is
+rejected; deactivate first, then activate another environment.
+
+`wolf env show NAME` describes a stored profile. `wolf info` describes the
+current active resolved environment. `wolf run --plan` describes a prospective
+run. Explicit `wolf run --environment NAME` overrides the active environment
+for that invocation only.
+
+Execution location does not define experiment location. The active/resolved
+WOLF environment does.

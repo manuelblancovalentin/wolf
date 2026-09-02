@@ -67,20 +67,23 @@ Resolve a named legacy-compatible environment and invoke the existing runner.
 Stored relative paths resolve from the environment directory. An explicit
 .B --workspace
 path is relative to the invocation directory unless absolute.
+.TP
+.BI "wolf activate " name
+Open a managed interactive Bash shell with the selected WOLF environment active.
+It does not change the working directory. Use
+.B wolf deactivate
+inside that shell to return to the parent shell.
+.TP
+.B wolf info
+Show the active resolved environment. This differs from
+.B wolf env show
+which displays a stored profile by name.
 .SH DIAGNOSTICS
 .TP
 .B wolf doctor
 Report the WOLF and Python versions, operating system, state root, Git
 availability, and optional Docker and Podman availability. EDA tools are not
 global WOLF requirements and are not checked here.
-.SH ACTIVATION
-The command names
-.B wolf activate
-and
-.B wolf deactivate
-are reserved, but activation and deactivation are not yet available through the
-installed CLI. Invoking them reports that limitation and exits unsuccessfully.
-The existing sourced-shell implementation remains available for legacy use.
 .SH ENVIRONMENT
 .TP
 .B WOLF_HOME
