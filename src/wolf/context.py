@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Mapping, Optional
+from typing import Any, Mapping, Optional
 
 
 _PATH_VARIABLES = frozenset(
@@ -58,6 +58,17 @@ class ResolvedContext:
     run_tag: str
     run_directory: Path
     values: Mapping[str, str]
+    format: str = "legacy"
+    design_top: Optional[str] = None
+    flow_name: Optional[str] = None
+    design_package: Optional[str] = None
+    technology_package: Optional[str] = None
+    flow_package: Optional[str] = None
+    package_revisions: Mapping[str, str] = field(default_factory=dict)
+    package_paths: Mapping[str, Path] = field(default_factory=dict)
+    clocks: tuple[Any, ...] = ()
+    threads: Optional[int] = None
+    backend_overrides: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
 
 
 def resolve_context(
