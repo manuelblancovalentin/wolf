@@ -24,7 +24,7 @@ _wolf_orfs_absolute_file() {
 }
 
 _wolf_orfs_container_path() {
-    local host_path="$1" relative_path mount_host mount_container
+    local host_path="$1" relative_path mount_host mount_container mount_mode
     case "$host_path" in
         "${ORFS_ROOT}"/*)
             relative_path="${host_path#"${ORFS_ROOT}"/}"
@@ -33,7 +33,7 @@ _wolf_orfs_container_path() {
             ;;
         *) ;;
     esac
-    while IFS='|' read -r mount_host mount_container || [[ -n "$mount_host" ]]; do
+    while IFS='|' read -r mount_host mount_container mount_mode || [[ -n "$mount_host" ]]; do
         [[ -z "$mount_host" ]] && continue
         case "$host_path" in
             "${mount_host}"/*)
@@ -194,6 +194,11 @@ _wolf_backend_plan() {
 
 _wolf_backend_prepare() {
     _wolf_orfs_make_arguments || return $?
+
+    if [[ "${ORFS_NATIVE_WORKSPACE:-0}" == "1" ]]; then
+        WOLF_CONTAINER_MOUNTS="${WOLF_CONTAINER_MOUNTS:+${WOLF_CONTAINER_MOUNTS}$'\n'}${RUNDIR}|/wolf/run|rw"
+        WOLF_CONTAINER_WORK_HOME="/wolf/run"
+    fi
 
     WOLF_CONTAINER_IMAGE="$ORFS_CONTAINER_IMAGE"
     WOLF_CONTAINER_HOST_ROOT="$ORFS_ROOT"

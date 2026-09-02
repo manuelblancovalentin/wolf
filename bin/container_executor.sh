@@ -39,7 +39,7 @@ _wolf_container_execute() {
     local -a user_args environment_args volume_args
     environment_args=(
         -e "FLOW_HOME=${WOLF_CONTAINER_FLOW_HOME:-/OpenROAD-flow-scripts/flow}"
-        -e "WORK_HOME=${WOLF_CONTAINER_CONTAINER_ROOT:-/work}"
+        -e "WORK_HOME=${WOLF_CONTAINER_WORK_HOME:-${WOLF_CONTAINER_CONTAINER_ROOT:-/work}}"
     )
     if [[ "${WOLF_CONTAINER_HEADLESS:-0}" == "1" ]]; then
         # ORFS uses this upstream-supported Qt mode for final report images.
@@ -53,14 +53,22 @@ _wolf_container_execute() {
     fi
 
     volume_args=(-v "${WOLF_CONTAINER_HOST_ROOT}:${WOLF_CONTAINER_CONTAINER_ROOT:-/work}:Z")
-    local mount_host mount_container
-    while IFS='|' read -r mount_host mount_container || [[ -n "$mount_host" ]]; do
+    local mount_host mount_container mount_mode mount_suffix
+    while IFS='|' read -r mount_host mount_container mount_mode || [[ -n "$mount_host" ]]; do
         [[ -z "$mount_host" ]] && continue
         if [[ "$mount_host" != /* || "$mount_container" != /* || ! -e "$mount_host" ]]; then
             _wolf_error "Invalid additional container mount: ${mount_host}|${mount_container}"
             return 2
         fi
-        volume_args+=(-v "${mount_host}:${mount_container}:ro,Z")
+        case "$mount_mode" in
+            ""|ro) mount_suffix="ro,Z" ;;
+            rw) mount_suffix="Z" ;;
+            *)
+                _wolf_error "Invalid additional container mount mode: ${mount_mode}"
+                return 2
+                ;;
+        esac
+        volume_args+=(-v "${mount_host}:${mount_container}:${mount_suffix}")
     done <<< "${WOLF_CONTAINER_MOUNTS:-}"
 
     "$runtime" run --rm -i \

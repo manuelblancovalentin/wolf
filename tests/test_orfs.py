@@ -448,6 +448,20 @@ exit 0
         self.assertIn("SDC_FILE=/wolf/generated/constraints.sdc", calls)
         self.assertIn(f"{generated}:/wolf/generated:ro,Z", calls)
 
+    def test_native_orfs_outputs_are_placed_in_the_wolf_run(self):
+        (self.root / "wolf-run").mkdir()
+        result = self.shell(
+            self.prepare_script() + "\n_wolf_backend_run_stage synth\n",
+            extra_env={
+                "ORFS_NATIVE_WORKSPACE": "1",
+                "RUNDIR": str(self.root / "wolf-run"),
+            },
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        calls = self.call_log.read_text(encoding="utf-8").splitlines()
+        self.assertIn("WORK_HOME=/wolf/run", calls)
+        self.assertIn(f"{self.root / 'wolf-run'}:/wolf/run:Z", calls)
+
     def test_headless_execution_sets_supported_qt_environment(self):
         result = self.shell(self.prepare_script() + "\n_wolf_backend_run_stage finish\n")
         self.assertEqual(result.returncode, 0, msg=result.stderr)

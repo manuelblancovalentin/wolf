@@ -177,6 +177,8 @@ def prepare_native_orfs(context: ResolvedContext, orfs_root: Path) -> Mapping[st
         "ORFS_MAKE_VARS": "\n".join(f"{key}={_make_value(value)}" for key, value in make.items()),
         "WOLF_CONTAINER_MOUNTS": "\n".join(mounts),
         "WOLF_RESOLVED_MANIFEST": str(manifest),
+        "WOLF_WORKSPACE_DIR": str(context.workspace_root),
+        "ORFS_NATIVE_WORKSPACE": "1",
     }
     if overrides.get("container_runtime"):
         result["ORFS_CONTAINER_RUNTIME"] = _make_value(overrides["container_runtime"])
