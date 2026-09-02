@@ -63,6 +63,10 @@ _wolf_orfs_select_runtime() {
         _wolf_orfs_error "container runtime is unavailable: $ORFS_CONTAINER_RUNTIME"
         return 1
     fi
+    if ! "$ORFS_CONTAINER_RUNTIME" info >/dev/null 2>&1; then
+        _wolf_orfs_error "container runtime is installed but not usable: $ORFS_CONTAINER_RUNTIME"
+        return 1
+    fi
 }
 
 _wolf_backend_validate() {
@@ -110,7 +114,10 @@ _wolf_backend_validate() {
     platform_directory=$(dirname -- "$design_directory")
     ORFS_DESIGN_NAME="${ORFS_DESIGN_NAME:-${DESIGN_NAME:-$(basename -- "$design_directory")}}"
     ORFS_PLATFORM="${ORFS_PLATFORM:-$(basename -- "$platform_directory")}"
-    ORFS_FLOW_VARIANT="${ORFS_FLOW_VARIANT:-base}"
+    if [[ -z "${ORFS_FLOW_VARIANT:-}" ]]; then
+        _wolf_orfs_error "ORFS_FLOW_VARIANT must identify a dedicated ORFS result namespace"
+        return 1
+    fi
 
     # Transitional values let the existing generic run lifecycle allocate and
     # snapshot a WOLF run without imposing Cadence configuration on ORFS.

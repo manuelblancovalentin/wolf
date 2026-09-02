@@ -86,6 +86,13 @@ fi
         self.stub_bin = self.root / "bin"
         self.stub_bin.mkdir()
         self._write_executable(self.stub_bin / "docker", "#!/bin/sh\nexit 0\n")
+        self._write_executable(
+            self.stub_bin / "podman",
+            """#!/bin/sh
+printf '%s\\n' "$@" >> "$ORFS_CALL_LOG"
+exit 0
+""",
+        )
         self.runtime_missing_bin = self.root / "no-runtime-bin"
         self.runtime_missing_bin.mkdir()
         for command in ("sed", "tr", "id", "uname"):
@@ -188,6 +195,20 @@ fi
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("container runtime is unavailable", result.stdout + result.stderr)
 
+    def test_missing_flow_variant_fails_before_execution(self):
+        result = self.shell(
+            """
+            source "$WOLF_BIN/utils"
+            source "$WOLF_BIN/backend.sh"
+            source "$WOLF_BIN/container_executor.sh"
+            _wolf_load_backend orfs
+            _wolf_backend_validate
+            """,
+            extra_env={"ORFS_FLOW_VARIANT": ""},
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("ORFS_FLOW_VARIANT", result.stdout + result.stderr)
+
     def test_stage_list_and_full_command_construction(self):
         result = self.shell(
             self.prepare_script()
@@ -219,6 +240,22 @@ fi
         calls = self.call_log.read_text(encoding="utf-8").splitlines()
         self.assertIn("SWAP_ARITH_OPERATORS=", calls)
         self.assertIn("EXTRA_SETTING=value with spaces", calls)
+
+    def test_podman_executor_uses_explicit_image_and_work_mount(self):
+        result = self.shell(
+            self.prepare_script() + "\n_wolf_backend_run_stage synth\n",
+            extra_env={
+                "ORFS_CONTAINER_RUNTIME": "podman",
+                "ORFS_CONTAINER_IMAGE": "example/orfs@sha256:test",
+            },
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        calls = self.call_log.read_text(encoding="utf-8").splitlines()
+        self.assertIn("run", calls)
+        self.assertIn(f"{self.flow_root}:/work:Z", calls)
+        self.assertIn("/OpenROAD-flow-scripts/flow", calls)
+        self.assertIn("example/orfs@sha256:test", calls)
+        self.assertIn("DESIGN_CONFIG=/work/designs/asap7/ibex/config.mk", calls)
 
     def test_generic_range_stops_after_orfs_failure(self):
         result = self.shell(

@@ -48,13 +48,16 @@ def _detect_runtime(context: Optional[Mapping[str, str]]) -> Optional[str]:
 def _git_revision(root: Optional[Path]) -> Optional[str]:
     if root is None or not (root / ".git").exists():
         return None
-    result = subprocess.run(
-        ["git", "-C", str(root), "rev-parse", "HEAD"],
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-        check=False,
-    )
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "HEAD"],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+    except OSError:
+        return None
     return result.stdout.strip() if result.returncode == 0 else None
 
 
