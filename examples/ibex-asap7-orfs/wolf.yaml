@@ -1,0 +1,26 @@
+schema: wolf.environment/v1
+name: ibex-asap7
+
+design:
+  package: rtl/ibex
+
+technology:
+  package: pdk/asap7
+
+flow:
+  package: flow/orfs
+
+workspace:
+  root: ~/wolf-work
+
+constraints:
+  clocks:
+    - name: core_clock
+      port: clk_i
+      period_ps: 1050
+
+backend:
+  orfs:
+    make:
+      SWAP_ARITH_OPERATORS: ""
+      OPENROAD_HIERARCHICAL: 0

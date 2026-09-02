@@ -1,269 +1,177 @@
+# WOLF
 
-<span style="color:#ad4ce5;">
-<pre style="background-color:#222;">
-░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
-░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
-░░░░░░░░░░░░░<span style="color:#fff">██╗</span>░░░░░░░<span style="color:#fff">██╗</span>░<span style="color:#fff">█████╗</span>░<span style="color:#fff">██╗</span>░░░░░<span style="color:#fff">███████╗</span>░░░<span style="color:#fff">██████╗</span>░<span style="color:#fff">██╗</span>░░░<span style="color:#fff">██╗███╗</span>░░<span style="color:#fff">██╗</span>░░░░░░░░░░░░
-░░░░░░░░░░░░░<span style="color:#fff">██║</span>░░<span style="color:#fff">██╗</span>░░<span style="color:#fff">██║██╔══██╗██║</span>░░░░░<span style="color:#fff">██╔════╝</span>░░░<span style="color:#fff">██╔══██╗██║</span>░░░<span style="color:#fff">██║████╗</span>░<span style="color:#fff">██║</span>░░░░░░░░░░░░
-░░░░░░░░░░░░░<span style="color:#fff">╚██╗████╗██╔╝██║</span>░░<span style="color:#fff">██║██║</span>░░░░░<span style="color:#fff">█████╗</span>░░░░░<span style="color:#fff">██████╔╝██║</span>░░░<span style="color:#fff">██║██╔██╗██║</span>░░░░░░░░░░░░
-░░░░░░░░░░░░░░<span style="color:#fff">████╔═████║</span>░<span style="color:#fff">██║</span>░░<span style="color:#fff">██║██║</span>░░░░░<span style="color:#fff">██╔══╝</span>░░░░░<span style="color:#fff">██╔══██╗██║</span>░░░<span style="color:#fff">██║██║╚████║</span>░░░░░░░░░░░░
-░░░░░░░░░░░░░░<span style="color:#fff">╚██╔╝</span>░<span style="color:#fff">╚██╔╝</span>░<span style="color:#fff">╚█████╔╝███████╗██║</span>░░░░░<span style="color:#fff">██╗██║</span>░░<span style="color:#fff">██║╚██████╔╝██║</span>░<span style="color:#fff">╚███║</span>░░░░░░░░░░░░
-░░░░░░░░░░░░░░░<span style="color:#fff">╚═╝</span>░░░<span style="color:#fff">╚═╝</span>░░░<span style="color:#fff">╚════╝</span>░<span style="color:#fff">╚══════╝╚═╝</span>░░░░░<span style="color:#fff">╚═╝╚═╝</span>░░<span style="color:#fff">╚═╝</span>░<span style="color:#fff">╚═════╝</span>░<span style="color:#fff">╚═╝</span>░░<span style="color:#fff">╚══╝</span>░░░░░░░░░░░░
-░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
-</pre>
-</span>
+WOLF is a reproducible, technology-agnostic environment manager and execution
+layer for digital implementation flows. It describes an ASIC experiment once,
+then resolves its design, technology, flow, packages, backend configuration,
+execution environment, and provenance.
 
-# WOLF: A tool for digital flow automation and management.
+WOLF exists because an implementation run should not overwrite its history or
+depend on the directory from which a command happened to be launched. It keeps
+numbered runs, immutable resolved manifests, snapshots, logs, artifacts, and a
+small semantic status view while delegating synthesis and physical design to
+established flow ecosystems.
 
-![Algo](imgs/road_sign.png)
-## 1. Introduction
-```bash
-TODO
-```
+## Quick demo
 
-## 2. Installation
-
-Clone the repository and install WOLF with Python:
+Install WOLF from a clone:
 
 ```bash
-git clone git@github.com:manuelblancovalentin/wolf.git
-cd wolf
 python3 -m pip install -e .
-```
-
-This installs WOLF's Python dependencies, including PyYAML, and exposes the
-`wolf` command. Verify the installation with:
-
-```bash
 wolf --version
+wolf init
 ```
 
-The legacy sourced-shell commands, including the current run and activation
-paths, remain available by sourcing `bin/wolf.init.sh` from the clone. Installed
-CLI activation integration will be added separately.
-
-## 3. Usage
-```bash
-TODO
-```
-
-#### Commands
-
-- `run`: Run a flow.
-- `env`: Manipulates, lists and creates wolf environments, which can be used later for flow recreation.
-- `track`: Display active wolf processes.
-
-### Wolf.run
-
-Options:
-```bash
-Main arguments taken wolf.run:
-        -h, --help              Invokes this dialog.
-
-Flow behavior arguments:
-        -c, --clean             If set to true, the flow will be run from scratch, ignoring any previous runs, in a new folder.
-                                    DEFAULT: false
-        -y, --yes               If this flag is present, the script will skip user confirmation at its end, and proceed running the flow.
-                                    DEFAULT: false
-        -t, --runtag            Manually sets the runtag to a specific value, instead of automatically setting it according to previous runs.
-                                    DEFAULT: Obtained automatically by script.
-Project-specific arguments:
-        -p, --process           Specification of process to be used while running the flow. Must be one of "TSCM65", "GF22"
-                                    DEFAULT: TSCM65
-        -d, --design            Specification of the design to be synthesized. Must be one of "tdsp_core"
-                                    DEFAULT: tdsp_core
-        -f, --conf              Specify the full path of the template yaml file used to generate the final setup final that will be passed to flowtool.
-                                    DEFAULT:
-
-```
-
-
-
-
-### STEPS:
-
-0. Remove previous process (no user confirmation)
-```shell
-wolf process remove -y --name tsmc65
-```
-
-1. Create a process (library/ip)
-```shell
-wolf process create --name tsmc65
-```
-
-2. Add metal stack to it
-```shell
-wolf process -n tsmc65 --add-stack
-```
-
-
-
-
-
-
-### Wolf.env
-
-#### Create environment 
+Install the built-in, pinned packages and create an environment from
+[`examples/ibex-asap7-orfs/wolf.yaml`](examples/ibex-asap7-orfs/wolf.yaml):
 
 ```bash
-foo@bar:~$ wolf env create <NAME>
-
- ######################################################################################################
- Wolf environments: 
- -------------------------------------------------- 
- test [/tmp/wolf/.envs/test]
- ######################################################################################################
+wolf install flow/orfs
+wolf install rtl/ibex
+wolf install pdk/asap7
+wolf env create ibex-asap7 --from examples/ibex-asap7-orfs/wolf.yaml
+wolf activate ibex-asap7
+wolf run --plan
+wolf run -y
+wolf status
 ```
 
-#### List environments
+The example uses a 1050 ps clock and the Ibex, ASAP7, and ORFS packages. A
+WOLF environment is configuration, not a Python virtual environment. Activation
+selects configuration and does not change directory. Execution location does
+not define experiment location.
+
+## Mental model
+
+```text
+Registries → Packages → Environment → Resolver → RunContext
+                                                   ↓
+                                              Backend → Executor
+                                                   ↓
+                                       numbered run / provenance / results
+```
+
+Canonical concepts such as design, top, technology, clocks, workspace, and
+stage range are translated by the selected backend into native flow inputs.
+ORFS-specific options remain explicit backend overrides.
+
+WOLF does not replace ORFS or Flowtool. An ORFS run is:
+
+```text
+WOLF semantic configuration → ORFS backend → ORFS → Yosys/OpenROAD
+```
+
+Cadence Flowtool is supported through a compatibility backend. Current support
+is intentionally evolving: ORFS is validated with the golden case below,
+while Cadence remains an important compatibility target.
+
+## Environments, runs, and reproducibility
+
+An environment is a named, mutable configuration profile. A resolved RunContext
+is complete and is frozen into `wolf.resolved.yaml` in the allocated numbered
+run. `wolf status` records evolving execution state separately.
+
+Typical output layout:
+
+```text
+<workspace>/ibex/ibex.asap7/ibex.1/
+  wolf.resolved.yaml
+  wolf.stage-results
+  backend/orfs/config.mk
+  backend/orfs/constraints.sdc
+  logs/  reports/  results/
+```
+
+Numbered runs preserve historical implementations; `.latest` links provide
+convenient access. The resolved manifest records package revisions, backend,
+constraints, paths, runtime, and generated configuration so the run remains
+understandable without WOLF's operational state.
+
+`wolf info` describes the active environment and resolved configuration.
+`wolf status` describes the latest run's execution and results. Use
+`wolf status --json` for automation.
+
+## Packages and registries
+
+The built-in registry currently provides `rtl/ibex`, `pdk/asap7`, and
+`flow/orfs`. Package sources are pinned and installed under WOLF-managed data
+paths, separate from workspaces.
 
 ```bash
-foo@bar:~$ wolf env list
-
- ######################################################################################################
- Wolf environments: 
- -------------------------------------------------- 
- test [/tmp/wolf/.envs/test]
- ######################################################################################################
+wolf package list
+wolf package info rtl/ibex
+wolf registry list
+wolf registry add lab /path/to/registry
+wolf install rtl/ibex
 ```
 
+Local and Git registries are supported for institutional or private manifests.
+WOLF does not store Git credentials; authentication remains Git's
+responsibility. See [Packages](docs/PACKAGES.md) and [Registries](docs/REGISTRIES.md).
 
+## Configuration and setup
 
-
-```
-wolf update bucket
-```
-
-```
-wolf update
-```
-
-## Example for AI in pixel
-First create an environment
-```bash
-foo@bar:~$ wolf create -n pixelAI
-```
-
-Now activate the environment and setup some variables
-```bash
-foo@bar:~$ wolf activate pixelAI
-|wolf:pixelAI| foo@bar:~$ DESIGN_NAME="pixelArray_full_readout"
-```
-
-Now update the bucket of source files to point to the general source script used for all the designs in the FLORA project (point to `/asic/projects/FNAL/xray_imaging/manuelbv/src/inputs/env/FLORA_env.csh`):
-```bash
-|wolf:pixelAI| foo@bar:~$ wolf update --bucket
-
-
-    ┌──────────────────────────────────────────────Please choose a file────────────────────────────────────────────────┐
-    │ Directories                                             Files                                                    │  
-    │ ┌──────────────────────────────────────────────────────┐┌──────────────────────────────────────────────────────┐ │  
-    │ │.                                                     ││FLORA_env.csh                                         │ │  
-    │ │..                                                    ││FLORA_src.yaml                                        │ │  
-    │ │                                                      ││                                                      │ │  
-    │ │                                                      ││                                                      │ │  
-    │ └───────────────────────────────────────────────50%────┘└───────────────────────────────────────────────12%────┘ │  
-    │ ┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────┐ │  
-    │ │/asic/projects/FNAL/xray_imaging/manuelbv/src/inputs/env/FLORA_env.csh                                        │ │  
-    │ └──────────────────────────────────────────────────────────────────────────────────────────────────────────────┘ │  
-    ├──────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤  
-    │                                       <  OK  >                    <Cancel>                                       │  
-    └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  
-```
-
-Now update the wolf environment to save the changes. And reload the environment.
+`wolf init` creates persistent XDG-style configuration and can explicitly
+install an idempotent Bash or Zsh integration hook. `wolf config list` shows
+the effective paths and runtime preference. Users normally do not need to set
+`WOLF_HOME`; it remains available as a compatibility/testing override.
 
 ```bash
-|wolf:pixelAI| foo@bar:~$ wolf update
-|wolf:pixelAI| foo@bar:~$ wolf env reload
+wolf config list
+wolf env list
+wolf backend list
+wolf doctor
 ```
 
-## Ip-manager
-What is this used for?
-```
-TODO
-```
+See [Configuration](docs/CONFIGURATION.md), [Environments](docs/ENVIRONMENTS.md),
+and [CLI reference](docs/CLI.md).
 
-#### Install a library/process
-```
-TODO
-```
-Define corners, opconds, voltages,...
+## Validated golden case
 
-- Device map
-- Objectmap
-- Layermap path
-- Techfile path
-- qrcTechfile path
-- Voltages/Temp ranges
+The package-backed Ibex/ASAP7/ORFS reference flow completes synth through finish
+under rootless Podman. The validated result is:
 
-
-#### PDK/Digital libs
-```
-TODO
+```text
+worst setup slack     +13.31 ps
+setup violations       0
+hold violations        0
+route DRC               0
+max slew violations   64
+max cap violations      0
+max fanout violations   0
 ```
 
-#### Query information about the library
-LEFS
-```
-TODO
-```
-GDS
-```
-TODO
-```
-SPICE
-```
-TODO
-```
-VERILOG
-```
-TODO
-```
+This is a reproducibility reference, not a universal performance claim. See
+[the example](examples/ibex-asap7-orfs/README.md) and [ORFS documentation](docs/ORFS.md).
 
-## Wizard
-What can you setup using the wizard?
+## Current support and limitations
 
-#### RTL/inputs
-Setup and point to the code required for the flow
+| Capability | Status |
+|---|---|
+| Declarative environments | supported |
+| Package registry and pinned installs | supported |
+| ORFS backend | supported; golden validated |
+| Cadence Flowtool backend | compatibility/legacy path |
+| Ibex + ASAP7 | golden validated |
+| Private/local registries | supported |
+| Run provenance | supported |
+| Run status and metrics | initial support |
+| Dependency solving, remote registry service, full run database | not implemented |
+| Multi-design/backend validation | in progress |
 
-#### Technology/Process
-Pick process to be used among installed ips 
+WOLF is an evolving development project. Interfaces, backend coverage, and
+metric coverage may change as a second design and backend configuration are
+validated.
 
-- TSMC 28nm
-- TSMC 65nm
-- GF 22nm
-- etc.
+## Documentation
 
-#### MMMC config
-- Library sets
-- Op conds
-- Timing conditions
-- RC corners
-- Delay corners
-- Constraint modes
-- Analysis views
+- [Architecture](docs/ARCHITECTURE.md)
+- [Environments](docs/ENVIRONMENTS.md)
+- [Packages](docs/PACKAGES.md)
+- [Registries](docs/REGISTRIES.md)
+- [Configuration](docs/CONFIGURATION.md)
+- [ORFS backend](docs/ORFS.md)
+- [Testing](docs/TESTING.md)
+- [Runnable example](examples/ibex-asap7-orfs/README.md)
+- [Man page](docs/man/wolf.1)
 
-#### Cells
- - Don't use. A window in the command line line below, where the user can pick which cells not to use.
-```bash
-
-    ┌────────────────────────────────────────────── Choose cells to use  ────────────────────────────────────────────────┐
-    │                                                                                                                    │
-    │────────────────────────────────────────────────────────────────────────────────────────────────────────────────────│
-    │ [x] CKND1                                                                                                          │  
-    │ [x] CKND2                                                                                                          │ 
-    │ [x] CKND4                                                                                                          │ 
-    │ [ ] CFDN1                                                                                                          │ 
-    │ [ ] CFDN2                                                                                                          │
-    │ [ ] ...                                                                                                            │
-```
-
-
-#### Calibre DRC/LVS
-- Point to custom LVS rulefiles to be added for nmLVS
-  - setup.yaml: `user_lvs_rulefiles` 
-- Point to custom DRC rulefiles to be added for DRC
-  - setup.yaml: `user_drc_rulefiles` 
-
+Longer-term design topics are outlined in [the white-paper outline](docs/WHITEPAPER_OUTLINE.md).
