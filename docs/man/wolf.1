@@ -9,7 +9,7 @@ wolf \- manage WOLF EDA environments and inspect available workflow support
 .SH DESCRIPTION
 WOLF is an EDA workflow and environment manager. The installed command currently
 provides legacy-compatible environment management, process discovery, backend
-inspection, and basic installation diagnostics.
+inspection, resolved run planning/execution, and basic installation diagnostics.
 .PP
 A WOLF environment represents an EDA experiment environment. It is not a Python
 virtual environment.
@@ -55,6 +55,18 @@ and
 .BI "wolf backend show " name
 Show a backend's description, compatibility adapter, and backend-local
 dependency status.
+.SH RUN COMMAND
+.TP
+.B wolf run --plan
+Resolve and display the selected environment's experiment paths without
+executing tools. The displayed workspace and run paths are independent of the
+caller's current directory.
+.TP
+.BI "wolf run --environment " name
+Resolve a named legacy-compatible environment and invoke the existing runner.
+Stored relative paths resolve from the environment directory. An explicit
+.B --workspace
+path is relative to the invocation directory unless absolute.
 .SH DIAGNOSTICS
 .TP
 .B wolf doctor

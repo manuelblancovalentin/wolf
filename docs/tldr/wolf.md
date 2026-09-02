@@ -35,6 +35,14 @@
 
 `wolf backend show orfs`
 
+- Resolve a named environment without starting EDA tools:
+
+`wolf run --environment {{environment}} --plan`
+
+- Run an environment with an explicit invocation-relative workspace override:
+
+`wolf run --environment {{environment}} --workspace ./work --yes`
+
 - Report basic installation and runtime facts:
 
 `wolf doctor`
