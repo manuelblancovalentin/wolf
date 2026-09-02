@@ -38,3 +38,13 @@ wolf() {
             ;;
     esac
 }
+
+_wolf_complete() {
+    local candidate
+    COMPREPLY=()
+    while IFS= read -r candidate; do
+        [ -n "$candidate" ] && COMPREPLY+=("$candidate")
+    done < <(_wolf_command _complete -- "${COMP_WORDS[@]:1}")
+}
+
+complete -F _wolf_complete wolf

@@ -57,6 +57,17 @@ wolf deactivate
         )
         self.assertEqual(result.returncode, 0, msg=result.stderr)
 
+    def test_bash_completion_preserves_dynamic_candidates(self):
+        (self.root / "envs" / "foo space").mkdir()
+        result = self.bash(
+            f'''source "{REPO_ROOT}/shell/wolf.bash"
+COMP_WORDS=(wolf activate f); COMP_CWORD=2; _wolf_complete
+printf '<%s>\n' "${{COMPREPLY[@]}}"
+'''
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertEqual(result.stdout.splitlines(), ["<foo>", "<foo space>"])
+
 
 @unittest.skipUnless(ZSH, "zsh is not installed")
 class ZshIntegrationTests(BashIntegrationTests):
@@ -82,3 +93,15 @@ wolf deactivate
 '''
         )
         self.assertEqual(result.returncode, 0, msg=result.stderr)
+
+    def test_zsh_completion_preserves_dynamic_candidates(self):
+        (self.root / "envs" / "foo space").mkdir()
+        result = self.zsh(
+            f'''source "{REPO_ROOT}/shell/wolf.zsh"
+typeset -a reply
+_wolf_zsh_completion_candidates activate f
+printf '<%s>\n' "${{reply[@]}}"
+'''
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertEqual(result.stdout.splitlines(), ["<foo>", "<foo space>"])

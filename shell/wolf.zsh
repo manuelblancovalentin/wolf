@@ -52,6 +52,30 @@ wolf() {
     esac
 }
 
+_wolf_zsh_completion_candidates() {
+    local output
+    output=$(_wolf_command _complete -- "$@") || return $?
+    if [ -n "$output" ]; then
+        reply=("${(@f)output}")
+    else
+        reply=()
+    fi
+}
+
+_wolf_complete() {
+    local index
+    local -a query reply
+    for (( index = 2; index <= CURRENT; index++ )); do
+        query+=("${words[index]}")
+    done
+    _wolf_zsh_completion_candidates "${query[@]}" || return $?
+    (( ${#reply} )) && _describe 'WOLF value' reply
+}
+
 autoload -Uz add-zsh-hook
 add-zsh-hook precmd _wolf_zsh_prompt
 _wolf_zsh_prompt
+
+if (( $+functions[compdef] )); then
+    compdef _wolf_complete wolf
+fi
