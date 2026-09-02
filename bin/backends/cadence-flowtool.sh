@@ -5,12 +5,17 @@ WOLF_BACKEND_DESCRIPTION="Cadence Flowtool/Genus/Innovus compatibility backend"
 
 _wolf_backend_validate() {
     local executable variable value
-    for executable in flowtool shyaml python3; do
+    for executable in flowtool python3; do
         if ! command -v "$executable" >/dev/null 2>&1; then
             _wolf_error "Backend \"$WOLF_BACKEND_NAME\" requires $executable, but it is unavailable."
             return 1
         fi
     done
+
+    if [[ ! -f "${WOLF_BIN}/yaml_helper.py" ]]; then
+        _wolf_error "Backend \"$WOLF_BACKEND_NAME\" requires ${WOLF_BIN}/yaml_helper.py."
+        return 1
+    fi
 
     for variable in \
         RTL_YAML_FILE \
@@ -36,20 +41,20 @@ _wolf_backend_plan() {
     local key
     while read -r key; do
         if [[ "$key" =~ ^(init_hdl_search_path).*$ ]]; then
-            INIT_HDL_SEARCH_PATH=$(shyaml get-values "RTL.${DESIGN_NAME}.init_hdl_search_path" < "$RTL_YAML_FILE" 2>/dev/null)
+            INIT_HDL_SEARCH_PATH=$(python3 "${WOLF_BIN}/yaml_helper.py" get-values "$RTL_YAML_FILE" "RTL.${DESIGN_NAME}.init_hdl_search_path" 2>/dev/null)
             INIT_HDL_SEARCH_PATH=$(eval echo "$INIT_HDL_SEARCH_PATH")
         elif [[ "$key" =~ ^(systemverilog).*$ ]]; then
-            RTL_SV_FILES=$(shyaml get-values "RTL.${DESIGN_NAME}.${key}.files" < "$RTL_YAML_FILE" 2>/dev/null)
+            RTL_SV_FILES=$(python3 "${WOLF_BIN}/yaml_helper.py" get-values "$RTL_YAML_FILE" "RTL.${DESIGN_NAME}.${key}.files" 2>/dev/null)
             RTL_SV_FILES=$(eval echo "$RTL_SV_FILES")
-            RTL_SV_FILES_ARGS=$(shyaml get-values "RTL.${DESIGN_NAME}.${key}.args" < "$RTL_YAML_FILE" 2>/dev/null)
+            RTL_SV_FILES_ARGS=$(python3 "${WOLF_BIN}/yaml_helper.py" get-values "$RTL_YAML_FILE" "RTL.${DESIGN_NAME}.${key}.args" 2>/dev/null)
             RTL_SV_FILES_ARGS=$(eval echo "$RTL_SV_FILES_ARGS")
         elif [[ "$key" =~ ^(vhdl).*$ ]]; then
-            RTL_VHDL_FILES=$(shyaml get-values "RTL.${DESIGN_NAME}.${key}.files" < "$RTL_YAML_FILE" 2>/dev/null)
+            RTL_VHDL_FILES=$(python3 "${WOLF_BIN}/yaml_helper.py" get-values "$RTL_YAML_FILE" "RTL.${DESIGN_NAME}.${key}.files" 2>/dev/null)
             RTL_VHDL_FILES=$(eval echo "$RTL_VHDL_FILES")
-            RTL_VHDL_FILES_ARGS=$(shyaml get-values "RTL.${DESIGN_NAME}.${key}.args" < "$RTL_YAML_FILE" 2>/dev/null)
+            RTL_VHDL_FILES_ARGS=$(python3 "${WOLF_BIN}/yaml_helper.py" get-values "$RTL_YAML_FILE" "RTL.${DESIGN_NAME}.${key}.args" 2>/dev/null)
             RTL_VHDL_FILES_ARGS=$(eval echo "$RTL_VHDL_FILES_ARGS")
         fi
-    done < <(shyaml keys "RTL.${DESIGN_NAME}" < "$RTL_YAML_FILE")
+    done < <(python3 "${WOLF_BIN}/yaml_helper.py" keys "$RTL_YAML_FILE" "RTL.${DESIGN_NAME}")
 
     RTL_VHDL_FILES_CAT=$(vectorize "$RTL_VHDL_FILES")
     RTL_SV_FILES_CAT=$(vectorize "$RTL_SV_FILES")
@@ -158,7 +163,7 @@ _wolf_backend_stages() {
         grep -Pzo 'flows:(.*\n)*' "$FLOW_SETUP_OUT_FILE" | sed '/^[[:space:]]*$/d' | sed 's/\t/  /g' | sed '/^#/d' | sed '/enabled:/d' | sed '/args:/d' | sed '/features:/d' | awk -F':' '{print $1":"}' > "$FLOW_SUMMARY.tmp"
         sed -i '$ d' "$FLOW_SUMMARY.tmp"
         local stages
-        stages=$(python3 "${WOLF_BIN}/flow_yaml_parser.py" "$FLOW_SUMMARY.tmp" "${current_flows[@]}") || return $?
+        stages=$(python3 "${WOLF_BIN}/yaml_helper.py" stages "$FLOW_SUMMARY.tmp" "${current_flows[@]}") || return $?
         echo "$stages" | tr ' ' '\n' > "$FLOW_STEPS"
         echo "$stages" | tr ' ' '\n' | sort -u | tr '\n' ' ' > "$FLOW_SUMMARY"
         ln -sf "$FLOW_SUMMARY" "$WOLF_ENV_DIR/flow.sum.latest"

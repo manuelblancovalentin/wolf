@@ -17,7 +17,7 @@ class CadenceFlowtoolBackend(Backend):
         self, context: Optional[Mapping[str, str]] = None
     ) -> Sequence[ValidationItem]:
         items = []
-        for executable in ("flowtool", "shyaml", "python3"):
+        for executable in ("flowtool", "python3"):
             location = shutil.which(executable)
             items.append(
                 ValidationItem(

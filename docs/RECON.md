@@ -9,7 +9,7 @@ WOLF is currently a sourced Bash application with one monolithic Cadence runner 
 - `bin/wolf.run`: run allocation, script snapshots, generated configuration, `.latest` links, UUID/history records, stage selection/tracking, and direct Flowtool invocation. This is where generic run management and the Cadence backend are most tightly interleaved.
 - `bin/wolf.process`: early process/library/metal-stack/flow registry under `~/.wolf/config`. It generates exact-hostname shell fragments from `config/technodes`, but only TSMC65 has a skeletal definition. Its closing design notes already describe the sound RTL/process/flow composition model.
 - `bin/utils`, `bin/defs`: presentation, errors, indexed-path helpers, input helpers, and global variable lists. Indexed artifacts are generic core behavior; most presentation code is incidental.
-- `bin/flow_yaml_parser.py`: Cadence flow-step extraction after shell text filters reduce a Flowtool YAML file. It is not a general WOLF manifest parser.
+- `bin/yaml_helper.py`: small PyYAML-based queries for legacy history/RTL data and Cadence flow-step extraction after shell text filters reduce a Flowtool YAML file. It is not a general WOLF manifest parser.
 - `bin/wolf.autocomplete.sh`: Bash completion, including Flowtool flags and cached Flowtool stages. `bin/autorecursivelink.tcl` is an unused recursive symlink helper. `bin/wolf.wizard` is a hard-coded TSMC65 prototype, not a reusable command.
 - `templates/activate.template`, `templates/deactivate.template`: shell-state capture/restore. `templates/{tsmc65,tsmc28,gf22}` are Cadence Stylus/Genus/Innovus/Calibre and process-specific setup, constraint, floorplan, and environment assets.
 - `config/technodes/tsmc65`: incomplete host-local process scaffolding inputs. `README.md` documents the legacy workflow. `wolf-latest-Linux-x86_64.sh` is a stale/incomplete generated installer. Packaging stubs (`__init__.py`, `MANIFEST.in`) do not form a working Python package. There is no test suite or CI configuration.
@@ -30,9 +30,9 @@ Conceptually, the intended layers are already visible: a generic environment com
 
 ## Backend-specific coupling
 
-- `bin/wolf.run:223-313,425-483` assumes `shyaml`, Cadence-tagged setup/flow YAML, three-way Flowtool template concatenation, and placeholder substitution. Configuration preparation belongs behind a Cadence backend.
-- `bin/wolf.run:508-610` constructs Flowtool commands and derives stages by regex-filtering Flowtool YAML into `bin/flow_yaml_parser.py`. Stage discovery and command construction are backend operations.
-- `bin/wolf.run:617-785` implements Flowtool-specific one-stage-at-a-time execution and Tcl PID injection. Core should request stages and record results; the Cadence adapter should retain these mechanics.
+- `bin/backends/cadence-flowtool.sh` owns PyYAML-backed RTL queries, Cadence-tagged setup/flow YAML, three-way Flowtool template concatenation, and placeholder substitution.
+- `bin/backends/cadence-flowtool.sh` constructs Flowtool commands and derives stages by regex-filtering Flowtool YAML into `bin/yaml_helper.py`.
+- `bin/backends/cadence-flowtool.sh` retains Flowtool-specific one-stage-at-a-time execution, log interpretation, and Tcl PID injection while generic shell orchestration requests and runs stages.
 - `bin/wolf.autocomplete.sh:23-26,43-56` embeds Flowtool flags and reads Cadence stage caches. Completion should ask the selected backend for flags/stages.
 - `bin/wolf.env:425-1176` treats Calibre directories, SDC, Stylus YAML, design `.env.csh`, and Innovus floorplan Tcl as universal project structure. Generic scaffolding should delegate backend additions.
 - `templates/*/*.setup.template.yaml` carry the Cadence Stylus tag and Genus/Innovus/Calibre settings; `*.floorplan.template.tcl` uses Innovus/Flowtool commands. These are valid Cadence backend assets, with process-specific values layered within them.
@@ -45,7 +45,7 @@ Conceptually, the intended layers are already visible: a generic environment com
 - `config/technodes/tsmc65/tsmc65.bucket.template.csh` is mostly commented institutional TSMC65 layout knowledge; `bin/wolf.process` expects a differently named `*.process.setup.template.wlf` (`bin/wolf.process:190`) that is absent. GF22 and TSMC28 have flow templates but no technode registry definitions.
 - `templates/*/*.env.template.csh` are actually Bash, compute process-specific metal-stack/Vt/track choices, and assume a Cadence variable vocabulary. Their `.csh` suffix is misleading.
 - The three floorplan Tcl templates are effectively duplicates; setup templates also contain copied TSMC65/FLORA/Beast1 assumptions in other process directories. Shared Cadence logic and process data are not separated.
-- Linux/GNU assumptions include `/proc` UUID/PID access (`bin/wolf.run:518,744-766`), GNU `find -regextype`, `grep -P/-z`, `sed -i`, GNU `top` options, Bash associative arrays/process substitution/readline, `dialog`, `sha512sum`, `shyaml`, and PyYAML. Dependencies are neither centrally declared nor checked per backend.
+- Linux/GNU assumptions include `/proc` UUID/PID access (`bin/wolf.run:518,744-766`), GNU `find -regextype`, `grep -P/-z`, `sed -i`, GNU `top` options, Bash associative arrays/process substitution/readline, `dialog`, and `sha512sum`. PyYAML is now a declared WOLF dependency; the remaining external dependencies are not yet checked consistently per backend.
 
 ## Technical debt / likely bugs
 
@@ -73,7 +73,7 @@ Conceptually, the intended layers are already visible: a generic environment com
 - `bin/wolf.env` duplicates preview/create/overwrite logic for every scaffold file and hard-codes process option lists into generated scripts; a data-driven scaffold plan would eliminate divergent branches without changing behavior.
 - Nearly identical Cadence floorplan and environment templates are copied per process, already carrying stale cross-process comments/settings. Factor only proven common Cadence portions; do not generalize process values prematurely.
 - Argument parsers silently consume neighboring tokens, mix environment and local names, and expose unreachable/stale commands (`UNSET` has a dispatch case but is not accepted by `bin/wolf.init.sh:69`). Help and README content disagree with implementation.
-- `bin/flow_yaml_parser.py` reports YAML errors to stdout with success status, lacks argument/schema validation, and is fed YAML reconstructed by regex. `shyaml` and PyYAML duplicate YAML dependencies.
+- `bin/yaml_helper.py` now reports YAML/query failures with nonzero status and replaces the former duplicate shell YAML dependency. Cadence stage discovery still feeds it YAML reconstructed by regex and lacks full Flowtool schema validation.
 - Empty packaging/config stubs, extensive dead/commented experiments, and the unused Tcl helper/wizard obscure what is supported. These should be classified or retired only after tests establish usage.
 
 ## Candidate backend boundary

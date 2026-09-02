@@ -35,7 +35,7 @@ class BackendRegistryTests(unittest.TestCase):
         ):
             checks = {item.name: item for item in get_backend("cadence-flowtool").validate()}
         self.assertTrue(checks["flowtool"].available)
-        self.assertFalse(checks["shyaml"].available)
+        self.assertFalse(checks["python3"].available)
 
 
 class ShellOrchestrationTests(unittest.TestCase):

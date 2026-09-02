@@ -13,6 +13,7 @@ authors = [
   {name = "Manuel Blanco Valentin"},
 ]
 dependencies = [
+  "PyYAML>=6.0",
   "rich>=13.0",
 ]
 
@@ -31,7 +32,7 @@ where = ["src"]
 [tool.setuptools.data-files]
 "share/wolf/bin" = [
   "bin/backend.sh",
-  "bin/flow_yaml_parser.py",
+  "bin/yaml_helper.py",
   "bin/utils",
   "bin/wolf.env",
   "bin/wolf.run",

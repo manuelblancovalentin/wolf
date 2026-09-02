@@ -23,7 +23,7 @@ Every test creates a temporary `HOME`, WOLF state directory, project, workspace,
 
 ## Mocked behavior
 
-Tests install temporary `flowtool` and `shyaml` stubs. The Flowtool stub records exact arguments, creates representative logs, and can return success, nonzero status, or the legacy `Flow failed` log marker. Small synthetic Flowtool-style configuration files exercise run allocation, stage ranges, snapshots, links, and history without invoking EDA tools.
+Tests install a temporary `flowtool` stub. The Flowtool stub records exact arguments, creates representative logs, and can return success, nonzero status, or the legacy `Flow failed` log marker. Small synthetic Flowtool-style configuration files exercise run allocation, stage ranges, snapshots, links, and history without invoking EDA tools. Regression coverage runs the Cadence compatibility path without a `shyaml` executable; YAML queries use WOLF's internal PyYAML helper.
 
 Installed-CLI tests invoke the Python module directly and exercise environment
 mutations through an isolated legacy Bash bridge. No external EDA command is

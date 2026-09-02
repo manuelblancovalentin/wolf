@@ -94,7 +94,7 @@ class LegacyRunTests(TemporaryWolfHome):
         )
 
         self.rtl_yaml = self.inputs / "rtl.yaml"
-        self.rtl_yaml.write_text("RTL: {}\n")
+        self.rtl_yaml.write_text("RTL:\n  chip: {}\n  cli_design: {}\n")
         self.constraints = self.inputs / "constraints.sdc"
         self.constraints.write_text("# test constraints\n")
         self.floorplan = self.inputs / "floorplan.tcl"
@@ -108,13 +108,6 @@ class LegacyRunTests(TemporaryWolfHome):
         self.stub_bin = self.root / "stub-bin"
         self.stub_bin.mkdir()
         self.call_log = self.root / "flowtool-calls.jsonl"
-        self._write_executable(
-            self.stub_bin / "shyaml",
-            """#!/bin/sh
-# RTL is deliberately empty in these tests.
-exit 0
-""",
-        )
         self._write_executable(
             self.stub_bin / "flowtool",
             """#!/usr/bin/env python3
@@ -395,6 +388,12 @@ sys.exit(exit_code)
         self.assert_success(result)
         self.assertEqual(len(self.calls()), 1)
 
+    def test_regression_cadence_run_does_not_require_shyaml(self):
+        self.assertFalse((self.stub_bin / "shyaml").exists())
+        result = self.run_wolf("-flow", "main.synth")
+        self.assert_success(result)
+        self.assertEqual(len(self.calls()), 1)
+
     def test_characterization_default_backend_is_cadence_flowtool(self):
         result = self.run_wolf("-flow", "main.synth")
         self.assert_success(result)
@@ -472,6 +471,29 @@ class LegacyEnvironmentAndProcessTests(TemporaryWolfHome):
         self.assertEqual(result.returncode, 0, msg=result.stderr)
         vars_file = self.home / ".wolf" / "envs" / "demo" / "vars.env"
         self.assertEqual(vars_file.read_text(), 'TEST_VALUE="stored"\n')
+
+    def test_regression_environment_history_uses_internal_yaml_helper(self):
+        env_dir = self.home / ".wolf" / "envs" / "demo"
+        env_dir.mkdir(parents=True)
+        (env_dir / "history").write_text(
+            textwrap.dedent(
+                """\
+                12345678-1234-5678-1234-567812345678:
+                  cmd1: wolf run --flow main
+                  cmd2: flowtool -from main.synth
+                  date: Wed Sep 02 2026
+                  dir: /tmp/wolf run
+                """
+            )
+        )
+        result = self.shell(
+            f"source {shlex.quote(str(WOLF_INIT))}\n"
+            "_wolf_env history demo\n"
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertIn("wolf run --flow main", result.stdout)
+        self.assertIn("flowtool -from main.synth", result.stdout)
+        self.assertIn("/tmp/wolf run", result.stdout)
 
     def test_regression_unset_command_removes_stored_variable(self):
         result = self.shell(
