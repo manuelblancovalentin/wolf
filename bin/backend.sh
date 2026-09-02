@@ -31,8 +31,13 @@ _wolf_load_backend() {
 
     unset WOLF_BACKEND_NAME WOLF_BACKEND_DESCRIPTION
     unset -f _wolf_backend_validate _wolf_backend_plan _wolf_backend_prepare
+    unset -f _wolf_backend_associate_run
     unset -f _wolf_backend_stages _wolf_backend_run_stage
     source "$adapter" || return 2
+
+    if ! declare -F _wolf_backend_associate_run >/dev/null; then
+        _wolf_backend_associate_run() { return 0; }
+    fi
 
     local required_function
     for required_function in \

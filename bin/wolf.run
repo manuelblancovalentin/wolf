@@ -291,6 +291,20 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
     fi
     mkdir -p ${RUNDIR}
 
+    # Bind backend-generated inputs to the exact allocation before freezing
+    # provenance. Existing identical manifests support continuation; a changed
+    # resolved composition may never overwrite an historical run.
+    if ! _wolf_backend_associate_run; then
+        exit 1
+    fi
+    if [[ -n "${WOLF_RESOLVED_MANIFEST:-}" ]]; then
+        if ! python3 -m wolf.provenance freeze \
+            --source "$WOLF_RESOLVED_MANIFEST" \
+            --run-directory "$RUNDIR"; then
+            exit 1
+        fi
+    fi
+
     #####################################################################
     # SCRIPTS MANAGEMENT
     #   We will only copy the scripts over if we detect that the scripts

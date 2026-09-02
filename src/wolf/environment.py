@@ -298,6 +298,14 @@ def resolve_declarative_environment(
     package_paths = {
         role: package.content_path for role, package in installed.items()
     }
+    package_source_revisions = {
+        str(package.manifest.identifier): package.source_revision
+        for package in installed.values()
+    }
+    package_installation_paths = {
+        str(package.manifest.identifier): package.installation_path
+        for package in installed.values()
+    }
     source_files: list[Path] = []
     include_directories: list[Path] = []
     if "design" in installed:
@@ -332,6 +340,8 @@ def resolve_declarative_environment(
         flow_package=flow.package if flow else None,
         package_revisions=package_revisions,
         package_paths=package_paths,
+        package_source_revisions=package_source_revisions,
+        package_installation_paths=package_installation_paths,
         source_files=tuple(dict.fromkeys(path.resolve() for path in source_files if path.is_file())),
         include_directories=tuple(
             dict.fromkeys(path for path in include_directories if path.is_dir())

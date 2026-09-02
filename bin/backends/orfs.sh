@@ -192,12 +192,58 @@ _wolf_backend_plan() {
     FEATURES=()
 }
 
+_wolf_orfs_append_mount() {
+    WOLF_CONTAINER_MOUNTS="${WOLF_CONTAINER_MOUNTS:+${WOLF_CONTAINER_MOUNTS}$'\n'}$1|$2${3:+|$3}"
+}
+
+_wolf_backend_associate_run() {
+    [[ "${ORFS_NATIVE_WORKSPACE:-0}" == "1" ]] || return 0
+
+    ORFS_STAGED_DESIGN_CONFIG="$ORFS_DESIGN_CONFIG"
+    ORFS_STAGED_SDC_FILE="$ORFS_SDC_FILE"
+    ORFS_RUN_CONFIG_DIR="${RUNDIR}/backend/orfs"
+    ORFS_DESIGN_CONFIG="${ORFS_RUN_CONFIG_DIR}/config.mk"
+    ORFS_SDC_FILE="${ORFS_RUN_CONFIG_DIR}/constraints.sdc"
+    ORFS_CONTAINER_DESIGN_CONFIG="/wolf/generated/config.mk"
+    ORFS_CONTAINER_SDC_FILE="/wolf/generated/constraints.sdc"
+
+    local mount_host mount_container mount_mode retained_mounts=""
+    while IFS='|' read -r mount_host mount_container mount_mode || [[ -n "$mount_host" ]]; do
+        [[ -z "$mount_host" || "$mount_container" == "/wolf/generated" ]] && continue
+        retained_mounts="${retained_mounts:+${retained_mounts}$'\n'}${mount_host}|${mount_container}${mount_mode:+|${mount_mode}}"
+    done <<< "${WOLF_CONTAINER_MOUNTS:-}"
+    WOLF_CONTAINER_MOUNTS="$retained_mounts"
+    _wolf_orfs_append_mount "$ORFS_RUN_CONFIG_DIR" "/wolf/generated" "ro"
+    _wolf_orfs_append_mount "$RUNDIR" "/wolf/run" "rw"
+    WOLF_CONTAINER_WORK_HOME="/wolf/run"
+
+    WOLF_EXECUTOR="container"
+    WOLF_EXECUTOR_RUNTIME="$ORFS_CONTAINER_RUNTIME"
+    WOLF_EXECUTOR_CONTAINER_IMAGE="$ORFS_CONTAINER_IMAGE"
+    WOLF_GENERATED_CONFIG_DIR="$ORFS_RUN_CONFIG_DIR"
+    WOLF_GENERATED_CONFIG_FILES="design_config|${ORFS_DESIGN_CONFIG}"$'\n'"constraints|${ORFS_SDC_FILE}"
+}
+
+_wolf_orfs_install_generated() {
+    local source="$1" destination="$2"
+    if [[ -e "$destination" ]]; then
+        if ! cmp -s "$source" "$destination"; then
+            _wolf_orfs_error "run-associated generated configuration is immutable: $destination"
+            return 1
+        fi
+        return 0
+    fi
+    cp -p -- "$source" "$destination" || return $?
+    chmod a-w -- "$destination" || return $?
+}
+
 _wolf_backend_prepare() {
     _wolf_orfs_make_arguments || return $?
 
     if [[ "${ORFS_NATIVE_WORKSPACE:-0}" == "1" ]]; then
-        WOLF_CONTAINER_MOUNTS="${WOLF_CONTAINER_MOUNTS:+${WOLF_CONTAINER_MOUNTS}$'\n'}${RUNDIR}|/wolf/run|rw"
-        WOLF_CONTAINER_WORK_HOME="/wolf/run"
+        mkdir -p -- "$ORFS_RUN_CONFIG_DIR" || return $?
+        _wolf_orfs_install_generated "$ORFS_STAGED_DESIGN_CONFIG" "$ORFS_DESIGN_CONFIG" || return $?
+        _wolf_orfs_install_generated "$ORFS_STAGED_SDC_FILE" "$ORFS_SDC_FILE" || return $?
     fi
 
     WOLF_CONTAINER_IMAGE="$ORFS_CONTAINER_IMAGE"

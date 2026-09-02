@@ -67,7 +67,18 @@ def _write_sdc(source: Path | None, destination: Path, context: ResolvedContext)
     destination.write_text(text, encoding="utf-8")
 
 
-def _resolved_manifest(context: ResolvedContext, generated: Path) -> Mapping[str, Any]:
+def _resolved_manifest(
+    context: ResolvedContext,
+    generated: Path,
+    *,
+    runtime: str | None = None,
+    container_image: str | None = None,
+) -> Mapping[str, Any]:
+    package_roles = {
+        context.design_package: "design",
+        context.technology_package: "technology",
+        context.flow_package: "flow",
+    }
     return {
         "schema": "wolf.resolved-run/v1",
         "environment": context.environment_name,
@@ -79,6 +90,11 @@ def _resolved_manifest(context: ResolvedContext, generated: Path) -> Mapping[str
         "technology": {"package": context.technology_package, "name": context.process},
         "flow": {"package": context.flow_package, "name": context.flow_name},
         "backend": {"name": context.backend, "overrides": context.backend_overrides.get(context.backend, {})},
+        "execution": {
+            "executor": "container",
+            **({"runtime": runtime} if runtime else {}),
+            **({"container_image": container_image} if container_image else {}),
+        },
         "constraints": {"clocks": [
             {"name": clock.name, "port": clock.port, "period_ps": clock.period_ps}
             for clock in context.clocks
@@ -86,14 +102,45 @@ def _resolved_manifest(context: ResolvedContext, generated: Path) -> Mapping[str
         "resources": {"threads": context.threads} if context.threads else {},
         "workspace": {"root": str(context.workspace_root), "run_directory": str(context.run_directory)},
         "packages": [
-            {"id": identifier, "revision": revision}
+            {
+                "id": identifier,
+                "revision": revision,
+                **(
+                    {"source_revision": context.package_source_revisions[identifier]}
+                    if context.package_source_revisions.get(identifier) else {}
+                ),
+                **(
+                    {"installation_path": str(context.package_installation_paths[identifier])}
+                    if context.package_installation_paths.get(identifier) else {}
+                ),
+                **(
+                    {"content_path": str(context.package_paths[package_roles[identifier]])}
+                    if package_roles.get(identifier) in context.package_paths else {}
+                ),
+            }
             for identifier, revision in sorted(context.package_revisions.items())
         ],
-        "generated": {"directory": str(generated)},
+        "sources": {
+            "rtl": [str(path) for path in context.source_files],
+            "include_directories": [str(path) for path in context.include_directories],
+        },
+        "generated": {
+            "directory": str(generated),
+            "files": {
+                "design_config": str(generated / "config.mk"),
+                "constraints": str(generated / "constraints.sdc"),
+            },
+        },
     }
 
 
-def prepare_native_orfs(context: ResolvedContext, orfs_root: Path) -> Mapping[str, str]:
+def prepare_native_orfs(
+    context: ResolvedContext,
+    orfs_root: Path,
+    *,
+    runtime: str | None = None,
+    container_image: str | None = None,
+) -> Mapping[str, str]:
     """Generate deterministic ORFS inputs for a declarative RunContext."""
     overrides = context.backend_overrides.get("orfs", {})
     if not isinstance(overrides, Mapping):
@@ -170,7 +217,15 @@ def prepare_native_orfs(context: ResolvedContext, orfs_root: Path) -> Mapping[st
         exports.append("NUM_CORES")
     lines.extend(f"export {name}" for name in exports)
     config.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    manifest.write_text(yaml.safe_dump(_resolved_manifest(context, generated), sort_keys=False), encoding="utf-8")
+    manifest.write_text(
+        yaml.safe_dump(
+            _resolved_manifest(
+                context, generated, runtime=runtime, container_image=container_image
+            ),
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
 
     flow_variant = _make_value(overrides.get("flow_variant")) or (
         "wolf_" + re.sub(r"[^A-Za-z0-9_.-]+", "_", context.environment_name or context.run_tag)

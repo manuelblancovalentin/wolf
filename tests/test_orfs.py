@@ -280,6 +280,7 @@ exit 0
             _wolf_backend_validate
             mkdir -p "$SCRIPTS_DIR"
             _wolf_backend_plan
+            _wolf_backend_associate_run
             _wolf_backend_prepare
         """
 

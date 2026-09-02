@@ -190,13 +190,21 @@ class OrfsBackend(Backend):
         return {"ORFS_ROOT": str(metadata.root)} if metadata.root is not None else {}
 
     def prepare_execution(self, context: ResolvedContext) -> Mapping[str, str]:
-        execution = dict(self.execution_environment(context.values))
+        metadata = self.metadata(context.values)
+        execution = {"ORFS_ROOT": str(metadata.root)} if metadata.root is not None else {}
         if context.format != "declarative-v1":
             return execution
         root = Path(execution["ORFS_ROOT"]) if execution.get("ORFS_ROOT") else None
         if root is None:
             raise ValueError("ORFS_ROOT is not configured and flow/orfs is not installed")
-        execution.update(prepare_native_orfs(context, root))
+        execution.update(
+            prepare_native_orfs(
+                context,
+                root,
+                runtime=metadata.runtime,
+                container_image=metadata.container_image or "docker.io/openroad/orfs:latest",
+            )
+        )
         return execution
 
 

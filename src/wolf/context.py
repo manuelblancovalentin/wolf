@@ -66,6 +66,8 @@ class ResolvedContext:
     flow_package: Optional[str] = None
     package_revisions: Mapping[str, str] = field(default_factory=dict)
     package_paths: Mapping[str, Path] = field(default_factory=dict)
+    package_source_revisions: Mapping[str, str] = field(default_factory=dict)
+    package_installation_paths: Mapping[str, Path] = field(default_factory=dict)
     source_files: tuple[Path, ...] = ()
     include_directories: tuple[Path, ...] = ()
     clocks: tuple[Any, ...] = ()
