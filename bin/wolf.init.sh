@@ -66,7 +66,7 @@ wolf () {
                 fi
                 shift
                 ;;
-            run|env|activate|deactivate|update|reload|history|process|track|set)
+            run|env|activate|deactivate|update|reload|history|process|track|set|unset)
                 _WOLF_INIT_ARGS_COMMAND="${_WOLF_INIT_ARGS_KEY^^}"
                 shift
                 ;;

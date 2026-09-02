@@ -35,6 +35,7 @@ FEATURES=()
 YAML_TEMPLATE_FILE=
 YAML_SETUP_FILE=
 TIMESTAMP=$(date '+%d/%m/%Y %H:%M:%S');
+_WOLF_RUN_ORIGINAL_ARGS=("$@")
 
 ###########################################
 # Parse flags
@@ -106,7 +107,7 @@ while [[ $# -gt 0 ]]; do
                 shift
                 ;;
             -d|--design)
-                DESIGN="$2"
+                DESIGN_NAME="$2"
                 shift # pass argument
                 shift # pass value
                 ;;
@@ -190,10 +191,24 @@ SCRIPTS_DIR=$(get_next_indexed_dir "$cmd" "${RUNDIR}/scripts")
 cmd="find ${RUNDIR} -type d -regextype posix-extended -regex '^.*scripts.([0-9])*$' -exec basename {} \; 2>/dev/null  | grep -o "[0-9]*" | sort -n | tail -1"
 OLD_SCRIPTS_DIR=$(get_max_indexed_dir "$cmd" "${RUNDIR}/scripts")
 
+# Produce a stable digest of the source scripts before generated run files are
+# added to the snapshot directory.
+_wolf_script_tree_digest() (
+    cd "$1" || return 1
+    while IFS= read -r -d '' script_file; do
+        sha512sum "$script_file"
+    done < <(find -L . -type f ! -name scripts.sha512checksum -print0 | sort -z)
+)
+
 # Now compare 
+COPY_SCRIPTS_OVER=true
 if [[ ! -z $OLD_SCRIPTS_DIR ]]; then
-    diffs=$(diff -r "${OLD_SCRIPTS_DIR}" "${PROCESS_SCRIPTS}")
-    if [[ ! -z $diffs ]]; then
+    current_scripts_digest=$(_wolf_script_tree_digest "${PROCESS_SCRIPTS}")
+    previous_scripts_digest=
+    if [[ -f "${OLD_SCRIPTS_DIR}/scripts.sha512checksum" ]]; then
+        previous_scripts_digest=$(cat "${OLD_SCRIPTS_DIR}/scripts.sha512checksum")
+    fi
+    if [[ "$current_scripts_digest" != "$previous_scripts_digest" ]]; then
         # There are differences, so we have to copy the scripts over 
         COPY_SCRIPTS_OVER=true
     else 
@@ -393,7 +408,7 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
         cp -r -L ${PROCESS_SCRIPTS} ${SCRIPTS_DIR}
         # Now create sha checksum
         rm -f "${SCRIPTS_DIR}/scripts.sha512checksum"
-        find "${SCRIPTS_DIR}" -type f ! -iname "${SCRIPTS_DIR}/scripts.sha512checksum" -exec sha512sum "{}" + > "${SCRIPTS_DIR}/scripts.sha512checksum" 2&> /dev/null
+        _wolf_script_tree_digest "${PROCESS_SCRIPTS}" > "${SCRIPTS_DIR}/scripts.sha512checksum"
 
     else 
         # No need to copy scripts over, however warn the user.
@@ -417,9 +432,8 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
     # Delete previous trash logs/outs/cmds (except run.log)
     ##########################################
     _wolf_info "Deleting previous trash files."
-    find *.out -exec rm {} + &> /dev/null
-    find *.cmd* -exec rm {} + &> /dev/null
-    find *.log -exec rm {} + &> /dev/null
+    find "$RUNDIR" -maxdepth 1 -type f \( -name '*.out' -o -name '*.cmd*' \) -delete &> /dev/null
+    find "$RUNDIR" -maxdepth 1 -type f -name '*.log' ! -name 'wolf.run.log*' -delete &> /dev/null
 
     ##########################
     # YAML FILES CREATION/COPYING
@@ -511,7 +525,9 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
     cprintf "\n÷Blue÷÷bold÷ ÷white÷Invoking flowtool with previous configs                                                   ÷÷ \n\n"
  
     # Build command
-    FLOWTOOL_CMD="flowtool -files "${FLOW_SETUP_OUT_FILE}" -run_tag ${RUNTAG} ${POSITIONAL[@]} -directory ${WORKSPACE_DIR}/${DESIGN_NAME}/${DESIGN_NAME}.${PROCESS} -log ${RUNDIR}/wolf.run"
+    FLOWTOOL_CMD_ARGS=(flowtool -files "${FLOW_SETUP_OUT_FILE}" -run_tag "${RUNTAG}" "${POSITIONAL[@]}" -directory "${WORKSPACE_DIR}/${DESIGN_NAME}/${DESIGN_NAME}.${PROCESS}" -log "${RUNDIR}/wolf.run")
+    printf -v FLOWTOOL_CMD '%q ' "${FLOWTOOL_CMD_ARGS[@]}"
+    FLOWTOOL_CMD="${FLOWTOOL_CMD% }"
     
     # Let's also link the latest status 
     # Build unique id for this run
@@ -526,11 +542,24 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
         echo "# This is a yaml file containing a history of every digital flow " >> "$WOLF_ENV_DIR/history"
         echo "# for wolf environment \"$WOLF_ENV_NAME\". " >> "$WOLF_ENV_DIR/history"
     fi
-    printf "$FLOWTOOL_RUN_UUID:\n" >> "$WOLF_ENV_DIR/history"
-    printf "  cmd1: \"wolf run $*\"\n" >> "$WOLF_ENV_DIR/history"
-    printf "  cmd2: \"$FLOWTOOL_CMD\"\n" >> "$WOLF_ENV_DIR/history"
-    printf "  dir: \"$WOLF_ENV_DIR/runs/$FLOWTOOL_RUN_UUID.d\"" >> "$WOLF_ENV_DIR/history"
-    printf "  date: \"%s\"\n" "$(date)" >> "$WOLF_ENV_DIR/history"
+    _WOLF_HISTORY_CMD1="wolf run"
+    for _WOLF_HISTORY_ARG in "${_WOLF_RUN_ORIGINAL_ARGS[@]}"; do
+        printf -v _WOLF_HISTORY_ESCAPED_ARG '%q' "$_WOLF_HISTORY_ARG"
+        _WOLF_HISTORY_CMD1="${_WOLF_HISTORY_CMD1} ${_WOLF_HISTORY_ESCAPED_ARG}"
+    done
+    _wolf_write_history_field() {
+        printf "  %s: |-\n" "$1"
+        while IFS= read -r history_line || [[ -n "$history_line" ]]; do
+            printf "    %s\n" "$history_line"
+        done <<< "$2"
+    }
+    {
+        printf "%s:\n" "$FLOWTOOL_RUN_UUID"
+        _wolf_write_history_field "cmd1" "$_WOLF_HISTORY_CMD1"
+        _wolf_write_history_field "cmd2" "$FLOWTOOL_CMD"
+        _wolf_write_history_field "dir" "$WOLF_ENV_DIR/runs/$FLOWTOOL_RUN_UUID.d"
+        _wolf_write_history_field "date" "$(date)"
+    } >> "$WOLF_ENV_DIR/history"
     
     # Link uuid folder to runtag
     mkdir -p "$WOLF_ENV_DIR/runs"
@@ -714,17 +743,13 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
 
             ## ASK USER IF EVERYTHING LOOKS OKAY, IN CASE -y FLAG WAS NOT PASSED.
             if [ $steps_run -gt 0 ]; then 
-                if [[ $? =~ "Flow failed" ]]; then
-                    REPLY="N"
-                else 
-                    if $SKIP; then
-                        REPLY="Y"
-                    else   
-                        echo ""
-                        cprintf "÷Red÷ Proceed with flow step ÷invert÷$STEP÷÷÷Red÷ and call flowtool now or exit? ÷÷"
-                        read -p "[y/N]:" -n 1 -r
-                        printf "\n"  # (optional) move to a new line
-                    fi
+                if $SKIP; then
+                    REPLY="Y"
+                else
+                    echo ""
+                    cprintf "÷Red÷ Proceed with flow step ÷invert÷$STEP÷÷÷Red÷ and call flowtool now or exit? ÷÷"
+                    read -p "[y/N]:" -n 1 -r
+                    printf "\n"  # (optional) move to a new line
                 fi
             else 
                 if $SKIP; then
@@ -768,15 +793,20 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
                 # Link latest log
                 ln -sf "$_LOGFILE" "${RUNDIR}/wolf.run.log.latest"
 
-                flowtool -files "${FLOW_SETUP_OUT_FILE}" -run_tag ${RUNTAG} -inject_tcl "$_WOLF_TRACKER_INJECT_TCL" -from ${STEP} -to ${STEP} ${POSITIONAL[@]} -directory ${WORKSPACE_DIR}/${DESIGN_NAME}/${DESIGN_NAME}.${PROCESS} -log ${RUNDIR}/wolf.run
+                flowtool -files "${FLOW_SETUP_OUT_FILE}" -run_tag "${RUNTAG}" -inject_tcl "$_WOLF_TRACKER_INJECT_TCL" -from "${STEP}" -to "${STEP}" "${POSITIONAL[@]}" -directory "${WORKSPACE_DIR}/${DESIGN_NAME}/${DESIGN_NAME}.${PROCESS}" -log "${RUNDIR}/wolf.run"
+                FLOWTOOL_STATUS=$?
                 # Remove pid file
                 rm -f "$_WOLF_TRACKER_DIR/$FLOWTOOL_RUN_UUID.pid"
-                
-                if grep -Fq "Flow failed" "$_LOGFILE"; then
+
+                if [[ $FLOWTOOL_STATUS -ne 0 ]]; then
+                    _wolf_error "Flowtool exited with status $FLOWTOOL_STATUS while running $STEP. Stopping sequence."
+                    exit "$FLOWTOOL_STATUS"
+                elif [[ -f "$_LOGFILE" ]] && grep -Fq "Flow failed" "$_LOGFILE"; then
                     # There was an error, stop now
                     _wolf_error "Error in the flow detected. Stopping sequence."
                     exit 1
                 fi
+                let steps_run++
             else
                 cprintf "÷Red÷ Exiting wolf now ÷÷\n"
                 exit 0
@@ -801,4 +831,3 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
     unset _WOLF_TRACKER_INJECT_TCL
 
 fi
-

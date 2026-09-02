@@ -60,7 +60,7 @@ _wolf () {
       return 0
       ;;
    *)
-       COMPREPLY=($(compgen -W "run track env create remove activate deactivate update reload history --help process set" -- $cur ) )
+       COMPREPLY=($(compgen -W "run track env create remove activate deactivate update reload history --help process set unset" -- $cur ) )
        return 0
        ;;
  esac

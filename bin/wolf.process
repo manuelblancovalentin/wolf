@@ -179,6 +179,7 @@ _wolf_process () {
                 if [[ ! " ${_WOLF_PROCESS_TECHNODE_LIST[*]} " =~ " ${_WOLF_PROCESS_ARGS_PROCESS} " ]]; then
                     # whatever you want to do when array doesn't contain value
                     _wolf_error "Technode specified was not recognized. Available processes are: ÷blue÷${_WOLF_PROCESS_TECHNODE_LIST[*]}÷÷"
+                    return 1
                 fi
 
                 _WOLF_PROCESS_THIS_PROCESS_LOCAL_DIR="${_WOLF_PROCESS_DIR}/${_WOLF_PROCESS_ARGS_PROCESS}"
@@ -187,9 +188,10 @@ _wolf_process () {
                 case $_WOLF_PROCESS_ARGS_COMMAND in
                     CREATE)
                         # Read default config file and start asking for variables
-                        _WOLF_PROCESS_TECHNODE_PROCESS_REQ_VARS_FILE="${_WOLF_PROCESS_TECHNODE_DIR}/${_WOLF_PROCESS_ARGS_PROCESS}/${_WOLF_PROCESS_ARGS_PROCESS}.process.setup.template.wlf"
+                        _WOLF_PROCESS_TECHNODE_PROCESS_REQ_VARS_FILE="${_WOLF_PROCESS_TECHNODE_DIR}/${_WOLF_PROCESS_ARGS_PROCESS}/${_WOLF_PROCESS_ARGS_PROCESS}.ip.setup.template.wlf"
                         if [[ ! -f ${_WOLF_PROCESS_TECHNODE_PROCESS_REQ_VARS_FILE} ]]; then 
                             _wolf_error "Invalid installation. The technode configuration file ÷yellow÷${_WOLF_PROCESS_TECHNODE_PROCESS_REQ_VARS_FILE}÷÷ was not detected in your system. Contact your cadadmin to fix this."
+                            return 1
                         fi 
 
                         # We are clear. Let's start the wizard.
@@ -380,6 +382,7 @@ _wolf_process () {
                 if [[ ! " ${_WOLF_PROCESS_TECHNODE_LIST[*]} " =~ " ${_WOLF_PROCESS_ARGS_PROCESS} " ]]; then
                     # whatever you want to do when array doesn't contain value
                     _wolf_error "Technode specified was not recognized. Available processes are: ÷blue÷${_WOLF_PROCESS_TECHNODE_LIST[*]}÷÷"
+                    return 1
                 fi
 
                 _WOLF_PROCESS_THIS_PROCESS_LOCAL_DIR="${_WOLF_PROCESS_DIR}/${_WOLF_PROCESS_ARGS_PROCESS}"
@@ -667,4 +670,4 @@ _wolf_process () {
 # WOLF-IP object structure (yaml style):
 #   Structural recursivity is the key!! 
 #   <LIBRARY_NAME>:
-#    
+#
