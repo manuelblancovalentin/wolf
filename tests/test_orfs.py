@@ -257,6 +257,26 @@ exit 0
         self.assertIn("example/orfs@sha256:test", calls)
         self.assertIn("DESIGN_CONFIG=/work/designs/asap7/ibex/config.mk", calls)
 
+    def test_legacy_runner_dispatches_orfs_through_generic_orchestration(self):
+        result = self.shell(
+            """
+            mkdir -p "$WOLF_ENV_DIR"
+            bash "$WOLF_BIN/wolf.run" \
+                --backend orfs \
+                --design ibex \
+                --process asap7 \
+                --runtag wolf-orfs-test \
+                --yes \
+                -from synth \
+                -to floorplan
+            """,
+            extra_env={"WOLF_ENV_DIR": str(self.root / "wolf-home" / "envs" / "orfs")},
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        calls = self.call_log.read_text(encoding="utf-8").splitlines()
+        targets = [value for value in calls if value in ORFS_STAGES]
+        self.assertEqual(targets, ["synth", "floorplan"])
+
     def test_generic_range_stops_after_orfs_failure(self):
         result = self.shell(
             self.prepare_script()
