@@ -4,6 +4,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import yaml
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -98,6 +99,51 @@ class InstalledCliTests(unittest.TestCase):
         self.assertTrue((path / "activate").is_file())
         self.assertTrue((path / "deactivate").is_file())
         self.assertIn('export WOLF_ENV_NAME="alpha"', (path / "activate").read_text())
+
+    def test_declarative_environment_create_clone_and_structured_set(self):
+        source = self.root / "wolf.yaml"
+        source.write_text("""schema: wolf.environment/v1
+name: native
+workspace:
+  root: ./work
+constraints:
+  clocks:
+    - name: core_clock
+      port: clk_i
+      period_ps: 1050
+""", encoding="utf-8")
+        created = self.wolf("env", "create", "native", "--from", str(source))
+        self.assert_success(created)
+        native = self.wolf_home / "envs" / "native" / "wolf.yaml"
+        data = yaml.safe_load(native.read_text(encoding="utf-8"))
+        self.assertEqual(data["workspace"]["root"], str(self.root / "work"))
+
+        updated = self.wolf(
+            "env", "set", "native", "constraints.clocks.0.period_ps", "1100"
+        )
+        self.assert_success(updated)
+        self.assertEqual(
+            yaml.safe_load(native.read_text(encoding="utf-8"))["constraints"]["clocks"][0]["period_ps"],
+            1100,
+        )
+
+        cloned = self.wolf("env", "clone", "native", "native-1100")
+        self.assert_success(cloned)
+        clone = self.wolf_home / "envs" / "native-1100" / "wolf.yaml"
+        self.assertEqual(yaml.safe_load(clone.read_text(encoding="utf-8"))["name"], "native-1100")
+        self.wolf("env", "set", "native-1100", "constraints.clocks.0.period_ps", "1200")
+        self.assertEqual(
+            yaml.safe_load(native.read_text(encoding="utf-8"))["constraints"]["clocks"][0]["period_ps"],
+            1100,
+        )
+
+    def test_declarative_create_rejects_name_mismatch_without_partial_state(self):
+        source = self.root / "wolf.yaml"
+        source.write_text("schema: wolf.environment/v1\nname: other\n", encoding="utf-8")
+        result = self.wolf("env", "create", "requested", "--from", str(source))
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("does not match requested name", result.stderr)
+        self.assertFalse((self.wolf_home / "envs" / "requested").exists())
 
     def test_environment_info_by_explicit_name(self):
         path = self.create_environment("alpha")
