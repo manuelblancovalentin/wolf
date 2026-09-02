@@ -151,7 +151,7 @@ class OrfsBackend(Backend):
             ),
         ]
 
-        image = _value(context, "ORFS_CONTAINER_IMAGE") or "openroad/orfs:latest"
+        image = _value(context, "ORFS_CONTAINER_IMAGE") or "docker.io/openroad/orfs:latest"
         checks.append(
             ValidationItem(
                 "container image",

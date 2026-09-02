@@ -42,7 +42,7 @@ environment model is still being introduced.
 | `ORFS_SDC_FILE` | no | Explicit host-owned SDC override, absolute or relative to `ORFS_ROOT`. |
 | `ORFS_MAKE_VARS` | no | Newline-separated `NAME=VALUE` Make overrides. |
 | `ORFS_CONTAINER_RUNTIME` | no | `docker` or `podman`. WOLF chooses usable Podman, then usable Docker, when unset. |
-| `ORFS_CONTAINER_IMAGE` | no | Image used by either runtime; defaults to `openroad/orfs:latest`. Pin a digest for reproducibility. |
+| `ORFS_CONTAINER_IMAGE` | no | Image used by either runtime; defaults to `docker.io/openroad/orfs:latest`. Pin a digest for reproducibility. |
 | `ORFS_CONTAINER_WORKDIR` | no | Defaults to `/OpenROAD-flow-scripts/flow`. |
 
 WOLF runs both container runtimes directly, mounts `ORFS_ROOT` at `/work` with

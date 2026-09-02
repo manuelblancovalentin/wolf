@@ -53,7 +53,7 @@ if [[ -z "${ORFS_CONTAINER_RUNTIME:-}" ]]; then
 fi
 export ORFS_MAKE_VARS=$'SWAP_ARITH_OPERATORS=\nOPENROAD_HIERARCHICAL=0'
 
-export ORFS_CONTAINER_IMAGE="${ORFS_CONTAINER_IMAGE:-openroad/orfs:latest}"
+export ORFS_CONTAINER_IMAGE="${ORFS_CONTAINER_IMAGE:-docker.io/openroad/orfs:latest}"
 
 mkdir -p "$WOLF_ENV_DIR"
 printf 'Running ORFS Ibex regression with variant %s\n' "$ORFS_FLOW_VARIANT"

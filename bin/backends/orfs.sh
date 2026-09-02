@@ -76,6 +76,25 @@ _wolf_orfs_select_runtime() {
     fi
 }
 
+_wolf_orfs_smoke_container() {
+    local runtime="$1" output status
+    local -a user_args
+    if [[ "$runtime" == "podman" ]]; then
+        user_args=(--userns=keep-id --user "$(id -u):$(id -g)")
+    else
+        user_args=(--user "$(id -u):$(id -g)")
+    fi
+    output=$("$runtime" run --rm -i "${user_args[@]}" \
+        -e DISPLAY= -e QT_QPA_PLATFORM=offscreen \
+        "$ORFS_CONTAINER_IMAGE" \
+        bash -lc 'test -x /OpenROAD-flow-scripts/tools/install/OpenROAD/bin/openroad' 2>&1)
+    status=$?
+    if [[ $status -ne 0 ]]; then
+        _wolf_orfs_error "container runtime ${runtime} cannot start the ORFS image ${ORFS_CONTAINER_IMAGE}: ${output%%$'\n'*}"
+        return "$status"
+    fi
+}
+
 _wolf_backend_validate() {
     if [[ -z "${ORFS_ROOT:-}" ]]; then
         _wolf_orfs_error "ORFS_ROOT must name an external OpenROAD-flow-scripts/flow checkout"
@@ -93,8 +112,9 @@ _wolf_backend_validate() {
         fi
     done
 
+    ORFS_CONTAINER_IMAGE="${ORFS_CONTAINER_IMAGE:-docker.io/openroad/orfs:latest}"
     _wolf_orfs_select_runtime || return $?
-    ORFS_CONTAINER_IMAGE="${ORFS_CONTAINER_IMAGE:-openroad/orfs:latest}"
+    _wolf_orfs_smoke_container "$ORFS_CONTAINER_RUNTIME" || return $?
 
     if [[ -z "${ORFS_DESIGN_CONFIG:-}" ]]; then
         _wolf_orfs_error "ORFS_DESIGN_CONFIG must name a design config within ORFS_ROOT"
