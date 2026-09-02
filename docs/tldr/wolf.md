@@ -27,9 +27,13 @@
 
 `wolf process list`
 
-- List built-in backends or inspect the Cadence compatibility backend:
+- List built-in backends:
 
-`wolf backend {{list|show cadence-flowtool}}`
+`wolf backend list`
+
+- Inspect local ORFS backend configuration:
+
+`wolf backend show orfs`
 
 - Report basic installation and runtime facts:
 

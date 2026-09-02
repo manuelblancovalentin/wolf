@@ -52,12 +52,22 @@ This is a compatibility bridge, not the final Python `RunContext` or executor
 model. Built-ins are registered centrally; there is no entry-point or dynamic
 plugin discovery.
 
-## Current and next backends
+## Built-in backends
 
-The only built-in backend is:
+The built-in backends are:
 
 - `cadence-flowtool` — the existing Cadence Flowtool/Genus/Innovus behavior.
+- `orfs` — an adapter to an externally supplied OpenROAD Flow Scripts checkout.
 
-ORFS is the next planned backend. It should be added as a new adapter and
-registry entry without changing generic stage selection or orchestration. No
-ORFS implementation is present yet.
+The ORFS adapter uses the same shell contract and generic range orchestration as
+Cadence. It provides the ordered public stages `synth`, `floorplan`, `place`,
+`cts`, `route`, and `finish`; each is translated to the matching ORFS Make
+target. WOLF does not recreate ORFS's internal flow.
+
+`orfs` is container-oriented but is not synonymous with Docker. Docker uses the
+checkout's `util/docker_shell`; Podman can execute an explicitly supplied ORFS
+container image through the transitional shell container executor. The selected
+runtime, checkout revision when available, image configuration, and constructed
+Make arguments are backend metadata for future run-manifest persistence.
+
+See `docs/ORFS.md` for configuration and the opt-in Ibex regression harness.

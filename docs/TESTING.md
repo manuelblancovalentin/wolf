@@ -36,6 +36,12 @@ passthrough arguments, execution dispatch, and failure stopping do not depend
 on Flowtool. Legacy Cadence tests continue to use the temporary `flowtool` stub
 for default and explicit `cadence-flowtool` selection.
 
+ORFS unit tests create a synthetic checkout, container launcher, and metrics
+file. They validate configuration, container-path translation, Make argument
+construction, backend-neutral stage ranges, and failure propagation without
+starting a container or requiring host OpenROAD tools. The opt-in real Ibex
+integration harness is `tests/integration/run_orfs_ibex`; see `docs/ORFS.md`.
+
 Test names distinguish intent:
 
 - `test_characterization_*` protects intended legacy semantics.
