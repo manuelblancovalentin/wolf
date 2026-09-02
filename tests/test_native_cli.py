@@ -7,6 +7,8 @@ import unittest
 
 import yaml
 
+from wolf.provenance import RUN_MANIFEST_FILENAME
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -24,6 +26,23 @@ class NativeEnvironmentCliTests(unittest.TestCase):
             "WOLF_REGISTRY": str(self.registry),
             "PYTHONPATH": str(REPO_ROOT / "src"),
         })
+        self.stub_bin = self.root / "bin"
+        self.stub_bin.mkdir()
+        self.runtime_log = self.root / "runtime.log"
+        podman = self.stub_bin / "podman"
+        podman.write_text("""#!/bin/sh
+printf '%s\n' "$@" >> "$WOLF_TEST_RUNTIME_LOG"
+if [ "$1" = info ]; then exit 0; fi
+last=""
+for argument in "$@"; do last="$argument"; done
+if [ -n "$WOLF_TEST_FAIL_TARGET" ] && [ "$last" = "$WOLF_TEST_FAIL_TARGET" ]; then
+  exit 27
+fi
+exit 0
+""", encoding="utf-8")
+        podman.chmod(0o755)
+        self.env["PATH"] = str(self.stub_bin) + os.pathsep + self.env.get("PATH", "")
+        self.env["WOLF_TEST_RUNTIME_LOG"] = str(self.runtime_log)
         for key in ("WOLF_ACTIVE_ENV", "WOLF_ENV_NAME", "ORFS_ROOT"):
             self.env.pop(key, None)
         self._package("rtl", "ibex", "rtl-rev", {"design": {
@@ -40,6 +59,8 @@ class NativeEnvironmentCliTests(unittest.TestCase):
         flow_root = self.state / "packages" / "flow" / "orfs" / "flow-rev" / "source" / "flow"
         collateral = flow_root / "designs" / "asap7" / "ibex"
         collateral.mkdir(parents=True)
+        (flow_root / "Makefile").write_text("", encoding="utf-8")
+        (flow_root / "util").mkdir()
         (collateral / "config.mk").write_text("export CORE_UTILIZATION = 40\n", encoding="utf-8")
         (collateral / "constraint.sdc").write_text(
             "set clk_name old\nset clk_port_name old_clk\nset clk_period 1000\n"
@@ -139,6 +160,66 @@ backend:
         result = self.wolf("run", "--plan", cwd="/tmp", environment=active)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("Environment: native", result.stdout)
+
+    def test_real_allocation_freezes_manifest_and_associates_generated_files(self):
+        result = self.wolf(
+            "run", "--environment", "native", "--runtag", "frozen", "--yes",
+            "-from", "synth", "-to", "synth",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        run = self.root / "work" / "ibex" / "ibex.asap7" / "frozen"
+        manifest = run / RUN_MANIFEST_FILENAME
+        self.assertTrue(manifest.is_file())
+        frozen = yaml.safe_load(manifest.read_text(encoding="utf-8"))
+        self.assertEqual(frozen["workspace"]["run_directory"], str(run))
+        self.assertEqual(frozen["packages"][0]["id"], "flow/orfs")
+        revisions = {item["id"]: item["revision"] for item in frozen["packages"]}
+        self.assertEqual(revisions["rtl/ibex"], "rtl-rev")
+        self.assertEqual(frozen["execution"]["executor"], "container")
+        self.assertEqual(frozen["execution"]["runtime"], "podman")
+        self.assertEqual(
+            frozen["generated"]["directory"], str(run / "backend" / "orfs")
+        )
+        self.assertTrue((run / "backend" / "orfs" / "config.mk").is_file())
+        self.assertTrue((run / "backend" / "orfs" / "constraints.sdc").is_file())
+
+        original = manifest.read_bytes()
+        changed = self.wolf(
+            "env", "set", "native", "constraints.clocks.0.period_ps", "1100"
+        )
+        self.assertEqual(changed.returncode, 0, changed.stderr)
+        refused = self.wolf(
+            "run", "--environment", "native", "--runtag", "frozen", "--yes",
+            "-from", "synth", "-to", "synth",
+        )
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertIn("different immutable provenance", refused.stderr)
+        self.assertEqual(manifest.read_bytes(), original)
+
+    def test_failed_execution_retains_frozen_manifest(self):
+        failing_environment = dict(self.env, WOLF_TEST_FAIL_TARGET="synth")
+        result = self.wolf(
+            "run", "--environment", "native", "--runtag", "failed", "--yes",
+            "-from", "synth", "-to", "synth", environment=failing_environment,
+        )
+        self.assertEqual(result.returncode, 27, result.stderr)
+        run = self.root / "work" / "ibex" / "ibex.asap7" / "failed"
+        manifest = run / RUN_MANIFEST_FILENAME
+        self.assertTrue(manifest.is_file())
+        self.assertEqual(
+            yaml.safe_load(manifest.read_text(encoding="utf-8"))["workspace"]["run_directory"],
+            str(run),
+        )
+
+    def test_plan_does_not_allocate_a_run(self):
+        result = self.wolf(
+            "run", "--environment", "native", "--runtag", "plan-only", "--plan",
+            cwd="/tmp",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        run = self.root / "work" / "ibex" / "ibex.asap7" / "plan-only"
+        self.assertFalse(run.exists())
+        self.assertIn("Resolved manifest:", result.stdout)
 
 
 if __name__ == "__main__":
