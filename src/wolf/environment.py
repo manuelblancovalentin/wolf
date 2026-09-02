@@ -181,6 +181,32 @@ def _semantic(manifest: Any, section: str, field: str) -> Optional[str]:
     return value if isinstance(value, str) and value else None
 
 
+def profile_semantics(profile: EnvironmentProfile) -> Mapping[str, Optional[str]]:
+    """Return semantic package defaults without requiring package installation."""
+    registry = PackageRegistry()
+    result: dict[str, Optional[str]] = {
+        "design": profile.design.name if profile.design else None,
+        "top": profile.design.top if profile.design else None,
+        "technology": profile.technology.name if profile.technology else None,
+        "flow": profile.flow.name if profile.flow else None,
+        "backend": None,
+    }
+    for role, reference, section in (
+        ("design", profile.design, "design"),
+        ("technology", profile.technology, "technology"),
+        ("flow", profile.flow, "flow"),
+    ):
+        if not reference or not reference.package:
+            continue
+        manifest = registry.get(reference.package)
+        result[role] = result[role] or _semantic(manifest, section, "name")
+        if role == "design":
+            result["top"] = result["top"] or _semantic(manifest, "design", "top")
+        if role == "flow":
+            result["backend"] = _semantic(manifest, "flow", "backend")
+    return result
+
+
 def resolve_declarative_environment(
     profile: EnvironmentProfile,
     *,

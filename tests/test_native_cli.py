@@ -1,0 +1,120 @@
+import os
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+import unittest
+
+import yaml
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+class NativeEnvironmentCliTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory(prefix="wolf-native-cli-")
+        self.root = Path(self.temporary.name)
+        self.state = self.root / "state"
+        self.registry = self.root / "registry"
+        self.env = os.environ.copy()
+        self.env.update({
+            "HOME": str(self.root / "home"),
+            "WOLF_HOME": str(self.state),
+            "WOLF_REGISTRY": str(self.registry),
+            "PYTHONPATH": str(REPO_ROOT / "src"),
+        })
+        for key in ("WOLF_ACTIVE_ENV", "WOLF_ENV_NAME", "ORFS_ROOT"):
+            self.env.pop(key, None)
+        self._package("rtl", "ibex", "rtl-rev", {"design": {"name": "ibex", "top": "ibex_core"}})
+        self._package("pdk", "asap7", "pdk-rev", {"technology": {"name": "asap7"}})
+        self._package("flow", "orfs", "flow-rev", {
+            "flow": {"name": "orfs", "backend": "orfs"}, "flow_root": "flow"
+        })
+        (self.state / "packages" / "flow" / "orfs" / "flow-rev" / "source" / "flow").mkdir()
+        source = self.root / "wolf.yaml"
+        source.write_text("""schema: wolf.environment/v1
+name: native
+design:
+  package: rtl/ibex
+technology:
+  package: pdk/asap7
+flow:
+  package: flow/orfs
+workspace:
+  root: ./work
+constraints:
+  clocks:
+    - name: core_clock
+      port: clk_i
+      period_ps: 1050
+resources:
+  threads: 8
+backend:
+  orfs:
+    make:
+      SWAP_ARITH_OPERATORS: ""
+      OPENROAD_HIERARCHICAL: 0
+""", encoding="utf-8")
+        result = self.wolf("env", "create", "native", "--from", str(source))
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def tearDown(self):
+        self.temporary.cleanup()
+
+    def _package(self, kind, name, revision, metadata):
+        directory = self.registry / kind
+        directory.mkdir(parents=True, exist_ok=True)
+        manifest = {
+            "schema_version": 1, "kind": kind, "name": name, "description": name,
+            "source": {"type": "git", "url": "https://example.test/source", "revision": revision},
+            "validation": {"required_paths": []}, "metadata": metadata,
+        }
+        (directory / f"{name}.yaml").write_text(yaml.safe_dump(manifest), encoding="utf-8")
+        installation = self.state / "packages" / kind / name / revision
+        (installation / "source").mkdir(parents=True)
+        (installation / "installed.yaml").write_text(yaml.safe_dump({
+            "package": f"{kind}/{name}", "revision": revision,
+            "source_revision": revision, "content_path": "source", "installed_at": "test",
+        }), encoding="utf-8")
+
+    def wolf(self, *args, cwd=None, environment=None):
+        return subprocess.run(
+            [sys.executable, "-m", "wolf.cli", *args], cwd=cwd or self.root,
+            env=environment or self.env, text=True, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, check=False,
+        )
+
+    def test_info_displays_canonical_native_semantics(self):
+        result = self.wolf("info", "native")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for expected in (
+            "Format: declarative-v1", "Design package: rtl/ibex", "Design: ibex",
+            "Top: ibex_core", "Technology: asap7", "Flow: orfs", "Backend: orfs",
+            "core_clock: clk_i @ 1050 ps", "Threads: 8",
+            "SWAP_ARITH_OPERATORS: <empty>",
+        ):
+            self.assertIn(expected, result.stdout)
+
+    def test_native_plan_is_cwd_independent_and_carries_provenance(self):
+        first = self.wolf("run", "--environment", "native", "--plan", cwd="/")
+        second = self.wolf("run", "--environment", "native", "--plan", cwd="/tmp")
+        self.assertEqual(first.returncode, 0, first.stderr)
+        self.assertEqual(second.returncode, 0, second.stderr)
+        self.assertEqual(first.stdout, second.stdout)
+        for expected in (
+            "Design: ibex", "Top: ibex_core", "Technology: asap7", "Flow: orfs",
+            "Backend: orfs", "Package rtl/ibex: rtl-rev",
+            "Clock core_clock: clk_i @ 1050 ps", str(self.root / "work"),
+        ):
+            self.assertIn(expected, first.stdout)
+
+    def test_active_native_environment_and_package_design_override(self):
+        active = dict(self.env, WOLF_ACTIVE_ENV="native")
+        result = self.wolf("run", "--plan", cwd="/tmp", environment=active)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Environment: native", result.stdout)
+
+
+if __name__ == "__main__":
+    unittest.main()
