@@ -20,6 +20,8 @@ def command_show(args: argparse.Namespace) -> int:
     ui.key_value("Name", backend.name)
     ui.key_value("Description", backend.description)
     ui.key_value("Legacy adapter", backend.adapter_filename)
+    if hasattr(backend, "execution_style"):
+        ui.key_value("Execution style", backend.execution_style)
     ui.key_value("Local validation", "")
     for item in backend.validate():
         status = "available" if item.available else "unavailable"

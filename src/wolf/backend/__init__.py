@@ -7,6 +7,7 @@ from typing import Tuple
 
 from wolf.backend.base import Backend
 from wolf.backend.cadence_flowtool import CADENCE_FLOWTOOL
+from wolf.backend.orfs import ORFS
 
 
 class UnknownBackendError(ValueError):
@@ -16,6 +17,7 @@ class UnknownBackendError(ValueError):
 _BACKEND_NAME = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 _BUILTINS = {
     CADENCE_FLOWTOOL.name: CADENCE_FLOWTOOL,
+    ORFS.name: ORFS,
 }
 
 

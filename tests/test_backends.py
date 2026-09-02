@@ -16,7 +16,7 @@ from wolf.backend import UnknownBackendError, backend_names, get_backend
 
 class BackendRegistryTests(unittest.TestCase):
     def test_builtin_registry_contains_cadence_flowtool(self):
-        self.assertEqual(backend_names(), ("cadence-flowtool",))
+        self.assertEqual(backend_names(), ("cadence-flowtool", "orfs"))
         backend = get_backend("cadence-flowtool")
         self.assertEqual(backend.name, "cadence-flowtool")
         self.assertEqual(backend.adapter_filename, "cadence-flowtool.sh")

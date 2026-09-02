@@ -152,11 +152,18 @@ class InstalledCliTests(unittest.TestCase):
         self.assert_success(listed)
         self.assertIn("Available backends", listed.stdout)
         self.assertIn("cadence-flowtool", listed.stdout)
+        self.assertIn("orfs", listed.stdout)
 
         shown = self.wolf("backend", "show", "cadence-flowtool")
         self.assert_success(shown)
         self.assertIn("Name: cadence-flowtool", shown.stdout)
         self.assertIn("cadence-flowtool.sh", shown.stdout)
+
+        orfs = self.wolf("backend", "show", "orfs")
+        self.assert_success(orfs)
+        self.assertIn("Name: orfs", orfs.stdout)
+        self.assertIn("container", orfs.stdout)
+        self.assertIn("ORFS_ROOT", orfs.stdout)
 
     def test_backend_show_rejects_unknown_backend(self):
         result = self.wolf("backend", "show", "unknown")
