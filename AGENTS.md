@@ -17,3 +17,7 @@ The long-term primary command is an installed Python CLI, but preserve `wolf act
 Preserve WOLF's vibrant, command-specific terminal identity. New Python CLI output should use the centralized Rich-backed UI layer rather than scattered escape sequences; retain appropriate WOLF, environment, run, and process headers. Keep machine-oriented output such as `wolf --version` concise, honor terminal color detection and `NO_COLOR`, and never interpret user-provided values as Rich markup. Legacy Bash may retain its existing presentation helpers.
 
 Avoid unnecessary dependencies. Keep shell where shell state or native environment setup is the actual problem, and use more structured tooling where parsing, validation, manifests, or orchestration require it.
+
+Work incrementally and commit coherent changes frequently. Each independently useful and tested milestone should receive its own commit where practical. Keep commits narrowly scoped, run the relevant tests before committing, and write commit messages as ordinary maintainer-authored project history. Never mention Codex, AI, agents, generated code, or automated authorship in commit messages or source documentation.
+
+Maintain a section 1 Unix man page for `wolf` and a concise tldr-style quick-reference page. Update both incrementally whenever user-visible CLI behavior changes so they document only commands that actually exist.
