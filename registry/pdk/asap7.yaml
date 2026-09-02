@@ -1,0 +1,24 @@
+schema_version: 1
+kind: pdk
+name: asap7
+description: ASAP7 platform collateral validated with the pinned ORFS flow
+source:
+  type: package-path
+  package: flow/orfs
+  path: flow/platforms/asap7
+  url: https://github.com/The-OpenROAD-Project/OpenROAD-flow-scripts.git
+  parent_revision: 8c0616910615e843780ba527526f2b83a564ba70
+  revision: b9b4c9266113c67978f75b987f1d5a0841c2f15f
+license:
+  name: See upstream component licenses and platform source notices
+validation:
+  required_paths:
+    - README.md
+    - config.mk
+    - lef
+    - lib
+    - gds
+metadata:
+  technology:
+    name: asap7
+  representation: view into the pinned flow/orfs platform tree

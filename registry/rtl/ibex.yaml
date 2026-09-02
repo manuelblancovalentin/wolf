@@ -1,0 +1,20 @@
+schema_version: 1
+kind: rtl
+name: ibex
+description: Ibex 32-bit RISC-V CPU core RTL
+source:
+  type: git
+  url: https://github.com/lowRISC/ibex.git
+  revision: 77d801001554cce8fe69e742e96539eecbe74425
+  submodules: none
+license:
+  spdx: Apache-2.0
+validation:
+  required_paths:
+    - LICENSE
+    - rtl/ibex_core.sv
+metadata:
+  design:
+    name: ibex
+    top: ibex_core
+  rtl_root: rtl

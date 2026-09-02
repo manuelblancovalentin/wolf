@@ -1,0 +1,22 @@
+schema_version: 1
+kind: flow
+name: orfs
+description: OpenROAD Flow Scripts RTL-to-GDS implementation flow
+source:
+  type: git
+  url: https://github.com/The-OpenROAD-Project/OpenROAD-flow-scripts.git
+  revision: 8c0616910615e843780ba527526f2b83a564ba70
+  submodules: recursive
+license:
+  name: BSD-3-Clause for build/run scripts; bundled components retain their own licenses
+validation:
+  required_paths:
+    - LICENSE_BUILD_RUN_SCRIPTS
+    - flow/Makefile
+    - flow/util/docker_shell
+    - flow/scripts
+metadata:
+  flow:
+    name: orfs
+    backend: orfs
+  flow_root: flow

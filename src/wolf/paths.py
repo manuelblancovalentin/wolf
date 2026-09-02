@@ -20,3 +20,7 @@ def environments_dir() -> Path:
 
 def processes_dir() -> Path:
     return state_root() / "config"
+
+
+def packages_dir() -> Path:
+    return state_root() / "packages"
