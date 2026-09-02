@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import re
 import sys
 from typing import Any, Dict, Iterable, Optional, Tuple
 
@@ -36,6 +37,23 @@ def metrics_file(reports_dir: Path) -> Path:
     return metadata
 
 
+def final_timing_counts(reports_dir: Path) -> Tuple[int, int]:
+    report = reports_dir / "6_finish.rpt"
+    if not report.is_file():
+        raise RuntimeError(f"expected ORFS final timing report: {report}")
+    text = report.read_text(encoding="utf-8", errors="replace")
+    counts = []
+    for kind in ("setup", "hold"):
+        match = re.search(
+            rf"finish {kind}_violation_count[\s-]+{kind} violation count (\d+)",
+            text,
+        )
+        if match is None:
+            raise RuntimeError(f"missing {kind} violation count in {report}")
+        counts.append(int(match.group(1)))
+    return tuple(counts)  # type: ignore[return-value]
+
+
 def main(argv: Optional[Iterable[str]] = None) -> int:
     arguments = list(sys.argv[1:] if argv is None else argv)
     if len(arguments) != 1:
@@ -45,19 +63,18 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
     result_file = metrics_file(Path(arguments[0]))
     metrics = flatten_metrics(json.loads(result_file.read_text(encoding="utf-8")))
     try:
-        setup_paths_key, setup_paths = metric(metrics, "setup", "violating", "path")
-        hold_paths_key, hold_paths = metric(metrics, "hold", "violating", "path")
         drc_key, drc_errors = metric(metrics, "detailedroute", "drc", "error")
-        setup_ws_key, setup_ws = metric(metrics, "setup", "ws")
-    except KeyError as error:
+        setup_ws_key, setup_ws = metric(metrics, "finish", "setup", "ws")
+        setup_paths, hold_paths = final_timing_counts(Path(arguments[0]))
+    except (KeyError, RuntimeError) as error:
         print(f"missing required ORFS metric: {error}", file=sys.stderr)
         return 2
 
     print(f"metrics: {result_file}")
-    print(f"setup violating paths: {setup_paths} ({setup_paths_key})")
-    print(f"hold violating paths: {hold_paths} ({hold_paths_key})")
+    print(f"setup violation count: {setup_paths} (6_finish.rpt)")
+    print(f"hold violation count: {hold_paths} (6_finish.rpt)")
     print(f"detailed-route DRC errors: {drc_errors} ({drc_key})")
-    print(f"final worst setup slack: {float(setup_ws) * 1000:.3f} ps ({setup_ws_key})")
+    print(f"final worst setup slack: {float(setup_ws):.3f} ps ({setup_ws_key})")
 
     failures = []
     if float(setup_paths) != 0:
