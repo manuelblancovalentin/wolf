@@ -142,7 +142,14 @@ class PackageInstaller:
                 f"package {manifest.identifier} uses content from {source.package}; "
                 f"install {source.package} first"
             )
-        content = (parent.content_path / source.path).resolve()
+        parent_content = parent.content_path.resolve()
+        content = (parent_content / source.path).resolve()
+        try:
+            content.relative_to(parent_content)
+        except ValueError as error:
+            raise PackageInstallError(
+                f"package {manifest.identifier} source path escapes {source.package}"
+            ) from error
         tree_revision = _git(
             ["rev-parse", f"{parent_manifest.revision}:{source.path}"],
             cwd=parent.content_path,

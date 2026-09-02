@@ -79,7 +79,7 @@ def _detect_runtime(context: Optional[Mapping[str, str]]) -> Optional[str]:
 
 
 def _git_revision(root: Optional[Path]) -> Optional[str]:
-    if root is None or not (root / ".git").exists():
+    if root is None:
         return None
     try:
         result = subprocess.run(

@@ -17,7 +17,7 @@ import sys
 sys.path.insert(0, str(SOURCE_ROOT))
 
 from wolf.backend import get_backend
-from wolf.backend.orfs import ORFS_STAGES, RuntimeDiagnostic
+from wolf.backend.orfs import ORFS_STAGES, RuntimeDiagnostic, _git_revision
 from wolf.commands import run as run_command
 from wolf.context import ResolvedContext
 from wolf.package import InstalledPackage, PackageRegistry
@@ -28,6 +28,30 @@ class OrfsPythonBackendTests(unittest.TestCase):
         backend = get_backend("orfs")
         self.assertEqual(backend.name, "orfs")
         self.assertEqual(backend.stages(), ORFS_STAGES)
+
+    def test_revision_detection_accepts_flow_subdirectory(self):
+        with tempfile.TemporaryDirectory(prefix="wolf-orfs-revision-") as temporary:
+            repository = Path(temporary)
+            subprocess.run(["git", "init", "--quiet"], cwd=repository, check=True)
+            subprocess.run(
+                ["git", "config", "user.email", "wolf-tests@example.invalid"],
+                cwd=repository, check=True,
+            )
+            subprocess.run(
+                ["git", "config", "user.name", "WOLF Tests"], cwd=repository, check=True
+            )
+            flow = repository / "flow"
+            flow.mkdir()
+            flow.joinpath("Makefile").write_text("", encoding="utf-8")
+            subprocess.run(["git", "add", "."], cwd=repository, check=True)
+            subprocess.run(
+                ["git", "commit", "--quiet", "-m", "fixture"], cwd=repository, check=True
+            )
+            expected = subprocess.run(
+                ["git", "rev-parse", "HEAD"], cwd=repository, text=True,
+                stdout=subprocess.PIPE, check=True,
+            ).stdout.strip()
+            self.assertEqual(_git_revision(flow), expected)
 
     def test_missing_orfs_root_is_reported_clearly(self):
         with tempfile.TemporaryDirectory(prefix="wolf-empty-packages-") as temporary, mock.patch.dict(

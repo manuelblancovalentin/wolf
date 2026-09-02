@@ -39,6 +39,15 @@ def _required_string(mapping: Mapping[str, Any], field: str) -> str:
     return value
 
 
+def _relative_path(value: Any, field: str) -> str:
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"package manifest field {field!r} must be a relative path")
+    path = Path(value)
+    if path.is_absolute() or ".." in path.parts:
+        raise ValueError(f"package manifest field {field!r} must not escape its package root")
+    return value
+
+
 def load_manifest(path: Path) -> PackageManifest:
     try:
         raw = yaml.safe_load(path.read_text(encoding="utf-8"))
@@ -60,7 +69,8 @@ def load_manifest(path: Path) -> PackageManifest:
         revision=_required_string(source_data, "revision"),
         submodules=source_data.get("submodules") == "recursive",
         package=PackageId.parse(package) if package else None,
-        path=source_data.get("path"),
+        path=_relative_path(source_data.get("path"), "source.path")
+        if source_type == "package-path" else None,
         parent_revision=source_data.get("parent_revision"),
     )
     if source.type == "package-path" and (source.package is None or not source.path):
@@ -68,7 +78,10 @@ def load_manifest(path: Path) -> PackageManifest:
     validation = _mapping(data.get("validation", {}), "validation")
     required_paths = validation.get("required_paths", [])
     if not isinstance(required_paths, list) or not all(
-        isinstance(item, str) and item and not Path(item).is_absolute()
+        isinstance(item, str)
+        and item
+        and not Path(item).is_absolute()
+        and ".." not in Path(item).parts
         for item in required_paths
     ):
         raise ValueError(f"validation.required_paths in {path} must contain relative paths")

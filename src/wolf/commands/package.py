@@ -41,6 +41,10 @@ def command_info(args: argparse.Namespace) -> int:
     ui.key_value("Upstream", manifest.source.url)
     ui.key_value("Pinned revision", manifest.revision)
     ui.key_value("Recursive submodules", "yes" if manifest.source.submodules else "no")
+    if manifest.source.package is not None:
+        ui.key_value("Parent package", manifest.source.package)
+        ui.key_value("Parent content path", manifest.source.path or "")
+        ui.key_value("Parent revision", manifest.source.parent_revision or "")
     status = store.status(manifest)
     ui.key_value("Status", status)
     ui.key_value("Installation path", store.installation_path(manifest))
@@ -62,6 +66,7 @@ def command_info(args: argparse.Namespace) -> int:
 
 
 def command_install(args: argparse.Namespace) -> int:
+    ui.info(f"Resolving and installing pinned package {args.package}")
     installed, created = PackageInstaller().install(args.package)
     if created:
         ui.success(f"Installed {installed.manifest.identifier} at {installed.installation_path}")

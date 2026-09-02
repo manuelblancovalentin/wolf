@@ -9,7 +9,7 @@ from unittest import mock
 from wolf.package import PackageId, PackageManifest, PackageRegistry, PackageStore
 from wolf.package.installer import PackageInstallError, PackageInstaller
 from wolf.package.model import PackageSource
-from wolf.package.registry import UnknownPackageError
+from wolf.package.registry import UnknownPackageError, load_manifest
 from wolf.package.store import CorruptPackageError
 
 
@@ -73,6 +73,26 @@ class PackageFoundationTests(unittest.TestCase):
         self.assertEqual(self.store.status(manifest), "corrupt")
         with self.assertRaisesRegex(CorruptPackageError, "refusing to overwrite"):
             self.store.read(manifest)
+
+    def test_manifest_paths_cannot_escape_package_content(self):
+        manifest = self.root / "escape.yaml"
+        manifest.write_text(
+            '''schema_version: 1
+kind: pdk
+name: escape
+description: invalid path fixture
+source:
+  type: package-path
+  package: flow/orfs
+  path: ../outside
+  url: https://example.invalid/source.git
+  revision: "0000000000000000000000000000000000000000"
+validation:
+  required_paths: [../outside]
+''', encoding="utf-8"
+        )
+        with self.assertRaisesRegex(ValueError, "must not escape"):
+            load_manifest(manifest)
 
 
 class StaticRegistry:
@@ -300,6 +320,12 @@ metadata:
         self.assertIn("rtl/demo", listed.stdout)
         self.assertIn(str(self.wolf_home / "packages"), listed.stdout)
         self.assertFalse((self.root / ".wolf").exists())
+
+    def test_unknown_package_fails_clearly_without_creating_store(self):
+        result = self.wolf("package", "info", "rtl/missing")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("unknown WOLF package 'rtl/missing'", result.stderr)
+        self.assertFalse((self.wolf_home / "packages").exists())
 
 
 if __name__ == "__main__":
