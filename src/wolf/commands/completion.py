@@ -7,6 +7,7 @@ from collections.abc import Iterable
 
 from wolf.backend import backend_names
 from wolf.commands.env import _environment_names
+from wolf.package.registry import PackageRegistry
 
 
 _DYNAMIC_POSITIONALS = {
@@ -15,6 +16,8 @@ _DYNAMIC_POSITIONALS = {
     ("env", "remove"): _environment_names,
     ("env", "set"): _environment_names,
     ("backend", "info"): backend_names,
+    ("package", "info"): lambda: PackageRegistry().identifiers(),
+    ("install",): lambda: PackageRegistry().identifiers(),
 }
 
 

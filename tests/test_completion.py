@@ -18,7 +18,10 @@ class CompletionProtocolTests(unittest.TestCase):
             (self.root / "envs" / name).mkdir(parents=True)
         self.environment = mock.patch.dict(
             os.environ,
-            {"WOLF_HOME": str(self.root)},
+            {
+                "WOLF_HOME": str(self.root),
+                "WOLF_REGISTRY": str(Path(__file__).resolve().parents[1] / "registry"),
+            },
             clear=False,
         )
         self.environment.start()
@@ -56,6 +59,14 @@ class CompletionProtocolTests(unittest.TestCase):
         self.assertEqual(candidates(self.parser, ["backend", "info", "o"]), ["orfs"])
         self.assertEqual(candidates(self.parser, ["run", "--backend=o"]),
                          ["--backend=orfs"])
+
+    def test_package_identifiers_complete_for_info_and_install(self):
+        self.assertEqual(candidates(self.parser, ["install", "r"]), ["rtl/ibex"])
+        self.assertEqual(candidates(self.parser, ["package", "info", "p"]), ["pdk/asap7"])
+        self.assertEqual(
+            candidates(self.parser, ["install", ""]),
+            ["flow/orfs", "pdk/asap7", "rtl/ibex"],
+        )
 
     def test_machine_protocol_has_no_ui_header(self):
         args = self.parser.parse_args(["_complete", "--", "activate", "b"])

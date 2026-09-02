@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import argparse
+import os
 import platform
 import shutil
 
 from wolf import __version__
 from wolf import ui
-from wolf.paths import state_root
+from wolf.paths import packages_dir, state_root
 
 
 def _optional_tool(name: str) -> str:
@@ -18,6 +19,16 @@ def _optional_tool(name: str) -> str:
     return "unavailable (optional, not required)"
 
 
+def _package_root_status() -> str:
+    root = packages_dir()
+    probe = root
+    while not probe.exists() and probe != probe.parent:
+        probe = probe.parent
+    if probe.is_dir() and os.access(probe, os.W_OK | os.X_OK):
+        return f"available ({root}; writable when created)"
+    return f"unavailable ({root}; nearest existing parent is not writable)"
+
+
 def command_doctor(_args: argparse.Namespace) -> int:
     git = shutil.which("git")
     ui.key_value("WOLF version", f"{__version__} (available)")
@@ -25,6 +36,7 @@ def command_doctor(_args: argparse.Namespace) -> int:
     ui.key_value("Operating system", f"{platform.platform()} (available)")
     ui.key_value("WOLF state root", f"{state_root()} (available)")
     ui.key_value("Git", "available (" + git + ")" if git else "unavailable")
+    ui.key_value("Package store", _package_root_status())
     ui.key_value("Docker", _optional_tool("docker"))
     ui.key_value("Podman", _optional_tool("podman"))
     return 0

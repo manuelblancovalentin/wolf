@@ -182,6 +182,7 @@ class InstalledCliTests(unittest.TestCase):
         self.assert_success(result)
         self.assertIn("WOLF version: 0.1.0.dev0 (available)", result.stdout)
         self.assertIn(f"WOLF state root: {self.wolf_home} (available)", result.stdout)
+        self.assertIn(f"Package store: available ({self.wolf_home / 'packages'}", result.stdout)
         self.assertIn("Docker:", result.stdout)
         self.assertIn("Podman:", result.stdout)
         self.assertNotIn("Yosys", result.stdout)

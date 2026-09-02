@@ -22,7 +22,11 @@ class BashIntegrationTests(unittest.TestCase):
                 'DESIGN_NAME="ibex"\nPROCESS="asap7"\nBACKEND="orfs"\nWORKSPACE_DIR="work"\n'
             )
         self.env = os.environ.copy()
-        self.env.update({"WOLF_HOME": str(self.root), "PYTHONPATH": str(REPO_ROOT / "src")})
+        self.env.update({
+            "WOLF_HOME": str(self.root),
+            "WOLF_REGISTRY": str(REPO_ROOT / "registry"),
+            "PYTHONPATH": str(REPO_ROOT / "src"),
+        })
 
     def tearDown(self):
         self.temporary.cleanup()
@@ -63,10 +67,15 @@ wolf deactivate
             f'''source "{REPO_ROOT}/shell/wolf.bash"
 COMP_WORDS=(wolf activate f); COMP_CWORD=2; _wolf_complete
 printf '<%s>\n' "${{COMPREPLY[@]}}"
+COMP_WORDS=(wolf install f); COMP_CWORD=2; _wolf_complete
+printf 'package=<%s>\n' "${{COMPREPLY[@]}}"
 '''
         )
         self.assertEqual(result.returncode, 0, msg=result.stderr)
-        self.assertEqual(result.stdout.splitlines(), ["<foo>", "<foo space>"])
+        self.assertEqual(
+            result.stdout.splitlines(),
+            ["<foo>", "<foo space>", "package=<flow/orfs>"],
+        )
 
 
 @unittest.skipUnless(ZSH, "zsh is not installed")
@@ -101,7 +110,12 @@ wolf deactivate
 typeset -a reply
 _wolf_zsh_completion_candidates activate f
 printf '<%s>\n' "${{reply[@]}}"
+_wolf_zsh_completion_candidates install f
+printf 'package=<%s>\n' "${{reply[@]}}"
 '''
         )
         self.assertEqual(result.returncode, 0, msg=result.stderr)
-        self.assertEqual(result.stdout.splitlines(), ["<foo>", "<foo space>"])
+        self.assertEqual(
+            result.stdout.splitlines(),
+            ["<foo>", "<foo space>", "package=<flow/orfs>"],
+        )
