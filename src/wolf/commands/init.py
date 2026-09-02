@@ -8,7 +8,7 @@ from pathlib import Path
 from wolf import ui
 from wolf.backend.orfs import _runtime_diagnostic
 from wolf.config import ConfigStore, default_document
-from wolf.shell import install_bash_integration
+from wolf.shell import detect_shell, install_shell_integration
 
 
 def _ask(prompt: str, default: str | None) -> str:
@@ -49,11 +49,17 @@ def command_init(_args: argparse.Namespace) -> int:
     document["container"]["preferred_runtime"] = selected_runtime or None
     store.write(document)
     ui.success(f"Wrote {store.path}")
-    if _yes("Install Bash shell integration in ~/.bashrc?"):
-        changed = install_bash_integration()
-        ui.success("Installed Bash shell integration.") if changed else ui.info(
-            "Bash shell integration is already installed."
-        )
+    shell = detect_shell()
+    if shell:
+        rc = "~/.bashrc" if shell == "bash" else "~/.zshrc"
+        ui.key_value("Detected shell", shell)
+        if _yes(f"Install WOLF {shell} integration in {rc}?"):
+            changed = install_shell_integration(shell)
+            ui.success(f"Installed {shell} shell integration.") if changed else ui.info(
+                f"{shell} shell integration is already installed."
+            )
+    else:
+        ui.info("Could not determine the current shell; use shell/wolf.bash or shell/wolf.zsh.")
     if _yes("Configure an additional package registry now?"):
         ui.info("Use: wolf registry add NAME SOURCE")
     return 0

@@ -44,3 +44,7 @@ class Backend(ABC):
     def prepare_execution(self, context: "ResolvedContext") -> Mapping[str, str]:
         """Prepare backend-native inputs and return subprocess-only values."""
         return self.execution_environment(context.values)
+
+    def extract_metrics(self, run_directory):
+        """Return optional semantic metrics parsed from a completed run."""
+        return {}

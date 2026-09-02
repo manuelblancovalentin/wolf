@@ -24,6 +24,17 @@ from wolf.package import InstalledPackage, PackageRegistry
 
 
 class OrfsPythonBackendTests(unittest.TestCase):
+    def setUp(self):
+        self._config_home = tempfile.TemporaryDirectory(prefix="wolf-orfs-config-")
+        self._config_environment = mock.patch.dict(
+            os.environ, {"XDG_CONFIG_HOME": self._config_home.name}, clear=False
+        )
+        self._config_environment.start()
+
+    def tearDown(self):
+        self._config_environment.stop()
+        self._config_home.cleanup()
+
     def test_registry_exposes_orfs_and_native_stages(self):
         backend = get_backend("orfs")
         self.assertEqual(backend.name, "orfs")
@@ -171,6 +182,25 @@ class OrfsPythonBackendTests(unittest.TestCase):
         self.assertIn("podman", checks["selected container runtime"].detail)
         self.assertFalse(checks["docker runtime"].available)
         self.assertIn("binary absent", checks["docker runtime"].detail)
+
+    def test_extract_metrics_accepts_optional_golden_reports(self):
+        with tempfile.TemporaryDirectory(prefix="wolf-orfs-metrics-") as temporary:
+            reports = Path(temporary) / "reports"
+            reports.mkdir()
+            (reports / "metadata.json").write_text(
+                '{"finish": {"setup": {"ws": 13.31}, "max_slew_violation_count": 64}, "detailedroute": {"drc": {"errors": 0}}}'
+            )
+            (reports / "6_finish.rpt").write_text(
+                "finish setup_violation_count setup violation count 0\n"
+                "finish hold_violation_count hold violation count 0\n"
+            )
+            self.assertEqual(get_backend("orfs").extract_metrics(Path(temporary)), {
+                "timing.worst_slack_ps": 13.31,
+                "physical.drc_violations": 0,
+                "timing.setup_violations": 0,
+                "timing.hold_violations": 0,
+                "electrical.max_slew_violations": 64,
+            })
 
 
 class OrfsShellBackendTests(unittest.TestCase):

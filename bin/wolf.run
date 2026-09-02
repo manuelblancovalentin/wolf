@@ -249,7 +249,8 @@ cprintf "\n÷Blue÷÷bold÷ ÷white÷Pre-run summary                            
 
 printVars ""
 vars_to_print=( "DESIGN_NAME" "USER" "TIMESTAMP" )
-printVars "Design options" "${vars_to_print[@]}"
+if [[ "${WOLF_SEMANTIC_SUMMARY:-false}" != true ]]; then
+ printVars "Design options" "${vars_to_print[@]}"
 
 vars_to_print=("PROCESS" "LIB_DIR" "IO_LIB_DIR" "PDK_DIR" "METAL_STACK" "TECHDIR_DRC" "TECHDIR_LVS" "THRESHOLD_VOLTAGES" "PROCESS_SCRIPTS" "PROCESS_SETUP_COMMON_TEMPLATE" "PROCESS_SETUP_HOST_TEMPLATE" "PROCESS_FLOW_TEMPLATE" )
 printVars "Technology specification" "${vars_to_print[@]}"
@@ -268,6 +269,7 @@ printVars "Flow run sequence" "${vars_to_print[@]}"
 
 vars_to_print=("BACKEND")
 printVars "Execution backend" "${vars_to_print[@]}"
+fi
 
 
 ## ASK USER IF EVERYTHING LOOKS OKAY, IN CASE -y FLAG WAS NOT PASSED.
@@ -364,6 +366,9 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
     _wolf_info "Linking latest ÷green÷\"scripts.latest\"÷÷ dir to ÷green÷\"$(basename $SCRIPTS_DIR)\"÷÷."
 
     cprintf "\n÷Blue÷÷bold÷ ÷white÷Invoking backend stages                                                                  ÷÷ \n\n"
+    : > "${RUNDIR}/wolf.stage-results"
+    WOLF_STAGE_TIMING_FILE="${RUNDIR}/wolf.stage-results"
+    export WOLF_STAGE_TIMING_FILE
     
     # Let's also link the latest status 
     # Build unique id for this run

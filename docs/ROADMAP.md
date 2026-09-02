@@ -19,6 +19,10 @@ The installed CLI now has a small XDG-backed configuration store, a confirmed
 first-use `wolf init` wizard, and explicit local/Git package registries. This
 precedes the all-managed package smoke and any future configuration TUI.
 
+UX hardening (shell detection, idempotent prompt markers, streamed package
+progress, elapsed timing, semantic summaries, and backend-owned optional
+metrics) is complete. A full `wolf status` view remains a later milestone.
+
 ### 1. Characterize behavior before changing it
 
 Add tests around the behavior users and future backends depend on:

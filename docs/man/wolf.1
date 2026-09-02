@@ -113,6 +113,10 @@ manifest is never overwritten by a changed environment.
 Allocate a new numbered implementation run and freeze provenance into that
 exact allocation before backend execution.
 .TP
+.B wolf run -y
+Skip pre-run and per-stage confirmations while retaining progress and result
+summaries.
+.TP
 .BI "wolf activate " name
 With the Bash integration loaded, activate the selected WOLF environment in the
 current shell. It does not change the working directory. Use

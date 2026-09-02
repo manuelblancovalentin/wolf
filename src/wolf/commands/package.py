@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import time
 
 from wolf import ui
 from wolf.package.installer import PackageInstaller
@@ -71,16 +72,31 @@ def command_info(args: argparse.Namespace) -> int:
 
 
 def command_install(args: argparse.Namespace) -> int:
+    started = time.monotonic()
     ui.info(f"Resolving and installing pinned package {args.package}")
     installed, created = PackageInstaller().install(args.package)
+    elapsed = time.monotonic() - started
     if created:
-        ui.success(f"Installed {installed.manifest.identifier} at {installed.installation_path}")
+        ui.success(f"Installed {installed.manifest.identifier}")
     else:
         ui.info(
             f"Package {installed.manifest.identifier} is already installed at "
             f"{installed.installation_path}"
         )
+    ui.key_value("Location", installed.installation_path)
+    ui.key_value("Elapsed", _format_elapsed(elapsed))
     return 0
+
+
+def _format_elapsed(seconds: float) -> str:
+    total = int(round(seconds))
+    minutes, seconds = divmod(total, 60)
+    hours, minutes = divmod(minutes, 60)
+    if hours:
+        return f"{hours}h {minutes:02d}m {seconds:02d}s"
+    if minutes:
+        return f"{minutes}m {seconds:02d}s"
+    return f"{seconds}s"
 
 
 def register_package(subparsers: argparse._SubParsersAction) -> None:

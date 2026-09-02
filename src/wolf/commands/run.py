@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import os
 from pathlib import Path
+import time
 
 from wolf import ui
 from wolf.backend import get_backend
@@ -104,6 +105,8 @@ def command_run(args: argparse.Namespace) -> int:
         environment["WOLF_ENV_DIR"] = str(context.environment_directory)
     if context.environment_name:
         environment["WOLF_ENV_NAME"] = context.environment_name
+    if context.format == "declarative-v1":
+        environment["WOLF_SEMANTIC_SUMMARY"] = "true"
     runner_args = ["--backend", context.backend, "--design", context.design_name,
                    "--process", context.process]
     if args.runtag:
@@ -117,7 +120,48 @@ def command_run(args: argparse.Namespace) -> int:
     if args.to_stage:
         runner_args.extend(["-to", args.to_stage])
     runner_args.extend(args.passthrough)
-    return run_legacy(runner_args, environment)
+    started = time.monotonic()
+    result = run_legacy(runner_args, environment)
+    elapsed = time.monotonic() - started
+    metrics = get_backend(context.backend).extract_metrics(context.run_directory)
+    _final_summary(context, result, elapsed, metrics)
+    return result
+
+
+def _format_elapsed(seconds: float) -> str:
+    total = int(round(seconds))
+    minutes, seconds = divmod(total, 60)
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours}h {minutes:02d}m {seconds:02d}s" if hours else (
+        f"{minutes}m {seconds:02d}s" if minutes else f"{seconds}s")
+
+
+def _final_summary(context: ResolvedContext, status: int, elapsed: float, metrics=None) -> None:
+    ui.key_value("Run completed" if status == 0 else "Run failed", "")
+    ui.key_value("Run", context.run_directory)
+    ui.key_value("Backend", context.backend)
+    ui.key_value("Status", "success" if status == 0 else f"failed (exit {status})")
+    ui.key_value("Elapsed", _format_elapsed(elapsed))
+    timing = context.run_directory / "wolf.stage-results"
+    if timing.is_file():
+        ui.key_value("Stages", "")
+        for line in timing.read_text(encoding="utf-8").splitlines():
+            stage, stage_status, seconds = line.split("|", 2)
+            ui.key_value(f"  {stage}", f"{stage_status}  {_format_elapsed(float(seconds))}")
+    if metrics:
+        ui.key_value("Metrics", "")
+        labels = {
+            "timing.worst_slack_ps": "  Worst slack",
+            "timing.setup_violations": "  Setup violations",
+            "timing.hold_violations": "  Hold violations",
+            "physical.drc_violations": "  Route DRC",
+            "electrical.max_slew_violations": "  Max slew violations",
+            "electrical.max_fanout_violations": "  Max fanout violations",
+            "electrical.max_cap_violations": "  Max cap violations",
+        }
+        for key, label in labels.items():
+            if key in metrics:
+                ui.key_value(label, metrics[key])
 
 
 def register(subparsers: argparse._SubParsersAction) -> None:

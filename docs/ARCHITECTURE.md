@@ -19,6 +19,11 @@ explicit and package lookup is cwd-independent; ambiguous duplicate package
 IDs require registry qualification. `WOLF_HOME` remains a compatibility/test
 override for WOLF-owned data roots, not for the XDG config file.
 
+Execution summaries are semantic for declarative runs. Backends own optional
+metric extraction, while the generic runner records stage elapsed time and
+status in the run directory so a future `wolf status` can consume it without
+introducing a database in this milestone.
+
 ## Architecture overview
 
 ```text

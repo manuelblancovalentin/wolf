@@ -16,3 +16,7 @@ integration; it never silently edits dotfiles and is not a TUI.
 (legacy environments, packages, cache, and registry checkouts). It does not
 move the XDG configuration file and does not override workspace or runtime
 settings. Explicit command options take precedence over configuration.
+
+`wolf init` detects Bash or zsh when possible and offers the matching marked
+startup snippet (`~/.bashrc` or `~/.zshrc`). Installation is explicit and
+idempotent; uncertain shells are reported with both supported choices.

@@ -6,20 +6,29 @@
 if [ -n "${_WOLF_ZSH_MARKER-}" ]; then
     PROMPT=${PROMPT%" ${_WOLF_ZSH_MARKER}"}
 fi
+if [ -n "${_WOLF_ZSH_BASE_RPROMPT+x}" ]; then
+    RPROMPT=$_WOLF_ZSH_BASE_RPROMPT
+fi
 unset _WOLF_ZSH_BASE_PROMPT _WOLF_ZSH_MARKER
+unset _WOLF_ZSH_BASE_RPROMPT _WOLF_ZSH_RPROMPT_MARKER
 
 _wolf_command() {
     command wolf "$@"
 }
 
 _wolf_zsh_prompt() {
-    [ -n "${WOLF_ACTIVE_ENV-}" ] || return 0
-    if [ -n "${_WOLF_ZSH_RPROMPT_MARKER-}" ]; then
-        RPROMPT=${RPROMPT%" ${_WOLF_ZSH_RPROMPT_MARKER}"}
+    if [ -z "${WOLF_ACTIVE_ENV-}" ]; then
+        if [ -n "${_WOLF_ZSH_BASE_RPROMPT+x}" ]; then
+            RPROMPT=$_WOLF_ZSH_BASE_RPROMPT
+            unset _WOLF_ZSH_BASE_RPROMPT _WOLF_ZSH_RPROMPT_MARKER
+        fi
+        return 0
     fi
-    _WOLF_ZSH_BASE_RPROMPT=$RPROMPT
+    if [ -z "${_WOLF_ZSH_BASE_RPROMPT+x}" ]; then
+        _WOLF_ZSH_BASE_RPROMPT=$RPROMPT
+    fi
     _WOLF_ZSH_RPROMPT_MARKER="[%F{yellow}${WOLF_ACTIVE_ENV}%f]"
-    RPROMPT="${RPROMPT} ${_WOLF_ZSH_RPROMPT_MARKER}"
+    RPROMPT="${_WOLF_ZSH_BASE_RPROMPT} ${_WOLF_ZSH_RPROMPT_MARKER}"
 }
 
 wolf() {
@@ -41,10 +50,7 @@ wolf() {
                 return 0
             fi
             unset WOLF_ACTIVE_ENV
-            if [ -n "${_WOLF_ZSH_BASE_RPROMPT+x}" ]; then
-                RPROMPT=$_WOLF_ZSH_BASE_RPROMPT
-                unset _WOLF_ZSH_BASE_RPROMPT _WOLF_ZSH_RPROMPT_MARKER
-            fi
+            _wolf_zsh_prompt
             ;;
         *)
             _wolf_command "$@"

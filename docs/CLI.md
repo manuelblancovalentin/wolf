@@ -83,3 +83,9 @@ configuration. `wolf init` provides a confirmed first-use wizard and can add a
 marked Bash startup snippet without duplicating it. Package manifests come
 from the always-available built-in registry plus configured local or Git
 registries managed by `wolf registry list|add|info|sync|remove`.
+
+Use `wolf run -y` or `--yes` to skip confirmations while retaining normal
+progress and summaries. Package installs stream Git progress and report
+elapsed wall time. Declarative runs print canonical semantic pre-run values;
+legacy profiles retain their compatibility summary. A completed run reports
+stage timing and a small set of backend-owned optional metrics.

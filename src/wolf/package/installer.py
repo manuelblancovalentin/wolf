@@ -8,6 +8,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import tempfile
+import time
 from typing import Optional
 
 import yaml
@@ -21,22 +22,23 @@ class PackageInstallError(ValueError):
     pass
 
 
-def _git(arguments: list[str], *, cwd: Optional[Path] = None) -> str:
+def _git(arguments: list[str], *, cwd: Optional[Path] = None, progress: bool = False) -> str:
+    command = ["git", *arguments]
     try:
         result = subprocess.run(
-            ["git", *arguments],
+            command,
             cwd=cwd,
             text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stdout=None if progress else subprocess.PIPE,
+            stderr=None if progress else subprocess.PIPE,
             check=False,
         )
     except OSError as error:
         raise PackageInstallError(f"cannot execute git: {error}") from error
     if result.returncode != 0:
-        detail = result.stderr.strip() or result.stdout.strip() or f"exit status {result.returncode}"
+        detail = (result.stderr.strip() if result.stderr else "") or (result.stdout.strip() if result.stdout else "") or f"exit status {result.returncode}"
         raise PackageInstallError(f"git {' '.join(arguments)} failed: {detail}")
-    return result.stdout.strip()
+    return (result.stdout or "").strip()
 
 
 def _write_record(
@@ -111,7 +113,7 @@ class PackageInstaller:
         source = staging / "source"
         _git(["init", "--quiet", str(source)])
         _git(["remote", "add", "origin", manifest.source.url], cwd=source)
-        _git(["fetch", "--quiet", "--depth", "1", "origin", manifest.revision], cwd=source)
+        _git(["fetch", "--progress", "--depth", "1", "origin", manifest.revision], cwd=source, progress=True)
         _git(["checkout", "--quiet", "--detach", "FETCH_HEAD"], cwd=source)
         revision = _git(["rev-parse", "HEAD"], cwd=source)
         if revision != manifest.revision:
@@ -119,7 +121,7 @@ class PackageInstaller:
                 f"package {manifest.identifier} resolved {revision}, expected {manifest.revision}"
             )
         if manifest.source.submodules:
-            _git(["submodule", "update", "--init", "--recursive"], cwd=source)
+            _git(["submodule", "update", "--init", "--recursive", "--progress"], cwd=source, progress=True)
         self._validate(manifest, source)
         _write_record(
             staging / "installed.yaml",

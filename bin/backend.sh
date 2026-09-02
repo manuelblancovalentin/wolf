@@ -129,8 +129,14 @@ _wolf_run_backend_stages() {
         if [[ -n "$before_stage_hook" ]] && ! "$before_stage_hook" "$stage"; then
             return 0
         fi
+        local stage_started stage_elapsed
+        stage_started=$(date +%s%N)
         _wolf_backend_run_stage "$stage" "$@"
         status=$?
+        stage_elapsed=$(( ($(date +%s%N) - stage_started) / 1000000000 ))
+        if [[ -n "${WOLF_STAGE_TIMING_FILE:-}" ]]; then
+            printf '%s|%s|%s\n' "$stage" "$([[ $status -eq 0 ]] && echo complete || echo failed)" "$stage_elapsed" >> "$WOLF_STAGE_TIMING_FILE"
+        fi
         if [[ $status -ne 0 ]]; then
             return "$status"
         fi

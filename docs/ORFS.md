@@ -149,3 +149,8 @@ violating paths, zero hold violating paths, and zero detailed-route DRC errors.
 It prints the final worst setup slack in ps; roughly `+14.7 ps` is the
 reference, but timing-clean completion is the criterion. Residual max-slew
 violations are not checked by this baseline.
+
+Installed-CLI ORFS runs show a semantic pre-run summary for declarative
+profiles, stream Git/package activity, and report elapsed wall time. Completed
+runs include stage timing records and may display optional stable metrics from
+ORFS reports; unavailable metrics are reported as unavailable.

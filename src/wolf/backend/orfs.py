@@ -7,6 +7,8 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import json
+import re
 from typing import Mapping, Optional, Sequence
 
 from wolf.backend.base import Backend, ValidationItem
@@ -116,6 +118,44 @@ class OrfsBackend(Backend):
 
     def stages(self) -> Sequence[str]:
         return ORFS_STAGES
+
+    def extract_metrics(self, run_directory):
+        """Extract the small stable metric set used by the golden regression."""
+        root = Path(run_directory)
+        metadata = next(iter(sorted(root.rglob("metadata.json"))), None)
+        result = {}
+        if metadata and metadata.is_file():
+            try:
+                raw = json.loads(metadata.read_text(encoding="utf-8"))
+                flat = {}
+                def flatten(value, prefix=""):
+                    if isinstance(value, dict):
+                        for key, child in value.items():
+                            flatten(child, f"{prefix}.{key}" if prefix else str(key))
+                    else:
+                        flat[prefix.lower()] = value
+                flatten(raw)
+                for target, needles in {
+                    "timing.worst_slack_ps": ("finish", "setup", "ws"),
+                    "physical.drc_violations": ("detailedroute", "drc", "error"),
+                    "electrical.max_slew_violations": ("finish", "slew", "violation"),
+                    "electrical.max_fanout_violations": ("finish", "fanout", "violation"),
+                    "electrical.max_cap_violations": ("finish", "cap", "violation"),
+                }.items():
+                    for key, value in flat.items():
+                        if all(needle in key for needle in needles):
+                            result[target] = value
+                            break
+            except (OSError, ValueError, TypeError):
+                pass
+        report = next(iter(sorted(root.rglob("6_finish.rpt"))), None)
+        if report and report.is_file():
+            text = report.read_text(encoding="utf-8", errors="replace")
+            for kind in ("setup", "hold"):
+                match = re.search(rf"finish {kind}_violation_count[\s-]+{kind} violation count (\d+)", text)
+                if match:
+                    result[f"timing.{kind}_violations"] = int(match.group(1))
+        return result
 
     def metadata(self, context: Optional[Mapping[str, str]] = None) -> OrfsMetadata:
         configured_root = _value(context, "ORFS_ROOT")

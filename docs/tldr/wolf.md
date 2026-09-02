@@ -65,6 +65,10 @@
 
 `wolf run --environment {{environment}} --workspace ./work --yes`
 
+- Run without confirmation prompts while retaining progress and summaries:
+
+`wolf run --yes`
+
 - Load Bash integration to enable in-place activation and command completion:
 
 `source ./shell/wolf.bash && wolf activate {{environment}}`
