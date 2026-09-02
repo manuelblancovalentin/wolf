@@ -31,6 +31,17 @@ def _container_path(path: Path, host_root: Path, container_root: str) -> str:
     return f"{container_root}/{relative.as_posix()}"
 
 
+def _make_path(value: str) -> str:
+    return value.replace("\\", "\\\\").replace(" ", "\\ ")
+
+
+def _mount(host: Path, container: str) -> str:
+    host_value = str(host.resolve())
+    if "|" in host_value or "\n" in host_value:
+        raise ValueError(f"package path cannot be represented as a container mount: {host_value}")
+    return f"{host_value}|{container}"
+
+
 def _write_sdc(source: Path | None, destination: Path, context: ResolvedContext) -> None:
     if len(context.clocks) != 1:
         raise ValueError("ORFS native mode currently requires exactly one canonical clock")
@@ -109,6 +120,7 @@ def prepare_native_orfs(context: ResolvedContext, orfs_root: Path) -> Mapping[st
     configured = overrides.get("design_config")
     if configured:
         base_config = Path(str(configured)).expanduser().resolve()
+        base_sdc = base_config.with_name("constraint.sdc")
     if not base_config.is_file():
         raise ValueError(
             f"ORFS does not provide native collateral for {context.process}/{context.design_name}: {base_config}"
@@ -146,15 +158,17 @@ def prepare_native_orfs(context: ResolvedContext, orfs_root: Path) -> Mapping[st
         f"include {base_container}",
         f"override DESIGN_NICKNAME := {context.design_name}",
         f"override DESIGN_NAME := {context.design_top}",
-        "override VERILOG_FILES := " + " ".join(source_values),
-        "override VERILOG_INCLUDE_DIRS := " + " ".join(include_values),
+        "override VERILOG_FILES := " + " ".join(_make_path(value) for value in source_values),
+        "override VERILOG_INCLUDE_DIRS := " + " ".join(_make_path(value) for value in include_values),
         "override SDC_FILE := /wolf/generated/constraints.sdc",
+    ]
+    exports = [
+        "DESIGN_NICKNAME", "DESIGN_NAME", "VERILOG_FILES", "VERILOG_INCLUDE_DIRS", "SDC_FILE"
     ]
     if context.threads:
         lines.append(f"override NUM_CORES := {context.threads}")
-    lines.extend(f"export {name}" for name in (
-        "DESIGN_NICKNAME", "DESIGN_NAME", "VERILOG_FILES", "VERILOG_INCLUDE_DIRS", "SDC_FILE", "NUM_CORES"
-    ))
+        exports.append("NUM_CORES")
+    lines.extend(f"export {name}" for name in exports)
     config.write_text("\n".join(lines) + "\n", encoding="utf-8")
     manifest.write_text(yaml.safe_dump(_resolved_manifest(context, generated), sort_keys=False), encoding="utf-8")
 
@@ -162,11 +176,11 @@ def prepare_native_orfs(context: ResolvedContext, orfs_root: Path) -> Mapping[st
         "wolf_" + re.sub(r"[^A-Za-z0-9_.-]+", "_", context.environment_name or context.run_tag)
     )
     mounts = [
-        f"{design_root}|/wolf/design",
-        f"{generated}|/wolf/generated",
+        _mount(design_root, "/wolf/design"),
+        _mount(generated, "/wolf/generated"),
     ]
     if configured and not base_config.is_relative_to(orfs_root):
-        mounts.append(f"{base_config.parent}|/wolf/native-config")
+        mounts.append(_mount(base_config.parent, "/wolf/native-config"))
     result = {
         "ORFS_ROOT": str(orfs_root),
         "ORFS_DESIGN_CONFIG": str(config),
