@@ -15,6 +15,7 @@ _DYNAMIC_POSITIONALS = {
     ("info",): _environment_names,
     ("env", "remove"): _environment_names,
     ("env", "set"): _environment_names,
+    ("env", "clone"): _environment_names,
     ("backend", "info"): backend_names,
     ("package", "info"): lambda: PackageRegistry().identifiers(),
     ("install",): lambda: PackageRegistry().identifiers(),

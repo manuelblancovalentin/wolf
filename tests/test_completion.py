@@ -51,6 +51,8 @@ class CompletionProtocolTests(unittest.TestCase):
         self.assertEqual(candidates(self.parser, ["activate", "a"]),
                          ["alpha", "analog test"])
         self.assertEqual(candidates(self.parser, ["info", "b"]), ["beta"])
+        self.assertEqual(candidates(self.parser, ["env", "clone", "a"]),
+                         ["alpha", "analog test"])
         self.assertEqual(candidates(self.parser, ["env", "set", "alpha", ""]), [])
         self.assertEqual(candidates(self.parser, ["run", "--environment", "a"]),
                          ["alpha", "analog test"])
