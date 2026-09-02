@@ -10,6 +10,8 @@ Prefer incremental, compatibility-preserving changes over wholesale rewrites. Ad
 
 Definitions and manifests should be portable across machines. Do not assume Ubuntu, `apt`, particular hostnames, or institutional filesystem paths. Never commit proprietary PDK or library content. Open-source backends should prefer reproducible containerized toolchains; proprietary backends may integrate with native institutional environments.
 
+Execution location does not define experiment location: resolve workspace, run, source, technology, flow, and backend paths from the selected environment and explicit inputs, never implicitly from the caller's current directory. Environments are named mutable, optionally partial configuration profiles; a run must use a complete, unambiguous resolved context. Keep canonical WOLF semantics separate from backend-native configuration and retain backend-specific overrides as explicit escape hatches.
+
 Human-readable environment and resolved-run manifests are the authoritative reproducibility record. SQLite may index operational state, executions, stages, artifacts, and metrics, but it must not be the sole provenance store. Treat a physical-design run as a durable identity that may accumulate append-only executions and stage results.
 
 The long-term primary command is an installed Python CLI, but preserve `wolf activate <environment>` and `wolf deactivate` as the public UX. Any shell hook needed to mutate the caller's environment should remain a transparent implementation detail.

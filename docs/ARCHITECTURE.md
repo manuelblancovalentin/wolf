@@ -160,7 +160,48 @@ Classes describe stable categories and behavior. Manifests describe instances. I
 
 The context is immutable for a run once materialized. A changed resolved composition creates a new implementation run rather than silently changing the meaning of an existing run.
 
+### Canonical and backend configuration
+
+WOLF presents canonical semantic configuration for concepts that have shared
+meaning: design identity and top module, RTL and include inputs, technology,
+libraries, constraints, workspace, resources, stage range, flow, and backend.
+Backends translate a resolved context into native Flowtool YAML/Tcl/SDC or ORFS
+Make/config/SDC inputs. Native backend configurations may also be imported for
+compatibility, and explicit backend overrides remain available for knobs such
+as `OPENROAD_HIERARCHICAL` and `SWAP_ARITH_OPERATORS`. Backend-specific knobs
+are not promoted into canonical WOLF state merely for symmetry.
+
 ## Environment model and shell integration
+
+An **Environment** is a named, mutable, optionally partial configuration
+profile. It may supply defaults for design, technology, libraries, flow,
+backend, workspace, constraints, variables, and executor choices. It is not an
+immutable `{design, technology, flow}` identity.
+
+A **RunContext** is the complete, unambiguous resolved configuration for one
+execution/run. Environments may be partial; RunContexts may not be. A changed
+constraint or environment value may create a new resolved run without requiring
+a new Environment; cloning remains an explicit user choice for a long-lived
+named branch.
+
+### Path resolution
+
+**Execution location does not define experiment location. The
+environment/resolved configuration does.** The caller's current directory must
+not implicitly select a workspace, run directory, design source, technology,
+flow, generated configuration, or output location.
+
+WOLF distinguishes three roots:
+
+- **WOLF state root** (`WOLF_HOME`, default `~/.wolf`) stores WOLF-owned state;
+- **workspace root** is the user-selected destination for generated runs;
+- **source/package roots** identify RTL, PDK, library, and flow assets.
+
+Absolute paths remain absolute. Paths stored in a manifest resolve relative to
+that manifest's directory; explicit relative CLI path overrides resolve from
+the invocation directory and are canonicalized before execution. Imported
+assets resolve from registered absolute roots. Backends derive generated and
+output paths from the resolved context, never from `$PWD`.
 
 The long-term source of truth is a declarative environment manifest. The current bucket mechanism remains a compatibility input during migration, but executable shell fragments should not remain the primary structured representation.
 
@@ -258,6 +299,8 @@ Registry/install behavior is intentionally deferred until the backend and core a
 - A changed resolved composition cannot silently mutate an existing run's meaning.
 - Human-readable manifests remain authoritative for reproducibility; SQLite is an operational index.
 - Core run and environment behavior is tool-neutral.
+- Execution location does not define experiment location.
+- Environments may be partial; RunContexts may not be.
 - Backend-specific dependencies, preparation, stages, commands, and result interpretation remain backend-local.
 - ORFS remains the implementation-flow owner for Yosys/OpenROAD.
 - Existing Cadence behavior is protected by characterization tests before extraction or migration.

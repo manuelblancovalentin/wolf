@@ -111,6 +111,14 @@ Retain compatibility shims and shell activation behavior. Do not migrate tool-na
 
 Exit criterion: migrated components serve both backends, preserve characterized Cadence behavior, and do not encode ORFS or host-specific policy in core.
 
+### 6a. Make resolved execution location-independent
+
+Before package management, centralize deterministic resolution of state,
+workspace, source, and run paths. An Environment remains a named mutable and
+possibly partial profile; execution requires a complete RunContext. Add
+regressions proving that equivalent invocations from `/`, `/tmp`, and project
+directories resolve the same experiment and output paths.
+
 ## LATER
 
 ### 7. Introduce declarative environment and component manifests
