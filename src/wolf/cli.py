@@ -8,7 +8,7 @@ import sys
 from typing import Optional
 
 from wolf import __version__
-from wolf.commands import backend, completion, doctor, env, info, package, process, run, session
+from wolf.commands import backend, completion, config, doctor, env, info, package, process, run, session
 from wolf.backend import UnknownBackendError
 from wolf.legacy import LegacyCommandError
 from wolf import ui
@@ -24,6 +24,7 @@ def build_parser() -> argparse.ArgumentParser:
     env.register(subparsers)
     process.register(subparsers)
     backend.register(subparsers)
+    config.register(subparsers)
     package.register_package(subparsers)
     package.register_install(subparsers)
     run.register(subparsers)
