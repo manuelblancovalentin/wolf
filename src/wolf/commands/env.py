@@ -78,31 +78,6 @@ def command_create(args: argparse.Namespace) -> int:
     return 0
 
 
-def command_show(args: argparse.Namespace) -> int:
-    path = _existing_environment(args.name)
-    ui.key_value("Name", args.name)
-    ui.key_value("Path", path)
-
-    variables = _read_variables(path)
-    ui.key_value("Variables", "")
-    if variables:
-        for key, value in variables:
-            ui.key_value(f"  {key}", value)
-    else:
-        ui.info("No stored variables.")
-
-    bucket_file = path / "bucket.p"
-    bucket_count = 0
-    if bucket_file.is_file():
-        bucket_count = sum(
-            1
-            for line in bucket_file.read_text(encoding="utf-8").splitlines()
-            if line.strip().startswith("source ")
-        )
-    ui.key_value("Bucket inputs", bucket_count)
-    return 0
-
-
 def command_remove(args: argparse.Namespace) -> int:
     path = _existing_environment(args.name)
     if os.environ.get("WOLF_ENV_NAME"):
@@ -159,14 +134,6 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         handler=command_create,
         ui_kind="env",
         ui_section="Environment creation",
-    )
-
-    show_parser = commands.add_parser("show", help="show environment state")
-    show_parser.add_argument("name")
-    show_parser.set_defaults(
-        handler=command_show,
-        ui_kind="env",
-        ui_section="Environment details",
     )
 
     remove_parser = commands.add_parser("remove", help="remove an environment")

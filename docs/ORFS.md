@@ -20,10 +20,10 @@ Configure the checkout with:
 
 ```bash
 export ORFS_ROOT=/path/to/OpenROAD-flow-scripts/flow
-wolf backend show orfs
+wolf backend info orfs
 ```
 
-`wolf backend show orfs` is read-only: it reports configured checkout and
+`wolf backend info orfs` is read-only: it reports configured checkout and
 runtime status and does not attempt to pull images or invoke EDA tools. It
 distinguishes a missing binary, a daemon/socket failure, and permission denial.
 The shell runner checks that its selected runtime can answer `info` before

@@ -133,7 +133,7 @@ Candidate environment UX includes:
 wolf env create
 wolf env clone
 wolf env set
-wolf env show
+wolf info
 wolf activate
 wolf deactivate
 ```

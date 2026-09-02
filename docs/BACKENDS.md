@@ -44,7 +44,7 @@ the stabilized Bash run lifecycle:
 
 The installed Python package exposes the same built-in identity through
 `wolf.backend`. This registry powers `wolf backend list` and
-`wolf backend show NAME`; it performs no Cadence checks during ordinary WOLF
+`wolf backend info NAME`; it performs no Cadence checks during ordinary WOLF
 imports or non-Cadence commands. Backend-local validation is mockable and is
 reported only when that backend is inspected or selected.
 

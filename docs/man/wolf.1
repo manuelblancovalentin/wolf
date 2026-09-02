@@ -29,9 +29,6 @@ error.
 .BI "wolf env create " name
 Create a legacy-compatible environment and its current metadata files.
 .TP
-.BI "wolf env show " name
-Show the environment path and its persisted variables.
-.TP
 .BI "wolf env remove " name
 Remove an environment after interactive confirmation.
 .TP
@@ -52,7 +49,7 @@ List built-in execution backends. The current built-ins are
 and
 .BR orfs .
 .TP
-.BI "wolf backend show " name
+.BI "wolf backend info " name
 Show a backend's description, compatibility adapter, and backend-local
 dependency status.
 .SH RUN COMMAND
@@ -74,10 +71,9 @@ current shell. It does not change the working directory. Use
 .B wolf deactivate
 to restore the original prompt and remove WOLF shell state.
 .TP
-.B wolf info
-Show the active resolved environment. This differs from
-.B wolf env show
-which displays a stored profile by name.
+.BI "wolf info " "[name]"
+Show one environment using resolved semantic fields. The name may be omitted
+when a WOLF environment is active; otherwise it is required.
 .SH SHELL INTEGRATION AND COMPLETION
 Source
 .I shell/wolf.bash

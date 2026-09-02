@@ -11,10 +11,10 @@ from wolf.commands.env import _environment_names
 
 _DYNAMIC_POSITIONALS = {
     ("activate",): _environment_names,
-    ("env", "show"): _environment_names,
+    ("info",): _environment_names,
     ("env", "remove"): _environment_names,
     ("env", "set"): _environment_names,
-    ("backend", "show"): backend_names,
+    ("backend", "info"): backend_names,
 }
 
 

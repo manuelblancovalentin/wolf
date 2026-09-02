@@ -96,18 +96,18 @@ class InstalledCliTests(unittest.TestCase):
         self.assertTrue((path / "deactivate").is_file())
         self.assertIn('export WOLF_ENV_NAME="alpha"', (path / "activate").read_text())
 
-    def test_environment_show(self):
+    def test_environment_info_by_explicit_name(self):
         path = self.create_environment("alpha")
-        (path / "vars.env").write_text('CLOCK_PERIOD="1050 ps"\n', encoding="utf-8")
-        (path / "bucket.p").write_text(
-            '#!/bin/bash\nsource "/tools/setup.sh"\n', encoding="utf-8"
+        (path / "vars.env").write_text(
+            'DESIGN_NAME="ibex"\nPROCESS="asap7"\nBACKEND="orfs"\nWORKSPACE_DIR="work"\n',
+            encoding="utf-8",
         )
-        result = self.wolf("env", "show", "alpha")
+        result = self.wolf("info", "alpha")
         self.assert_success(result)
-        self.assertIn("Name: alpha", result.stdout)
-        self.assertIn(f"Path: {path}", result.stdout)
-        self.assertIn("CLOCK_PERIOD: 1050 ps", result.stdout)
-        self.assertIn("Bucket inputs: 1", result.stdout)
+        self.assertIn("Environment: alpha", result.stdout)
+        self.assertIn(f"Environment location: {path}", result.stdout)
+        self.assertIn("Design: ibex", result.stdout)
+        self.assertIn(f"Resolved root: {path / 'work'}", result.stdout)
 
     def test_environment_set_persists_legacy_variable_format(self):
         path = self.create_environment("alpha")
@@ -129,7 +129,7 @@ class InstalledCliTests(unittest.TestCase):
 
     def test_nonexistent_environment_errors(self):
         for arguments in (
-            ("env", "show", "missing"),
+            ("info", "missing"),
             ("env", "set", "missing", "KEY", "value"),
             ("env", "remove", "missing", "--yes"),
         ):
@@ -151,26 +151,26 @@ class InstalledCliTests(unittest.TestCase):
         self.assert_success(result)
         self.assertLess(result.stdout.index("➤ asap7"), result.stdout.index("➤ tsmc65"))
 
-    def test_backend_list_and_show(self):
+    def test_backend_list_and_info(self):
         listed = self.wolf("backend", "list")
         self.assert_success(listed)
         self.assertIn("Available backends", listed.stdout)
         self.assertIn("cadence-flowtool", listed.stdout)
         self.assertIn("orfs", listed.stdout)
 
-        shown = self.wolf("backend", "show", "cadence-flowtool")
+        shown = self.wolf("backend", "info", "cadence-flowtool")
         self.assert_success(shown)
         self.assertIn("Name: cadence-flowtool", shown.stdout)
         self.assertIn("cadence-flowtool.sh", shown.stdout)
 
-        orfs = self.wolf("backend", "show", "orfs")
+        orfs = self.wolf("backend", "info", "orfs")
         self.assert_success(orfs)
         self.assertIn("Name: orfs", orfs.stdout)
         self.assertIn("container", orfs.stdout)
         self.assertIn("ORFS_ROOT", orfs.stdout)
 
-    def test_backend_show_rejects_unknown_backend(self):
-        result = self.wolf("backend", "show", "unknown")
+    def test_backend_info_rejects_unknown_backend(self):
+        result = self.wolf("backend", "info", "unknown")
         self.assertEqual(result.returncode, 2)
         self.assertIn("unknown WOLF backend 'unknown'", result.stderr)
 
@@ -254,10 +254,12 @@ class InstalledCliTests(unittest.TestCase):
         self.assertIn("Design: boom", result.stdout)
         self.assertEqual(self.environment["WOLF_ACTIVE_ENV"], "active")
 
-    def test_info_and_deactivate_are_safe_without_active_environment(self):
+    def test_info_requires_name_without_active_environment(self):
         info = self.wolf("info")
-        self.assert_success(info)
-        self.assertIn("No WOLF environment is active", info.stdout)
+        self.assertEqual(info.returncode, 2)
+        self.assertIn("wolf info <environment>", info.stderr)
+
+    def test_deactivate_is_safe_without_active_environment(self):
         deactivate = self.wolf("deactivate")
         self.assert_success(deactivate)
         self.assertIn("No WOLF shell integration is active", deactivate.stdout)

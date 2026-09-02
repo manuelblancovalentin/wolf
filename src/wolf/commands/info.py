@@ -10,11 +10,13 @@ from wolf.commands.env import _environment_path, _read_variables
 from wolf.commands.run import _context
 
 
-def command_info(_args: argparse.Namespace) -> int:
-    name = os.environ.get("WOLF_ACTIVE_ENV")
+def command_info(args: argparse.Namespace) -> int:
+    name = args.environment or os.environ.get("WOLF_ACTIVE_ENV")
     if not name:
-        ui.info("No WOLF environment is active. Use wolf activate <environment>.")
-        return 0
+        raise ValueError(
+            "no WOLF environment is active; use wolf info <environment> or "
+            "wolf activate <environment>"
+        )
     path = _environment_path(name)
     if not path.is_dir():
         raise ValueError(f"active WOLF environment {name!r} does not exist")
@@ -22,7 +24,7 @@ def command_info(_args: argparse.Namespace) -> int:
     ui.key_value("Environment", name)
     ui.key_value("Environment location", path)
     try:
-        context = _context(argparse.Namespace(environment=None, workspace=None, design=None,
+        context = _context(argparse.Namespace(environment=name, workspace=None, design=None,
                                               process=None, backend=None, runtag=None))
     except ValueError:
         context = None
@@ -49,5 +51,6 @@ def command_info(_args: argparse.Namespace) -> int:
 
 
 def register(subparsers: argparse._SubParsersAction) -> None:
-    parser = subparsers.add_parser("info", help="show the current active WOLF environment")
+    parser = subparsers.add_parser("info", help="show a stored or active WOLF environment")
+    parser.add_argument("environment", nargs="?")
     parser.set_defaults(handler=command_info, ui_kind="env", ui_section="Active WOLF environment")

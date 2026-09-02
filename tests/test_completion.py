@@ -39,7 +39,7 @@ class CompletionProtocolTests(unittest.TestCase):
 
     def test_nested_commands_and_options_are_contextual(self):
         self.assertEqual(candidates(self.parser, ["env", ""]),
-                         ["create", "list", "remove", "set", "show"])
+                         ["create", "list", "remove", "set"])
         self.assertEqual(candidates(self.parser, ["env", "remove", "--"]),
                          ["--help", "--yes"])
         self.assertIn("--environment", candidates(self.parser, ["run", "--e"]))
@@ -47,13 +47,13 @@ class CompletionProtocolTests(unittest.TestCase):
     def test_environment_names_complete_by_prefix_and_preserve_spaces(self):
         self.assertEqual(candidates(self.parser, ["activate", "a"]),
                          ["alpha", "analog test"])
-        self.assertEqual(candidates(self.parser, ["env", "show", "b"]), ["beta"])
+        self.assertEqual(candidates(self.parser, ["info", "b"]), ["beta"])
         self.assertEqual(candidates(self.parser, ["env", "set", "alpha", ""]), [])
         self.assertEqual(candidates(self.parser, ["run", "--environment", "a"]),
                          ["alpha", "analog test"])
 
-    def test_backend_names_complete_for_show_and_run(self):
-        self.assertEqual(candidates(self.parser, ["backend", "show", "o"]), ["orfs"])
+    def test_backend_names_complete_for_info_and_run(self):
+        self.assertEqual(candidates(self.parser, ["backend", "info", "o"]), ["orfs"])
         self.assertEqual(candidates(self.parser, ["run", "--backend=o"]),
                          ["--backend=orfs"])
 

@@ -15,7 +15,7 @@ def command_list(_args: argparse.Namespace) -> int:
     return 0
 
 
-def command_show(args: argparse.Namespace) -> int:
+def command_info(args: argparse.Namespace) -> int:
     backend = get_backend(args.name)
     ui.key_value("Name", backend.name)
     ui.key_value("Description", backend.description)
@@ -40,10 +40,10 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         ui_section="Available backends",
     )
 
-    show_parser = commands.add_parser("show", help="show backend details")
-    show_parser.add_argument("name")
-    show_parser.set_defaults(
-        handler=command_show,
+    info_parser = commands.add_parser("info", help="show backend details")
+    info_parser.add_argument("name")
+    info_parser.set_defaults(
+        handler=command_info,
         ui_kind="wolf",
         ui_section="Backend details",
     )

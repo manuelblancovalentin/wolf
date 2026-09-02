@@ -33,10 +33,11 @@ does not change the working directory. `wolf deactivate` restores the original
 prompt and removes WOLF-owned state. Activating another environment switches
 in place.
 
-`wolf env show NAME` describes a stored profile. `wolf info` describes the
-current active resolved environment. `wolf run --plan` describes a prospective
-run. Explicit `wolf run --environment NAME` overrides the active environment
-for that invocation only.
+`wolf info NAME` describes a stored profile using the same semantic view as
+`wolf info` inside an active environment. Without an active environment the
+name is required. `wolf run --plan` describes a prospective run. Explicit
+`wolf run --environment NAME` overrides the active environment for that
+invocation only.
 
 Execution location does not define experiment location. The active/resolved
 WOLF environment does.
@@ -55,7 +56,7 @@ protocol; shell code does not scrape WOLF's formatted output or duplicate state
 discovery.
 
 Examples include `wolf <TAB>`, `wolf env <TAB>`,
-`wolf activate <TAB>`, `wolf backend show <TAB>`, and environment/backend values
+`wolf activate <TAB>`, `wolf backend info <TAB>`, and environment/backend values
 for `wolf run`. Completion uses `WOLF_HOME`, so an isolated or non-default state
 root is reflected automatically.
 

@@ -11,9 +11,11 @@
 
 `wolf env list`
 
-- Create or inspect an environment:
+- Create an environment or inspect one with the common info command:
 
-`wolf env {{create|show}} {{environment}}`
+`wolf env create {{environment}}`
+
+`wolf info {{environment}}`
 
 - Persist a variable in an environment:
 
@@ -33,7 +35,7 @@
 
 - Inspect local ORFS backend configuration:
 
-`wolf backend show orfs`
+`wolf backend info orfs`
 
 - Resolve a named environment without starting EDA tools:
 

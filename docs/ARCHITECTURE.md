@@ -213,7 +213,7 @@ The long-term primary CLI is a normal installed Python entry point:
 wolf run
 wolf env create foo
 wolf env clone foo bar
-wolf env show foo
+wolf info foo
 wolf install rtl/ibex
 wolf doctor
 ```
