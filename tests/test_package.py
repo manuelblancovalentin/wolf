@@ -39,7 +39,7 @@ class PackageFoundationTests(unittest.TestCase):
     def test_builtin_registry_contains_phase_one_packages(self):
         self.assertEqual(
             self.registry.identifiers(),
-            ("flow/orfs", "pdk/asap7", "rtl/ibex"),
+            ("flow/orfs", "pdk/asap7", "rtl/aes", "rtl/ibex"),
         )
         self.assertEqual(
             self.registry.get("rtl/ibex").revision,
@@ -49,6 +49,12 @@ class PackageFoundationTests(unittest.TestCase):
             self.registry.get("flow/orfs").revision,
             "8c0616910615e843780ba527526f2b83a564ba70",
         )
+        aes = self.registry.get("rtl/aes")
+        self.assertEqual(aes.source.type, "package-path")
+        self.assertEqual(str(aes.source.package), "flow/orfs")
+        self.assertEqual(aes.source.path, "flow/designs/src/aes")
+        self.assertEqual(aes.source.revision, "3b9f1b030fc7b723fdd5706e470c1d2cbdfb41d2")
+        self.assertEqual(aes.metadata["design"]["top"], "aes_cipher_top")
         asap7 = self.registry.get("pdk/asap7")
         self.assertEqual(asap7.source.type, "package-path")
         self.assertEqual(str(asap7.source.package), "flow/orfs")
@@ -57,6 +63,16 @@ class PackageFoundationTests(unittest.TestCase):
     def test_unknown_package_error_lists_registry_contents(self):
         with self.assertRaisesRegex(UnknownPackageError, "available packages:.*rtl/ibex"):
             self.registry.get("rtl/missing")
+
+    def test_aes_manifest_describes_stock_orfs_view(self):
+        manifest = self.registry.get("rtl/aes")
+        self.assertEqual(manifest.source.parent_revision,
+                         "8c0616910615e843780ba527526f2b83a564ba70")
+        self.assertEqual(manifest.source.revision,
+                         "3b9f1b030fc7b723fdd5706e470c1d2cbdfb41d2")
+        self.assertEqual(manifest.metadata["design"], {
+            "name": "aes", "top": "aes_cipher_top", "sources": ["*.v"]
+        })
 
     def test_store_path_is_versioned_under_isolated_wolf_home(self):
         manifest = self.registry.get("rtl/ibex")

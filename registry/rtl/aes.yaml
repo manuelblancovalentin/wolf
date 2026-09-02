@@ -1,0 +1,23 @@
+schema_version: 1
+kind: rtl
+name: aes
+description: AES cipher RTL bundled with the pinned ORFS flow collateral
+source:
+  type: package-path
+  package: flow/orfs
+  path: flow/designs/src/aes
+  url: https://github.com/The-OpenROAD-Project/OpenROAD-flow-scripts.git
+  parent_revision: 8c0616910615e843780ba527526f2b83a564ba70
+  revision: 3b9f1b030fc7b723fdd5706e470c1d2cbdfb41d2
+license:
+  name: See upstream AES source notices
+validation:
+  required_paths:
+    - aes_cipher_top.v
+    - timescale.v
+metadata:
+  design:
+    name: aes
+    top: aes_cipher_top
+    sources:
+      - "*.v"

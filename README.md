@@ -92,7 +92,7 @@ understandable without WOLF's operational state.
 
 ## Packages and registries
 
-The built-in registry currently provides `rtl/ibex`, `pdk/asap7`, and
+The built-in registry currently provides `rtl/ibex`, `rtl/aes`, `pdk/asap7`, and
 `flow/orfs`. Package sources are pinned and installed under WOLF-managed data
 paths, separate from workspaces.
 
@@ -152,11 +152,12 @@ This is a reproducibility reference, not a universal performance claim. See
 | ORFS backend | supported; golden validated |
 | Cadence Flowtool backend | compatibility/legacy path |
 | Ibex + ASAP7 | golden validated |
+| AES + ASAP7 | validation run completed; timing not closed |
 | Private/local registries | supported |
 | Run provenance | supported |
 | Run status and metrics | initial support |
 | Dependency solving, remote registry service, full run database | not implemented |
-| Multi-design/backend validation | in progress |
+| Multi-design/backend validation | AES second-design validation completed |
 
 WOLF is an evolving development project. Interfaces, backend coverage, and
 metric coverage may change as a second design and backend configuration are

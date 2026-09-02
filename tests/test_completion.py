@@ -65,11 +65,11 @@ class CompletionProtocolTests(unittest.TestCase):
                          ["--backend=orfs"])
 
     def test_package_identifiers_complete_for_info_and_install(self):
-        self.assertEqual(candidates(self.parser, ["install", "r"]), ["rtl/ibex"])
+        self.assertEqual(candidates(self.parser, ["install", "r"]), ["rtl/aes", "rtl/ibex"])
         self.assertEqual(candidates(self.parser, ["package", "info", "p"]), ["pdk/asap7"])
         self.assertEqual(
             candidates(self.parser, ["install", ""]),
-            ["flow/orfs", "pdk/asap7", "rtl/ibex"],
+            ["flow/orfs", "pdk/asap7", "rtl/aes", "rtl/ibex"],
         )
 
     def test_config_and_registry_candidates_are_offline(self):

@@ -1,0 +1,26 @@
+schema: wolf.environment/v1
+name: aes-asap7
+
+design:
+  package: rtl/aes
+
+technology:
+  package: pdk/asap7
+
+flow:
+  package: flow/orfs
+
+workspace:
+  root: ~/wolf-work
+
+constraints:
+  clocks:
+    - name: clk
+      port: clk
+      period_ps: 380
+
+backend:
+  orfs:
+    make:
+      SYNTH_USE_SYN: 1
+    flow_variant: wolf_aes_asap7_380ps
