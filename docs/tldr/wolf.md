@@ -1,0 +1,36 @@
+# wolf
+
+> Manage WOLF EDA environments and inspect workflow support.
+> A WOLF environment represents an EDA experiment, not a Python virtual environment.
+
+- Show command help or the installed version:
+
+`wolf {{--help|--version}}`
+
+- List environments, including an empty environment collection:
+
+`wolf env list`
+
+- Create or inspect an environment:
+
+`wolf env {{create|show}} {{environment}}`
+
+- Persist a variable in an environment:
+
+`wolf env set {{environment}} {{KEY}} {{value}}`
+
+- Remove an environment without prompting:
+
+`wolf env remove --yes {{environment}}`
+
+- List legacy process definitions:
+
+`wolf process list`
+
+- List built-in backends or inspect the Cadence compatibility backend:
+
+`wolf backend {{list|show cadence-flowtool}}`
+
+- Report basic installation and runtime facts:
+
+`wolf doctor`

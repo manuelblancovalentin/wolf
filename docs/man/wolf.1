@@ -1,0 +1,90 @@
+.TH WOLF 1 "September 2026" "WOLF 0.1.0.dev0" "User Commands"
+.SH NAME
+wolf \- manage WOLF EDA environments and inspect available workflow support
+.SH SYNOPSIS
+.B wolf
+.RI [ options ]
+.I command
+.RI [ arguments ]
+.SH DESCRIPTION
+WOLF is an EDA workflow and environment manager. The installed command currently
+provides legacy-compatible environment management, process discovery, backend
+inspection, and basic installation diagnostics.
+.PP
+A WOLF environment represents an EDA experiment environment. It is not a Python
+virtual environment.
+.SH OPTIONS
+.TP
+.BR \-h , " --help"
+Show command help and exit.
+.TP
+.B --version
+Show the installed WOLF version and exit.
+.SH ENVIRONMENT COMMANDS
+.TP
+.B wolf env list
+List environments in deterministic name order. An empty collection is not an
+error.
+.TP
+.BI "wolf env create " name
+Create a legacy-compatible environment and its current metadata files.
+.TP
+.BI "wolf env show " name
+Show the environment path and its persisted variables.
+.TP
+.BI "wolf env remove " name
+Remove an environment after interactive confirmation.
+.TP
+.BI "wolf env remove --yes " name
+Remove an environment without prompting.
+.TP
+.BI "wolf env set " "name key value"
+Persist an environment variable using the current legacy environment format.
+.SH PROCESS COMMANDS
+.TP
+.B wolf process list
+List legacy process definitions found in the WOLF state directory.
+.SH BACKEND COMMANDS
+.TP
+.B wolf backend list
+List built-in execution backends. The current built-in backend is
+.BR cadence-flowtool .
+.TP
+.BI "wolf backend show " name
+Show a backend's description, compatibility adapter, and backend-local
+dependency status.
+.SH DIAGNOSTICS
+.TP
+.B wolf doctor
+Report the WOLF and Python versions, operating system, state root, Git
+availability, and optional Docker and Podman availability. EDA tools are not
+global WOLF requirements and are not checked here.
+.SH ACTIVATION
+The command names
+.B wolf activate
+and
+.B wolf deactivate
+are reserved, but activation and deactivation are not yet available through the
+installed CLI. Invoking them reports that limitation and exits unsuccessfully.
+The existing sourced-shell implementation remains available for legacy use.
+.SH ENVIRONMENT
+.TP
+.B WOLF_HOME
+Override the WOLF state root. If unset, WOLF uses
+.IR ~/.wolf .
+This override is useful for isolated development and testing.
+.SH EXIT STATUS
+WOLF exits with status 0 on success and nonzero on invalid input, missing state,
+an unavailable operation, or command failure.
+.SH FILES
+.TP
+.I ~/.wolf/envs
+Default legacy environment collection.
+.TP
+.I ~/.wolf/config
+Default legacy process definition collection.
+.SH SEE ALSO
+Project architecture, backend, and testing documentation is maintained under
+the repository's
+.I docs
+directory.
