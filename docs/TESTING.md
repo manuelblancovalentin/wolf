@@ -41,6 +41,8 @@ file. They validate configuration, container-path translation, Make argument
 construction, backend-neutral stage ranges, and failure propagation without
 starting a container or requiring host OpenROAD tools. The opt-in real Ibex
 integration harness is `tests/integration/run_orfs_ibex`; see `docs/ORFS.md`.
+Status tests also cover historical ORFS runs with no mutable stage metadata and
+the numeric report syntax used by the validated golden run.
 
 Package tests use temporary local Git repositories, including a recursive
 submodule, to exercise pinned installation, validation, atomic placement,

@@ -151,7 +151,11 @@ reference, but timing-clean completion is the criterion. Residual max-slew
 violations are not checked by this baseline.
 
 `wolf status` renders the ORFS metrics already present in run reports. It does
-not require a fresh flow or parse unrelated reports.
+not require a fresh flow or parse unrelated reports. For runs created before
+`wolf.stage-results`, the backend reconstructs completion conservatively from
+ORFS databases and final artifacts. Explicit WOLF stage metadata takes
+precedence, and historical elapsed times remain unavailable when they were not
+recorded.
 
 Installed-CLI ORFS runs show a semantic pre-run summary for declarative
 profiles, stream Git/package activity, and report elapsed wall time. Completed

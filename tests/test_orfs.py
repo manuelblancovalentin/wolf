@@ -202,6 +202,26 @@ class OrfsPythonBackendTests(unittest.TestCase):
                 "electrical.max_slew_violations": 64,
             })
 
+    def test_extract_metrics_accepts_real_finish_report_syntax(self):
+        with tempfile.TemporaryDirectory(prefix="wolf-orfs-real-metrics-") as temporary:
+            reports = Path(temporary) / "reports"
+            reports.mkdir()
+            (reports / "6_finish.rpt").write_text(
+                "worst slack max 13.31\nmax slew violation count 64\n"
+                "max fanout violation count 0\nmax cap violation count 0\n"
+                "setup violation count 0\nhold violation count 0\n",
+                encoding="utf-8",
+            )
+            (reports / "5_route_drc.rpt").write_text("", encoding="utf-8")
+            metrics = get_backend("orfs").extract_metrics(Path(temporary))
+            self.assertEqual(metrics["timing.worst_slack_ps"], 13.31)
+            self.assertEqual(metrics["timing.setup_violations"], 0)
+            self.assertEqual(metrics["timing.hold_violations"], 0)
+            self.assertEqual(metrics["electrical.max_slew_violations"], 64)
+            self.assertEqual(metrics["electrical.max_fanout_violations"], 0)
+            self.assertEqual(metrics["electrical.max_cap_violations"], 0)
+            self.assertEqual(metrics["physical.drc_violations"], 0)
+
 
 class OrfsShellBackendTests(unittest.TestCase):
     def setUp(self):

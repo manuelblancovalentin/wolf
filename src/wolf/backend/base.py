@@ -48,3 +48,7 @@ class Backend(ABC):
     def extract_metrics(self, run_directory):
         """Return optional semantic metrics parsed from a completed run."""
         return {}
+
+    def infer_stage_results(self, run_directory):
+        """Return backend-owned stage evidence for legacy runs."""
+        return {}

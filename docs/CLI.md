@@ -35,6 +35,8 @@ and presents canonical semantic values rather than dumping raw YAML.
 execution and results, selecting the active environment's `run.latest.d`
 without using cwd. Use `wolf status --run PATH` for an explicit run and
 `wolf status --json` for the same status model as machine-readable JSON.
+For older ORFS runs without `wolf.stage-results`, status reconstructs stages
+from backend-owned artifacts without changing frozen provenance.
 
 The Bash implementation continues to use `bin/defs` and `bin/utils`. It should
 remain visually compatible, but its rendering implementation does not need to

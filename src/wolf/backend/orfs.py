@@ -122,8 +122,45 @@ class OrfsBackend(Backend):
     def extract_metrics(self, run_directory):
         """Extract the small stable metric set used by the golden regression."""
         root = Path(run_directory)
-        metadata = next(iter(sorted(root.rglob("metadata.json"))), None)
         result = {}
+        report = next(iter(sorted(root.rglob("6_finish.rpt"))), None)
+        if report and report.is_file():
+            text = report.read_text(encoding="utf-8", errors="replace")
+            patterns = {
+                "timing.worst_slack_ps": r"^\s*worst\s+slack\s+max\s+([-+]?\d+(?:\.\d+)?)\s*$",
+                "electrical.max_slew_violations": r"^\s*max\s+slew\s+violation\s+count\s+(\d+)\s*$",
+                "electrical.max_fanout_violations": r"^\s*max\s+fanout\s+violation\s+count\s+(\d+)\s*$",
+                "electrical.max_cap_violations": r"^\s*max\s+cap\s+violation\s+count\s+(\d+)\s*$",
+                "timing.setup_violations": r"^\s*setup\s+violation\s+count\s+(\d+)\s*$",
+                "timing.hold_violations": r"^\s*hold\s+violation\s+count\s+(\d+)\s*$",
+            }
+            for key, pattern in patterns.items():
+                match = re.search(pattern, text, flags=re.MULTILINE | re.IGNORECASE)
+                if not match and key in {"timing.setup_violations", "timing.hold_violations"}:
+                    kind = "setup" if "setup" in key else "hold"
+                    match = re.search(
+                        rf"finish\s+{kind}_violation_count(?:\s+|\s*$).*?{kind}\s+violation\s+count\s+(\d+)",
+                        text, flags=re.MULTILINE | re.IGNORECASE | re.DOTALL,
+                    )
+                if match:
+                    result[key] = float(match.group(1)) if "slack" in key else int(match.group(1))
+
+        drc = next(iter(sorted(root.rglob("5_route_drc.rpt"))), None)
+        if drc and drc.is_file():
+            text = drc.read_text(encoding="utf-8", errors="replace")
+            if not text.strip():
+                result["physical.drc_violations"] = 0
+            else:
+                for pattern in (
+                    r"^\s*(?:total\s+)?(?:drc\s+)?violations?\s*[:=]\s*(\d+)\s*$",
+                    r"^\s*total\s+number\s+of\s+violations\s*[:=]\s*(\d+)\s*$",
+                ):
+                    match = re.search(pattern, text, flags=re.MULTILINE | re.IGNORECASE)
+                    if match:
+                        result["physical.drc_violations"] = int(match.group(1))
+                        break
+
+        metadata = next(iter(sorted(root.rglob("metadata.json"))), None)
         if metadata and metadata.is_file():
             try:
                 raw = json.loads(metadata.read_text(encoding="utf-8"))
@@ -144,18 +181,32 @@ class OrfsBackend(Backend):
                 }.items():
                     for key, value in flat.items():
                         if all(needle in key for needle in needles):
-                            result[target] = value
+                            if isinstance(value, (int, float)) and not isinstance(value, bool) and target not in result:
+                                result[target] = value
                             break
             except (OSError, ValueError, TypeError):
                 pass
-        report = next(iter(sorted(root.rglob("6_finish.rpt"))), None)
-        if report and report.is_file():
-            text = report.read_text(encoding="utf-8", errors="replace")
-            for kind in ("setup", "hold"):
-                match = re.search(rf"finish {kind}_violation_count[\s-]+{kind} violation count (\d+)", text)
-                if match:
-                    result[f"timing.{kind}_violations"] = int(match.group(1))
         return result
+
+    def infer_stage_results(self, run_directory):
+        root = Path(run_directory)
+        names = {
+            "synth": "1_synth.odb",
+            "floorplan": "2_floorplan.odb",
+            "place": "3_place.odb",
+            "cts": "4_cts.odb",
+            "route": "5_route.odb",
+        }
+        inferred = {stage: "complete" for stage, filename in names.items()
+                    if any(path.is_file() for path in root.rglob(filename))}
+        finish = (any(path.is_file() for path in root.rglob("6_final.odb")) and
+                  any(path.is_file() for path in root.rglob("6_final.gds")))
+        if finish:
+            inferred["finish"] = "complete"
+            # ORFS executes these stages sequentially; a final database is
+            # sufficient evidence that each preceding stage completed.
+            inferred.update({stage: "complete" for stage in ORFS_STAGES[:-1]})
+        return inferred
 
     def metadata(self, context: Optional[Mapping[str, str]] = None) -> OrfsMetadata:
         configured_root = _value(context, "ORFS_ROOT")

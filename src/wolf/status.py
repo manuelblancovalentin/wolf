@@ -126,7 +126,15 @@ def load_status(run_directory: Path) -> RunStatus:
                 except ValueError:
                     pass
             recorded[name] = StageResult(name, state, elapsed_value, exit_code)
-    stages = tuple(recorded.get(name, StageResult(name, "pending")) for name in expected)
+    inferred = {}
+    try:
+        inferred = dict(get_backend(backend).infer_stage_results(run))
+    except (ValueError, AttributeError, OSError):
+        pass
+    stages = tuple(
+        recorded.get(name, StageResult(name, inferred.get(name, "unknown" if inferred else "pending")))
+        for name in expected
+    )
     if not expected:
         stages = tuple(recorded.values())
     if not stages:
@@ -137,6 +145,8 @@ def load_status(run_directory: Path) -> RunStatus:
         state = "completed"
     elif any(stage.status in {"complete", "running"} for stage in stages):
         state = "partial/incomplete"
+    elif any(stage.status == "unknown" for stage in stages):
+        state = "unknown"
     else:
         state = "not started"
     failed = next((stage.name for stage in stages if stage.status == "failed"), None)
@@ -150,14 +160,29 @@ def load_status(run_directory: Path) -> RunStatus:
 
 def render_human(status: RunStatus) -> None:
     from wolf import ui
+    from rich.table import Table
+    from rich.text import Text
+
+    def elapsed(value):
+        if value is None:
+            return "-"
+        seconds = int(round(value))
+        minutes, seconds = divmod(seconds, 60)
+        return f"{minutes}m {seconds:02d}s" if minutes else f"{seconds}s"
+
+    def status_cell(value):
+        styles = {"complete": "green", "running": "yellow", "failed": "red"}
+        style = styles.get(value, "dim")
+        marker = {"complete": "●", "running": "●", "failed": "●"}.get(value, "○")
+        return Text(f"{marker} {value}", style=style)
+
     ui.key_value("Environment", status.environment or "unknown")
     ui.key_value("Run", status.run_name)
     ui.key_value("Backend", status.backend)
     ui.key_value("Status", status.state)
-    elapsed = sum(stage.elapsed_seconds or 0 for stage in status.stages)
-    if elapsed:
-        minutes, seconds = divmod(int(round(elapsed)), 60)
-        ui.key_value("Elapsed", f"{minutes}m {seconds:02d}s" if minutes else f"{seconds}s")
+    total_elapsed = sum(stage.elapsed_seconds or 0 for stage in status.stages)
+    if total_elapsed:
+        ui.key_value("Elapsed", elapsed(total_elapsed))
     if status.failed_stage:
         ui.key_value("Failed stage", status.failed_stage)
         failed_result = next((stage for stage in status.stages if stage.name == status.failed_stage), None)
@@ -165,10 +190,14 @@ def render_human(status: RunStatus) -> None:
             ui.key_value("Exit code", failed_result.exit_code)
     ui.key_value("Run directory", status.run_directory)
     if status.stages:
-        ui.key_value("Stages", "")
+        ui.console.print("\nStages")
+        table = Table(show_header=True, header_style="bold cyan", box=None, pad_edge=False)
+        table.add_column("Stage")
+        table.add_column("Status")
+        table.add_column("Elapsed", justify="right")
         for stage in status.stages:
-            elapsed = f"{stage.elapsed_seconds:g}s" if stage.elapsed_seconds is not None else "-"
-            ui.key_value(f"  {stage.name}", f"{stage.status:<16} {elapsed}")
+            table.add_row(stage.name, status_cell(stage.status), elapsed(stage.elapsed_seconds))
+        ui.console.print(table)
     labels = {
         "timing.worst_slack_ps": "Worst slack",
         "timing.setup_violations": "Setup violations",
@@ -178,8 +207,13 @@ def render_human(status: RunStatus) -> None:
         "electrical.max_cap_violations": "Max cap violations",
         "electrical.max_fanout_violations": "Max fanout violations",
     }
-    available = [(labels[key], value) for key, value in labels.items() if key in status.metrics]
+    available = [(label, status.metrics[key]) for key, label in labels.items() if key in status.metrics]
     if available:
-        ui.key_value("Metrics", "")
+        ui.console.print("\nMetrics")
+        table = Table(show_header=True, header_style="bold cyan", box=None, pad_edge=False)
+        table.add_column("Metric")
+        table.add_column("Value", justify="right")
         for label, value in available:
-            ui.key_value(f"  {label}", value)
+            rendered = f"{value:g} ps" if label == "Worst slack" else str(value)
+            table.add_row(label, rendered)
+        ui.console.print(table)

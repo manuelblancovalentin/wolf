@@ -95,6 +95,42 @@ class StatusTests(unittest.TestCase):
         args = parser.parse_args(["status", "--run", str(self.run), "--json"])
         self.assertTrue(args.json)
 
+    def test_historical_orfs_run_infers_completed_stages_without_metadata(self):
+        historical = self.root / "historical"
+        historical.mkdir()
+        (historical / "wolf.resolved.yaml").write_text(
+            "schema: wolf.resolved-run/v1\nenvironment: golden\nbackend:\n  name: orfs\n",
+            encoding="utf-8",
+        )
+        results = historical / "results"
+        results.mkdir()
+        for name in ("1_synth.odb", "2_floorplan.odb", "3_place.odb", "4_cts.odb", "5_route.odb", "6_final.odb", "6_final.gds"):
+            (results / name).write_text("artifact", encoding="utf-8")
+        reports = historical / "reports"
+        reports.mkdir()
+        (reports / "6_finish.rpt").write_text(
+            "worst slack max 13.31\nmax slew violation count 64\n"
+            "max fanout violation count 0\nmax cap violation count 0\n"
+            "setup violation count 0\nhold violation count 0\n",
+            encoding="utf-8",
+        )
+        (reports / "5_route_drc.rpt").write_text("", encoding="utf-8")
+        status = load_status(historical)
+        self.assertEqual(status.state, "completed")
+        self.assertTrue(all(stage.status == "complete" for stage in status.stages))
+        self.assertIsNone(status.stages[0].elapsed_seconds)
+        self.assertEqual(status.metrics["timing.setup_violations"], 0)
+        self.assertEqual(status.metrics["physical.drc_violations"], 0)
+
+    def test_human_metrics_render_numeric_values(self):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            render_human(load_status(self.run))
+        rendered = output.getvalue()
+        self.assertIn("Setup violations", rendered)
+        self.assertIn("0", rendered)
+        self.assertNotIn("Setup violations         Setup violations", rendered)
+
 
 if __name__ == "__main__":
     unittest.main()
