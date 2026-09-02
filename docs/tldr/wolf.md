@@ -81,6 +81,16 @@
 
 `wolf {{info|deactivate}}`
 
+- Inspect the latest run for the active environment:
+
+`wolf status`
+
+- Emit run status as JSON or inspect a specific run directory:
+
+`wolf status --json`
+
+`wolf status --run {{/path/to/run}}`
+
 - Report basic installation and runtime facts:
 
 `wolf doctor`

@@ -8,7 +8,7 @@ import sys
 from typing import Optional
 
 from wolf import __version__
-from wolf.commands import backend, completion, config, doctor, env, info, init, package, process, registry, run, session
+from wolf.commands import backend, completion, config, doctor, env, info, init, package, process, registry, run, session, status
 from wolf.backend import UnknownBackendError
 from wolf.legacy import LegacyCommandError
 from wolf import ui
@@ -26,6 +26,7 @@ def build_parser() -> argparse.ArgumentParser:
     backend.register(subparsers)
     config.register(subparsers)
     init.register(subparsers)
+    status.register(subparsers)
     registry.register(subparsers)
     package.register_package(subparsers)
     package.register_install(subparsers)
@@ -52,6 +53,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         ui.header(kind)
     parser = build_parser()
     args = parser.parse_args(arguments)
+    if getattr(args, "json", False):
+        args.suppress_ui = True
     if not getattr(args, "suppress_ui", False):
         ui.header(args.ui_kind, args.ui_section)
     try:

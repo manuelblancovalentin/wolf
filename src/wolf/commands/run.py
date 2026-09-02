@@ -146,7 +146,10 @@ def _final_summary(context: ResolvedContext, status: int, elapsed: float, metric
     if timing.is_file():
         ui.key_value("Stages", "")
         for line in timing.read_text(encoding="utf-8").splitlines():
-            stage, stage_status, seconds = line.split("|", 2)
+            parts = line.split("|")
+            if len(parts) < 3:
+                continue
+            stage, stage_status, seconds = parts[:3]
             ui.key_value(f"  {stage}", f"{stage_status}  {_format_elapsed(float(seconds))}")
     if metrics:
         ui.key_value("Metrics", "")

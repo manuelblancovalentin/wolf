@@ -23,6 +23,12 @@ UX hardening (shell detection, idempotent prompt markers, streamed package
 progress, elapsed timing, semantic summaries, and backend-owned optional
 metrics) is complete. A full `wolf status` view remains a later milestone.
 
+### Status Phase 1
+
+The initial `wolf status` command is now available with latest-run selection,
+explicit run paths, semantic stage timing, optional backend metrics, and
+`--json`. Dashboards, comparison, filtering, and richer metrics remain later.
+
 ### 1. Characterize behavior before changing it
 
 Add tests around the behavior users and future backends depend on:

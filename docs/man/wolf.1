@@ -126,6 +126,16 @@ to restore the original prompt and remove WOLF shell state.
 .BI "wolf info " "[name]"
 Show one environment using resolved semantic fields. The name may be omitted
 when a WOLF environment is active; otherwise it is required.
+.TP
+.B wolf status
+Show execution state, stage timing, and available backend metrics for the
+active environment's latest run.
+.TP
+.BI "wolf status --run " "path"
+Show status for an explicit run directory or active-environment run ID.
+.TP
+.B wolf status --json
+Emit the same status model as `wolf.status/v1` JSON.
 .SH SHELL INTEGRATION AND COMPLETION
 Source
 .I shell/wolf.bash

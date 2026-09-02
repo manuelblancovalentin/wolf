@@ -98,6 +98,8 @@ def _value_candidates(path: tuple[str, ...], option: str) -> Iterable[str]:
         return _environment_names()
     if path == ("run",) and option == "--backend":
         return backend_names()
+    if path == ("status",) and option == "--environment":
+        return _environment_names()
     return ()
 
 

@@ -131,11 +131,14 @@ _wolf_run_backend_stages() {
         fi
         local stage_started stage_elapsed
         stage_started=$(date +%s%N)
+        if [[ -n "${WOLF_STAGE_TIMING_FILE:-}" ]]; then
+            printf '%s|running|0\n' "$stage" >> "$WOLF_STAGE_TIMING_FILE"
+        fi
         _wolf_backend_run_stage "$stage" "$@"
         status=$?
         stage_elapsed=$(( ($(date +%s%N) - stage_started) / 1000000000 ))
         if [[ -n "${WOLF_STAGE_TIMING_FILE:-}" ]]; then
-            printf '%s|%s|%s\n' "$stage" "$([[ $status -eq 0 ]] && echo complete || echo failed)" "$stage_elapsed" >> "$WOLF_STAGE_TIMING_FILE"
+            printf '%s|%s|%s|%s\n' "$stage" "$([[ $status -eq 0 ]] && echo complete || echo failed)" "$stage_elapsed" "$status" >> "$WOLF_STAGE_TIMING_FILE"
         fi
         if [[ $status -ne 0 ]]; then
             return "$status"

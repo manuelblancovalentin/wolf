@@ -68,6 +68,11 @@ declined reconfiguration, idempotent shell setup, local/Git discovery and
 sync, collisions, registry provenance, credential-safe SSH URLs, completion,
 and doctor diagnostics without network access.
 
+Status tests use fixture run directories and reports to verify latest-run
+selection, cwd independence, partial/failed/completed stages, elapsed timing,
+shared human/JSON rendering, optional ORFS metrics, and immutable resolved
+provenance without invoking EDA tools.
+
 - `test_characterization_*` protects intended legacy semantics.
 - `test_regression_*` protects a confirmed bug fix.
 

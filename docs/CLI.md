@@ -31,6 +31,11 @@ Declarative environments are imported with `wolf env create NAME --from FILE`.
 structured setter. `wolf info` labels profiles as `declarative-v1` or `legacy`
 and presents canonical semantic values rather than dumping raw YAML.
 
+`wolf info` describes environment configuration. `wolf status` describes run
+execution and results, selecting the active environment's `run.latest.d`
+without using cwd. Use `wolf status --run PATH` for an explicit run and
+`wolf status --json` for the same status model as machine-readable JSON.
+
 The Bash implementation continues to use `bin/defs` and `bin/utils`. It should
 remain visually compatible, but its rendering implementation does not need to
 be shared with Python.

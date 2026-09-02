@@ -24,6 +24,11 @@ metric extraction, while the generic runner records stage elapsed time and
 status in the run directory so a future `wolf status` can consume it without
 introducing a database in this milestone.
 
+The status view consumes that evidence through a shared `RunStatus` and
+`StageResult` model. `wolf.resolved.yaml` remains immutable configuration
+provenance; status is mutable execution/result state and may report pending,
+running, partial, completed, or failed stages.
+
 ## Architecture overview
 
 ```text
