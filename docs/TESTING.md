@@ -48,6 +48,12 @@ idempotency, corruption refusal, package views, CLI inspection, completion,
 ORFS fallback, and cwd independence without network access. The opt-in real
 package harness is `tests/integration/run_packages`; see `docs/PACKAGES.md`.
 
+Declarative environment tests use synthetic registries and installed-package
+records. They cover strict schema validation, partial profiles, package
+defaults, provenance, cloning and structured mutation, cwd-independent plans,
+generated ORFS config/SDC and manifests, and explicit container mounts without
+running EDA tools.
+
 Test names distinguish intent:
 
 - `test_characterization_*` protects intended legacy semantics.

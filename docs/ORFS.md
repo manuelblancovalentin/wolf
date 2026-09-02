@@ -40,8 +40,10 @@ allocating a WOLF run.
 
 ## Backend inputs
 
-The initial backend uses environment variables while WOLF's declarative
-environment model is still being introduced.
+Legacy compatibility mode uses environment variables. Declarative native mode
+uses `wolf.environment/v1` package references and canonical constraints; WOLF
+then generates ORFS-native config and SDC inputs. Existing variable inputs
+remain supported.
 
 | Variable | Required | Meaning |
 | --- | --- | --- |
@@ -79,17 +81,19 @@ own `/OpenROAD-flow-scripts/flow`. A relative `DESIGN_CONFIG` or `SDC_FILE` can
 therefore accidentally select collateral from the image instead of host-edited
 files.
 
-WOLF validates that `ORFS_DESIGN_CONFIG` and an optional `ORFS_SDC_FILE` are
-inside `ORFS_ROOT`, then passes them to Make as container-visible absolute paths
-under `/work`. For example:
+WOLF passes checkout-owned files as container-visible absolute paths under
+`/work`. In declarative native mode, package RTL and generated config/SDC use
+explicit read-only mounts under `/wolf`; ORFS output uses a writable
+`WORK_HOME` at the resolved WOLF run directory. No file is selected from caller
+cwd or accidentally from image-internal collateral. For example:
 
 ```text
 DESIGN_CONFIG=/work/designs/asap7/ibex/config.mk
 SDC_FILE=/work/designs/asap7/ibex/constraint.sdc
 ```
 
-Files outside the checkout are rejected because they are not guaranteed to be
-visible in the container.
+An explicit `backend.orfs.design_config` outside the checkout is accepted only
+because native preparation supplies a corresponding read-only container mount.
 
 ## Stages
 

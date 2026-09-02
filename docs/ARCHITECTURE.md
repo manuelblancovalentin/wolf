@@ -86,7 +86,9 @@ The resolver loads an environment definition and its referenced manifests, appli
 
 Backend identity is mandatory in the resolved context. A flow may advertise a default or a set of compatible backends, but it cannot leave the executed backend ambiguous.
 
-The exact manifest schema remains intentionally unsettled. Schema design should follow real Cadence and ORFS needs rather than precede them.
+The first implemented environment schema is `wolf.environment/v1`. It is a
+deliberately small, versioned starting point; later schema growth must follow
+real Cadence and ORFS needs rather than precede them.
 
 ### Run manager and state store
 
@@ -204,6 +206,13 @@ assets resolve from registered absolute roots. Backends derive generated and
 output paths from the resolved context, never from `$PWD`.
 
 The long-term source of truth is a declarative environment manifest. The current bucket mechanism remains a compatibility input during migration, but executable shell fragments should not remain the primary structured representation.
+
+Declarative Phase 1 resolves package semantic defaults, environment values,
+and explicit CLI overrides into the transitional `ResolvedContext`. Package
+revisions and the explicit backend survive resolution. Native ORFS preparation
+generates backend-owned Make/SDC inputs and a human-readable resolved planning
+manifest; backend-native overrides remain a separate escape hatch. Legacy
+`vars.env` profiles continue through an adapter without destructive conversion.
 
 Institutional setup scripts may be referenced as native backend/executor inputs. They are not substitutes for recording the resolved WOLF environment.
 

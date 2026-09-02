@@ -25,6 +25,12 @@ Package commands use `wolf package info KIND/NAME` for the same terminology as
 environment and backend inspection. `wolf package list` shows installed
 versions, while `wolf install KIND/NAME` resolves a pinned built-in manifest.
 
+Declarative environments are imported with `wolf env create NAME --from FILE`.
+`wolf env clone SOURCE DEST` creates an independent declarative profile, and
+`wolf env set NAME constraints.clocks.0.period_ps 1100` demonstrates the narrow
+structured setter. `wolf info` labels profiles as `declarative-v1` or `legacy`
+and presents canonical semantic values rather than dumping raw YAML.
+
 The Bash implementation continues to use `bin/defs` and `bin/utils`. It should
 remain visually compatible, but its rendering implementation does not need to
 be shared with Python.

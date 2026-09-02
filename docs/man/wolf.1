@@ -30,6 +30,13 @@ error.
 .BI "wolf env create " name
 Create a legacy-compatible environment and its current metadata files.
 .TP
+.BI "wolf env create " "name --from file"
+Validate and import a versioned declarative environment. Relative stored paths
+resolve from the input file's directory.
+.TP
+.BI "wolf env clone " "source destination"
+Clone a declarative-v1 profile without duplicating installed packages.
+.TP
 .BI "wolf env remove " name
 Remove an environment after interactive confirmation.
 .TP
@@ -37,7 +44,9 @@ Remove an environment after interactive confirmation.
 Remove an environment without prompting.
 .TP
 .BI "wolf env set " "name key value"
-Persist an environment variable using the current legacy environment format.
+Persist a legacy variable, or update an existing structured path such as
+.B constraints.clocks.0.period_ps
+in a declarative profile.
 .SH PROCESS COMMANDS
 .TP
 .B wolf process list
@@ -73,7 +82,7 @@ executing tools. The displayed workspace and run paths are independent of the
 caller's current directory.
 .TP
 .BI "wolf run --environment " name
-Resolve a named legacy-compatible environment and invoke the existing runner.
+Resolve a named legacy or declarative environment and invoke the existing runner.
 Stored relative paths resolve from the environment directory. An explicit
 .B --workspace
 path is relative to the invocation directory unless absolute.
@@ -122,6 +131,10 @@ Default legacy process definition collection.
 .TP
 .I ~/.wolf/packages
 Default versioned local package store.
+.TP
+.I ~/.wolf/generated/environments
+Deterministic generated backend configuration and resolved planning manifests
+for declarative environments.
 .SH SEE ALSO
 Project architecture, backend, and testing documentation is maintained under
 the repository's

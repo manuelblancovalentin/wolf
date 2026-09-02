@@ -123,7 +123,13 @@ directories resolve the same experiment and output paths.
 
 ### 7. Introduce declarative environment and component manifests
 
-Gradually replace bucket files as the primary source of truth with declarative environment definitions referencing design, PDK, libraries, technology options, flow, backend, constraints, and variables.
+Phase 1 implements the versioned `wolf.environment/v1` profile with package
+references for design, technology, and flow; canonical workspace, clock, and
+thread values; explicit backend overrides; partial-profile validation; cloning;
+and legacy compatibility. Native ORFS planning translates the resolved context
+into generated config/SDC inputs and records package provenance.
+
+Continue gradually replacing bucket files as the primary source of truth with declarative environment definitions referencing design, PDK, libraries, technology options, flow, backend, constraints, and variables.
 
 Build stable Python data classes for categories and load concrete instances from manifests. Do not create a subclass per design, PDK, library, or flow. Continue accepting institutional shell setup as an explicit native backend/executor input during migration.
 
@@ -138,7 +144,10 @@ wolf activate
 wolf deactivate
 ```
 
-The manifest schema should stabilize through real migrations rather than be finalized in advance.
+The v1 schema should grow only through real migrations rather than being
+expanded speculatively. Next work must place the final resolved manifest into
+the exact numbered run and validate the package-only golden execution before
+expanding component kinds or inheritance.
 
 ### 8. Add package and registry behavior after abstraction stability
 

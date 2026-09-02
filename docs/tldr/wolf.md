@@ -17,9 +17,19 @@
 
 `wolf info {{environment}}`
 
+- Import and clone a declarative environment:
+
+`wolf env create {{environment}} --from {{wolf.yaml}}`
+
+`wolf env clone {{environment}} {{new_environment}}`
+
 - Persist a variable in an environment:
 
 `wolf env set {{environment}} {{KEY}} {{value}}`
+
+- Change a canonical clock period in a declarative environment:
+
+`wolf env set {{environment}} constraints.clocks.0.period_ps {{1100}}`
 
 - Remove an environment without prompting:
 

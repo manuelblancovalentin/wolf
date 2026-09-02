@@ -83,3 +83,10 @@ solving, publishing, remote index, signing, or proprietary-asset distribution.
 Completion currently suggests built-in identifiers for `wolf install` and
 `wolf package info`; later package kinds and registry capabilities will extend
 the same protocol.
+
+Package semantic metadata feeds `wolf.environment/v1` resolution. It provides
+component defaults rather than complete experiments: `rtl/ibex` provides
+design/top and canonical source patterns, `pdk/asap7` provides the technology
+identity, and `flow/orfs` provides flow/backend identity and its flow root.
+Environment values override these defaults, and resolved contexts retain the
+pinned revisions. See `docs/ENVIRONMENTS.md`.
