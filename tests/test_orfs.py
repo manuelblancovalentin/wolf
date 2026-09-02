@@ -27,7 +27,8 @@ class OrfsPythonBackendTests(unittest.TestCase):
         self.assertEqual(backend.stages(), ORFS_STAGES)
 
     def test_missing_orfs_root_is_reported_clearly(self):
-        checks = {item.name: item for item in get_backend("orfs").validate({})}
+        with mock.patch.dict(os.environ, {"ORFS_ROOT": ""}, clear=False):
+            checks = {item.name: item for item in get_backend("orfs").validate({})}
         self.assertFalse(checks["ORFS_ROOT"].available)
         self.assertEqual(checks["ORFS_ROOT"].detail, "not configured")
 

@@ -29,6 +29,9 @@ class TemporaryWolfHome(unittest.TestCase):
 
     def shell(self, script, *, extra_env=None):
         env = os.environ.copy()
+        # Tests own every WOLF state location; caller exports must not leak in.
+        for name in ("WOLF_HOME", "WOLF_ENV_DIR", "WOLF_ENV_NAME"):
+            env.pop(name, None)
         env["HOME"] = str(self.home)
         if extra_env:
             env.update(extra_env)
@@ -145,6 +148,8 @@ sys.exit(exit_code)
         )
 
         self.base_env = os.environ.copy()
+        for name in ("WOLF_HOME", "WOLF_ENV_DIR", "WOLF_ENV_NAME"):
+            self.base_env.pop(name, None)
         self.base_env.update(
             {
                 "HOME": str(self.home),
