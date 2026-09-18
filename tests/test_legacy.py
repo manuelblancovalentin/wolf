@@ -262,6 +262,30 @@ sys.exit(exit_code)
         self.assertTrue((root / "chip.3").is_dir())
         self.assertEqual((root / "chip.latest").resolve(), root / "chip.3")
 
+    def test_regression_environment_latest_link_replaces_previous_run_safely(self):
+        self.assert_success(self.run_wolf("-flow", "main.synth"))
+        self.assert_success(self.run_wolf("--clean", "-flow", "main.synth"))
+        root = self.process_root()
+        previous = root / "chip.2"
+        before = sorted(
+            path.relative_to(previous).as_posix()
+            for path in previous.rglob("*")
+            if not path.is_symlink()
+        )
+
+        self.assert_success(self.run_wolf("--clean", "-flow", "main.synth"))
+
+        latest = self.wolf_env_dir / "run.latest.d"
+        self.assertTrue(latest.is_symlink())
+        self.assertEqual(latest.resolve(), (root / "chip.3").resolve())
+        self.assertFalse((previous / "chip.3").exists())
+        after = sorted(
+            path.relative_to(previous).as_posix()
+            for path in previous.rglob("*")
+            if not path.is_symlink()
+        )
+        self.assertEqual(before, after)
+
     def test_characterization_default_run_continues_latest_existing_run(self):
         self.assert_success(self.run_wolf("-flow", "main.synth"))
         self.assert_success(self.run_wolf("--clean", "-flow", "main.synth"))

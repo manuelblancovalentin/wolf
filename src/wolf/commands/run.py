@@ -131,9 +131,19 @@ def command_run(args: argparse.Namespace) -> int:
     started = time.monotonic()
     result = run_legacy(runner_args, environment)
     elapsed = time.monotonic() - started
-    metrics = get_backend(context.backend).extract_metrics(context.run_directory)
-    _final_summary(context, result, elapsed, metrics)
+    run_directory = _allocated_run_directory(context)
+    metrics = get_backend(context.backend).extract_metrics(run_directory)
+    _final_summary(context, result, elapsed, metrics, run_directory=run_directory)
     return result
+
+
+def _allocated_run_directory(context: ResolvedContext) -> Path:
+    """Find the exact run allocated by the legacy runner, if it linked one."""
+    if context.environment_directory:
+        latest = context.environment_directory / "run.latest.d"
+        if latest.is_symlink():
+            return latest.resolve()
+    return context.run_directory
 
 
 def _format_elapsed(seconds: float) -> str:
@@ -144,13 +154,21 @@ def _format_elapsed(seconds: float) -> str:
         f"{minutes}m {seconds:02d}s" if minutes else f"{seconds}s")
 
 
-def _final_summary(context: ResolvedContext, status: int, elapsed: float, metrics=None) -> None:
+def _final_summary(
+    context: ResolvedContext,
+    status: int,
+    elapsed: float,
+    metrics=None,
+    *,
+    run_directory: Path | None = None,
+) -> None:
+    run_directory = run_directory or context.run_directory
     ui.key_value("Run completed" if status == 0 else "Run failed", "")
-    ui.key_value("Run", context.run_directory)
+    ui.key_value("Run", run_directory)
     ui.key_value("Backend", context.backend)
     ui.key_value("Status", "success" if status == 0 else f"failed (exit {status})")
     ui.key_value("Elapsed", _format_elapsed(elapsed))
-    timing = context.run_directory / "wolf.stage-results"
+    timing = run_directory / "wolf.stage-results"
     if timing.is_file():
         ui.key_value("Stages", "")
         for line in timing.read_text(encoding="utf-8").splitlines():

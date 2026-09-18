@@ -185,6 +185,7 @@ backend:
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         run = self.root / "work" / "ibex" / "ibex.asap7" / "frozen"
+        self.assertIn(f"Run: {run}", result.stdout)
         manifest = run / RUN_MANIFEST_FILENAME
         self.assertTrue(manifest.is_file())
         frozen = yaml.safe_load(manifest.read_text(encoding="utf-8"))

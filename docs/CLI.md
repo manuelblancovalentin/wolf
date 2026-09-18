@@ -65,6 +65,10 @@ cannot silently select a different Python that lacks WOLF. Intentional direct
 invocation of `bin/wolf.run` retains a compatibility fallback to `python3` from
 PATH; installed-CLI use is recommended when provenance freezing is required.
 
+The runner replaces `run.latest.d` as a symlink itself, without dereferencing
+the previous run directory. Existing numbered runs are never modified when the
+latest association advances.
+
 Use `shell/wolf.bash` for Bash and `shell/wolf.zsh` for zsh. The zsh integration
 uses a `precmd` hook so theme-managed prompts retain the active-environment
 marker.
