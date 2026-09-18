@@ -93,6 +93,11 @@ DESIGN_CONFIG=/work/designs/asap7/ibex/config.mk
 SDC_FILE=/work/designs/asap7/ibex/constraint.sdc
 ```
 
+Canonical WOLF clock constraints are expressed in picoseconds. At the ORFS
+SDC boundary WOLF converts them to the nanoseconds expected by OpenSTA (for
+example, `1050 ps` becomes `1.05`). The resolved environment and provenance
+continue to retain the original picosecond value.
+
 An explicit `backend.orfs.design_config` outside the checkout is accepted only
 because native preparation supplies a corresponding read-only container mount.
 

@@ -94,7 +94,7 @@ constraints:
         config = Path(output["ORFS_DESIGN_CONFIG"]).read_text(encoding="utf-8")
         self.assertIn("aes_cipher_top", config)
         self.assertNotRegex(config, r"ibex|core_clock|clk_i")
-        self.assertIn("set clk_period 380", Path(output["ORFS_SDC_FILE"]).read_text(encoding="utf-8"))
+        self.assertIn("set clk_period 0.38", Path(output["ORFS_SDC_FILE"]).read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

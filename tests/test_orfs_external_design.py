@@ -1,4 +1,5 @@
 from pathlib import Path
+from dataclasses import replace
 import tempfile
 import unittest
 
@@ -83,7 +84,7 @@ class ExternalOrfsDesignTests(unittest.TestCase):
         self.assertIn("/wolf/generated", first["WOLF_CONTAINER_MOUNTS"])
         self.assertEqual(first["ORFS_CONTAINER_WORKDIR"], "/work")
         self.assertEqual(first["ORFS_CONTAINER_FLOW_HOME"], "/work")
-        self.assertIn("set clk_period 1050", Path(first["ORFS_SDC_FILE"]).read_text(encoding="utf-8"))
+        self.assertIn("set clk_period 1.05", Path(first["ORFS_SDC_FILE"]).read_text(encoding="utf-8"))
         manifest = Path(first["WOLF_RESOLVED_MANIFEST"]).read_text(encoding="utf-8")
         self.assertIn("base_config:", manifest)
         self.assertIn("base_config_source: generated", manifest)
@@ -109,6 +110,35 @@ class ExternalOrfsDesignTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(ValueError, "explicit ORFS design_config does not exist"):
             prepare_native_orfs(context, self.orfs)
+
+    def test_sdc_boundary_converts_picoseconds_to_nanoseconds(self):
+        context = replace(
+            self.context,
+            clocks=(ClockConstraint("user_clock", "user_clk", 10000),),
+        )
+        output = prepare_native_orfs(context, self.orfs)
+        sdc = Path(output["ORFS_SDC_FILE"]).read_text(encoding="utf-8")
+        self.assertIn("set clk_period 10\n", sdc)
+        self.assertNotIn("set clk_period 10000", sdc)
+
+    def test_sdc_boundary_converts_period_when_patching_base_sdc(self):
+        native = self.orfs / "designs" / "asap7" / "fabulous-minimal"
+        native.mkdir()
+        (native / "config.mk").write_text("export PLATFORM = asap7\n", encoding="utf-8")
+        (native / "constraint.sdc").write_text(
+            "set clk_name old\n"
+            "set clk_port_name old_clk\n"
+            "set clk_period 1000\n",
+            encoding="utf-8",
+        )
+        context = replace(
+            self.context,
+            clocks=(ClockConstraint("core_clock", "clk", 380),),
+        )
+        output = prepare_native_orfs(context, self.orfs)
+        sdc = Path(output["ORFS_SDC_FILE"]).read_text(encoding="utf-8")
+        self.assertIn("set clk_period 0.38\n", sdc)
+        self.assertNotIn("set clk_period 380", sdc)
 
 
 if __name__ == "__main__":

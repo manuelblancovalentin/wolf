@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from decimal import Decimal
 from pathlib import Path
 import re
 from typing import Any, Mapping
@@ -35,6 +36,15 @@ def _make_path(value: str) -> str:
     return value.replace("\\", "\\\\").replace(" ", "\\ ")
 
 
+def _sdc_period_ns(period_ps: Any) -> str:
+    """Convert canonical picoseconds to compact deterministic SDC nanoseconds."""
+    value = Decimal(str(period_ps)) / Decimal("1000")
+    formatted = format(value.normalize(), "f")
+    if "." in formatted:
+        formatted = formatted.rstrip("0").rstrip(".")
+    return formatted or "0"
+
+
 def _mount(host: Path, container: str) -> str:
     host_value = str(host.resolve())
     if "|" in host_value or "\n" in host_value:
@@ -51,7 +61,7 @@ def _write_sdc(source: Path | None, destination: Path, context: ResolvedContext)
         substitutions = (
             (r"(?m)^set\s+clk_name\s+.*$", f"set clk_name {clock.name}"),
             (r"(?m)^set\s+clk_port_name\s+.*$", f"set clk_port_name {clock.port}"),
-            (r"(?m)^set\s+clk_period\s+.*$", f"set clk_period {clock.period_ps:g}"),
+            (r"(?m)^set\s+clk_period\s+.*$", f"set clk_period {_sdc_period_ns(clock.period_ps)}"),
         )
         for pattern, replacement in substitutions:
             text, count = re.subn(pattern, replacement, text, count=1)
@@ -61,7 +71,7 @@ def _write_sdc(source: Path | None, destination: Path, context: ResolvedContext)
         text = (
             f"set clk_name {clock.name}\n"
             f"set clk_port_name {clock.port}\n"
-            f"set clk_period {clock.period_ps:g}\n"
+            f"set clk_period {_sdc_period_ns(clock.period_ps)}\n"
             "create_clock -name $clk_name -period $clk_period [get_ports $clk_port_name]\n"
         )
     destination.write_text(text, encoding="utf-8")

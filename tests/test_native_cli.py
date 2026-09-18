@@ -156,7 +156,7 @@ backend:
             "docker.io/openroad/orfs@sha256:e0d7be52a9cc12c81410744286713596a64bf1286128466f83819252449824",
         )
         generated = manifest.parent
-        self.assertIn("set clk_period 1050", (generated / "constraints.sdc").read_text())
+        self.assertIn("set clk_period 1.05", (generated / "constraints.sdc").read_text())
         config = (generated / "config.mk").read_text()
         self.assertIn("override DESIGN_NAME := ibex_core", config)
         self.assertIn("/wolf/design/rtl/ibex_core.sv", config)
