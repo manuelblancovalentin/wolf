@@ -85,3 +85,15 @@ _wolf_zsh_prompt
 if (( $+functions[compdef] )); then
     compdef _wolf_complete wolf
 fi
+
+# Announce presence in the dots welcome table, if dots is loaded. This is
+# presentation-only: dots does not discover or manage WOLF.
+if (( $+functions[dots_register_tool] )); then
+    local -a _wolf_info=()
+    man -w wolf >/dev/null 2>&1 && _wolf_info+=('man wolf')
+    _wolf_info+=('tldr wolf')
+    dots_register_tool wolf '🐺' \
+        'Reproducible environment/execution manager for ASIC implementation flows.' \
+        "${_wolf_info[@]}"
+    unset _wolf_info
+fi
