@@ -38,7 +38,7 @@ _wolf_container_execute() {
 
     local -a user_args environment_args volume_args
     environment_args=(
-        -e "FLOW_HOME=${WOLF_CONTAINER_FLOW_HOME:-/OpenROAD-flow-scripts/flow}"
+        -e "FLOW_HOME=${WOLF_CONTAINER_FLOW_HOME:-/work}"
         -e "WORK_HOME=${WOLF_CONTAINER_WORK_HOME:-${WOLF_CONTAINER_CONTAINER_ROOT:-/work}}"
     )
     if [[ "${WOLF_CONTAINER_HEADLESS:-0}" == "1" ]]; then

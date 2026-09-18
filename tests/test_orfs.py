@@ -474,7 +474,8 @@ exit 0
         calls = self.call_log.read_text(encoding="utf-8").splitlines()
         self.assertIn("run", calls)
         self.assertIn(f"{self.flow_root}:/work:Z", calls)
-        self.assertIn("/OpenROAD-flow-scripts/flow", calls)
+        self.assertIn("/work", calls)
+        self.assertIn("FLOW_HOME=/work", calls)
         self.assertIn("example/orfs@sha256:test", calls)
         self.assertIn("DESIGN_CONFIG=/work/designs/asap7/ibex/config.mk", calls)
 

@@ -84,12 +84,12 @@ if [[ "$ORFS_CONTAINER_RUNTIME" == podman ]]; then
 fi
 "$ORFS_CONTAINER_RUNTIME" run --rm -i \
     "${ORFS_METADATA_USER_ARGS[@]}" \
-    -e FLOW_HOME=/OpenROAD-flow-scripts/flow \
+    -e FLOW_HOME=/work \
     -e WORK_HOME=/work \
     -e DISPLAY= \
     -e QT_QPA_PLATFORM=offscreen \
     -v "${ORFS_ROOT}:/work:Z" \
-    -w "${ORFS_CONTAINER_WORKDIR:-/OpenROAD-flow-scripts/flow}" \
+    -w "${ORFS_CONTAINER_WORKDIR:-/work}" \
     "$ORFS_CONTAINER_IMAGE" "${ORFS_METADATA_ARGS[@]}"
 
 python3 "${WOLF_ROOT}/tests/integration/check_orfs_ibex.py" "$ORFS_REPORTS_DIR"

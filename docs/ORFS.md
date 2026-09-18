@@ -53,8 +53,8 @@ remain supported.
 | `ORFS_SDC_FILE` | no | Explicit host-owned SDC override, absolute or relative to `ORFS_ROOT`. |
 | `ORFS_MAKE_VARS` | no | Newline-separated `NAME=VALUE` Make overrides. |
 | `ORFS_CONTAINER_RUNTIME` | no | `docker` or `podman`. WOLF chooses usable Podman, then usable Docker, when unset. |
-| `ORFS_CONTAINER_IMAGE` | no | Image used by either runtime; defaults to `docker.io/openroad/orfs:latest`. Pin a digest for reproducibility. |
-| `ORFS_CONTAINER_WORKDIR` | no | Defaults to `/OpenROAD-flow-scripts/flow`. |
+| `ORFS_CONTAINER_IMAGE` | no | Image used by either runtime; defaults to `docker.io/openroad/orfs:latest` with a reproducibility warning. Pin a digest for immutable provenance. |
+| `ORFS_CONTAINER_WORKDIR` | no | Defaults to `/work`, the mounted pinned ORFS checkout. An explicit value is retained for legacy compatibility. |
 
 WOLF runs both container runtimes directly, mounts `ORFS_ROOT` at `/work` with
 the Fedora-compatible `:Z` label, and passes ORFS's supported headless Qt
@@ -76,10 +76,11 @@ the ORFS adapter rather than being interpreted by a shell.
 
 ## Host and container paths
 
-ORFS's Docker helper mounts the host checkout at `/work` but runs in the image's
-own `/OpenROAD-flow-scripts/flow`. A relative `DESIGN_CONFIG` or `SDC_FILE` can
-therefore accidentally select collateral from the image instead of host-edited
-files.
+ORFS's Docker helper historically runs from the image's own
+`/OpenROAD-flow-scripts/flow`. WOLF instead executes the mounted host checkout
+at `/work` by default and sets both the container working directory and
+`FLOW_HOME` to `/work`. A relative `DESIGN_CONFIG` or `SDC_FILE` can otherwise
+accidentally select collateral from the image instead of host-edited files.
 
 WOLF passes checkout-owned files as container-visible absolute paths under
 `/work`. In declarative native mode, package RTL and generated config/SDC use
@@ -94,6 +95,12 @@ SDC_FILE=/work/designs/asap7/ibex/constraint.sdc
 
 An explicit `backend.orfs.design_config` outside the checkout is accepted only
 because native preparation supplies a corresponding read-only container mount.
+
+The generated resolved manifest records the host flow root, container flow root,
+working directory, `FLOW_HOME`, runtime, and image identity. Digest-pinned image
+references (`name@sha256:...`) are marked immutable in that snapshot; floating
+tags remain supported for compatibility but are reported as non-reproducible by
+backend validation.
 
 Native design collateral is optional for declarative external RTL packages. If
 `designs/<platform>/<design>/config.mk` is absent, WOLF generates a deterministic

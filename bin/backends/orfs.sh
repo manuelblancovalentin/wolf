@@ -251,8 +251,11 @@ _wolf_backend_prepare() {
     WOLF_CONTAINER_IMAGE="$ORFS_CONTAINER_IMAGE"
     WOLF_CONTAINER_HOST_ROOT="$ORFS_ROOT"
     WOLF_CONTAINER_CONTAINER_ROOT="/work"
-    WOLF_CONTAINER_WORKDIR="${ORFS_CONTAINER_WORKDIR:-/OpenROAD-flow-scripts/flow}"
-    WOLF_CONTAINER_FLOW_HOME="/OpenROAD-flow-scripts/flow"
+    # Execute the mounted checkout, not the image's copy of the flow.  An
+    # explicit legacy override remains available for compatibility, but the
+    # default must agree with the pinned host ORFS package mounted at /work.
+    WOLF_CONTAINER_WORKDIR="${ORFS_CONTAINER_WORKDIR:-/work}"
+    WOLF_CONTAINER_FLOW_HOME="${ORFS_CONTAINER_FLOW_HOME:-$WOLF_CONTAINER_WORKDIR}"
     WOLF_CONTAINER_HEADLESS=1
 
     WOLF_BACKEND_COMMAND_ARGS=(make "${WOLF_ORFS_MAKE_ARGS[@]}")

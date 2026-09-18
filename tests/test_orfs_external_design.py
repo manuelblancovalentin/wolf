@@ -52,8 +52,18 @@ class ExternalOrfsDesignTests(unittest.TestCase):
         self.temporary.cleanup()
 
     def test_external_design_gets_deterministic_platform_base_config(self):
-        first = prepare_native_orfs(self.context, self.orfs)
-        second = prepare_native_orfs(self.context, self.orfs)
+        first = prepare_native_orfs(
+            self.context,
+            self.orfs,
+            runtime="podman",
+            container_image="registry.example/orfs@sha256:fixed",
+        )
+        second = prepare_native_orfs(
+            self.context,
+            self.orfs,
+            runtime="podman",
+            container_image="registry.example/orfs@sha256:fixed",
+        )
         config = Path(first["ORFS_DESIGN_CONFIG"])
         base = config.with_name("base-config.mk")
 
@@ -71,10 +81,14 @@ class ExternalOrfsDesignTests(unittest.TestCase):
         self.assertIn("override NUM_CORES := 8", text)
         self.assertIn("/wolf/design", first["WOLF_CONTAINER_MOUNTS"])
         self.assertIn("/wolf/generated", first["WOLF_CONTAINER_MOUNTS"])
+        self.assertEqual(first["ORFS_CONTAINER_WORKDIR"], "/work")
+        self.assertEqual(first["ORFS_CONTAINER_FLOW_HOME"], "/work")
         self.assertIn("set clk_period 1050", Path(first["ORFS_SDC_FILE"]).read_text(encoding="utf-8"))
         manifest = Path(first["WOLF_RESOLVED_MANIFEST"]).read_text(encoding="utf-8")
         self.assertIn("base_config:", manifest)
         self.assertIn("base_config_source: generated", manifest)
+        self.assertIn("runtime: podman", manifest)
+        self.assertIn("container_image: registry.example/orfs@sha256:fixed", manifest)
 
     def test_explicit_design_config_takes_precedence(self):
         native = self.root / "project" / "config.mk"

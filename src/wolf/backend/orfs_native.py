@@ -73,6 +73,9 @@ def _resolved_manifest(
     *,
     base_config: Path,
     base_config_source: str,
+    orfs_root: Path,
+    container_workdir: str,
+    flow_home: str,
     runtime: str | None = None,
     container_image: str | None = None,
 ) -> Mapping[str, Any]:
@@ -94,6 +97,11 @@ def _resolved_manifest(
         "backend": {"name": context.backend, "overrides": context.backend_overrides.get(context.backend, {})},
         "execution": {
             "executor": "container",
+            "host_flow_root": str(orfs_root),
+            "container_flow_root": "/work",
+            "container_workdir": container_workdir,
+            "flow_home": flow_home,
+            "container_image_pinned": bool(container_image and "@sha256:" in container_image),
             **({"runtime": runtime} if runtime else {}),
             **({"container_image": container_image} if container_image else {}),
         },
@@ -193,6 +201,13 @@ def prepare_native_orfs(
         "technology": context.process,
         "clocks": [(clock.name, clock.port, clock.period_ps) for clock in context.clocks],
         "threads": context.threads,
+        "runtime": runtime,
+        "container_image": container_image,
+        "container_workdir": context.values.get("ORFS_CONTAINER_WORKDIR", "/work"),
+        "flow_home": context.values.get(
+            "ORFS_CONTAINER_FLOW_HOME",
+            context.values.get("ORFS_CONTAINER_WORKDIR", "/work"),
+        ),
         "overrides": overrides,
     }, sort_keys=True, separators=(",", ":"))
     digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:12]
@@ -209,6 +224,8 @@ def prepare_native_orfs(
     config = generated / "config.mk"
     sdc = generated / "constraints.sdc"
     manifest = generated / "resolved.yaml"
+    container_workdir = context.values.get("ORFS_CONTAINER_WORKDIR", "/work")
+    flow_home = context.values.get("ORFS_CONTAINER_FLOW_HOME", container_workdir)
 
     _write_sdc(base_sdc if base_sdc and base_sdc.is_file() else None, sdc, context)
     source_values = [
@@ -247,6 +264,9 @@ def prepare_native_orfs(
                 generated,
                 base_config=base_config,
                 base_config_source=base_config_source,
+                orfs_root=orfs_root,
+                container_workdir=container_workdir,
+                flow_home=flow_home,
                 runtime=runtime,
                 container_image=container_image,
             ),
@@ -276,6 +296,13 @@ def prepare_native_orfs(
         "WOLF_RESOLVED_MANIFEST": str(manifest),
         "WOLF_WORKSPACE_DIR": str(context.workspace_root),
         "ORFS_NATIVE_WORKSPACE": "1",
+        # The pinned host checkout is mounted at /work by the container
+        # executor. Keep Make's working directory and FLOW_HOME aligned with
+        # that checkout rather than image-internal collateral.
+        "ORFS_CONTAINER_WORKDIR": context.values.get("ORFS_CONTAINER_WORKDIR", "/work"),
+        "ORFS_CONTAINER_FLOW_HOME": context.values.get(
+            "ORFS_CONTAINER_FLOW_HOME", context.values.get("ORFS_CONTAINER_WORKDIR", "/work")
+        ),
     }
     if overrides.get("container_runtime"):
         result["ORFS_CONTAINER_RUNTIME"] = _make_value(overrides["container_runtime"])
