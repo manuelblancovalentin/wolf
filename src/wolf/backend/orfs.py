@@ -289,12 +289,19 @@ class OrfsBackend(Backend):
         root = Path(execution["ORFS_ROOT"]) if execution.get("ORFS_ROOT") else None
         if root is None:
             raise ValueError("ORFS_ROOT is not configured and flow/orfs is not installed")
+        overrides = context.backend_overrides.get("orfs", {})
+        if not isinstance(overrides, Mapping):
+            raise ValueError("backend.orfs must be a mapping")
+        effective_runtime = overrides.get("container_runtime") or metadata.runtime
+        effective_image = overrides.get("container_image") or metadata.container_image
+        if effective_image is not None and not isinstance(effective_image, str):
+            raise ValueError("backend.orfs.container_image must be a string")
         execution.update(
             prepare_native_orfs(
                 context,
                 root,
-                runtime=metadata.runtime,
-                container_image=metadata.container_image or "docker.io/openroad/orfs:latest",
+                runtime=str(effective_runtime) if effective_runtime else None,
+                container_image=effective_image or "docker.io/openroad/orfs:latest",
             )
         )
         return execution

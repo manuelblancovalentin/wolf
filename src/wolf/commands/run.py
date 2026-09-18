@@ -95,6 +95,10 @@ def command_run(args: argparse.Namespace) -> int:
         ui.key_value("ORFS design config", backend_environment["ORFS_DESIGN_CONFIG"])
         ui.key_value("ORFS SDC", backend_environment["ORFS_SDC_FILE"])
         ui.key_value("ORFS flow variant", backend_environment["ORFS_FLOW_VARIANT"])
+    if backend_environment.get("ORFS_CONTAINER_RUNTIME"):
+        ui.key_value("Container runtime", backend_environment["ORFS_CONTAINER_RUNTIME"])
+    if backend_environment.get("ORFS_CONTAINER_IMAGE"):
+        ui.key_value("Container image", backend_environment["ORFS_CONTAINER_IMAGE"])
     if args.plan:
         return 0
     environment = os.environ.copy()

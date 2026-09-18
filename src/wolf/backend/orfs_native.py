@@ -299,13 +299,14 @@ def prepare_native_orfs(
         # The pinned host checkout is mounted at /work by the container
         # executor. Keep Make's working directory and FLOW_HOME aligned with
         # that checkout rather than image-internal collateral.
-        "ORFS_CONTAINER_WORKDIR": context.values.get("ORFS_CONTAINER_WORKDIR", "/work"),
+        "ORFS_CONTAINER_WORKDIR": container_workdir,
         "ORFS_CONTAINER_FLOW_HOME": context.values.get(
             "ORFS_CONTAINER_FLOW_HOME", context.values.get("ORFS_CONTAINER_WORKDIR", "/work")
         ),
     }
-    if overrides.get("container_runtime"):
-        result["ORFS_CONTAINER_RUNTIME"] = _make_value(overrides["container_runtime"])
-    if overrides.get("container_image"):
-        result["ORFS_CONTAINER_IMAGE"] = _make_value(overrides["container_image"])
+    if runtime:
+        result["ORFS_CONTAINER_RUNTIME"] = _make_value(runtime)
+    result["ORFS_CONTAINER_IMAGE"] = _make_value(
+        container_image or "docker.io/openroad/orfs:latest"
+    )
     return result

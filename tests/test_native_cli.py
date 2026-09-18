@@ -87,6 +87,7 @@ resources:
   threads: 8
 backend:
   orfs:
+    container_image: docker.io/openroad/orfs@sha256:e0d7be52a9cc12c81410744286713596a64bf1286128466f83819252449824
     make:
       SWAP_ARITH_OPERATORS: ""
       OPENROAD_HIERARCHICAL: 0
@@ -141,6 +142,7 @@ backend:
             "Design: ibex", "Top: ibex_core", "Technology: asap7", "Flow: orfs",
             "Backend: orfs", "Package rtl/ibex: rtl-rev",
             "Clock core_clock: clk_i @ 1050 ps", str(self.root / "work"),
+            "Container image: docker.io/openroad/orfs@sha256:e0d7be52a9cc12c81410744286713596a64bf1286128466f83819252449824",
         ):
             self.assertIn(expected, first.stdout)
         manifest_line = next(
@@ -149,6 +151,10 @@ backend:
         manifest = Path(manifest_line.split("Resolved manifest:", 1)[1].strip())
         resolved = yaml.safe_load(manifest.read_text(encoding="utf-8"))
         self.assertEqual(resolved["backend"]["name"], "orfs")
+        self.assertEqual(
+            resolved["execution"]["container_image"],
+            "docker.io/openroad/orfs@sha256:e0d7be52a9cc12c81410744286713596a64bf1286128466f83819252449824",
+        )
         generated = manifest.parent
         self.assertIn("set clk_period 1050", (generated / "constraints.sdc").read_text())
         config = (generated / "config.mk").read_text()
@@ -178,10 +184,18 @@ backend:
         self.assertEqual(frozen["execution"]["executor"], "container")
         self.assertEqual(frozen["execution"]["runtime"], "podman")
         self.assertEqual(
+            frozen["execution"]["container_image"],
+            "docker.io/openroad/orfs@sha256:e0d7be52a9cc12c81410744286713596a64bf1286128466f83819252449824",
+        )
+        self.assertEqual(
             frozen["generated"]["directory"], str(run / "backend" / "orfs")
         )
         self.assertTrue((run / "backend" / "orfs" / "config.mk").is_file())
         self.assertTrue((run / "backend" / "orfs" / "constraints.sdc").is_file())
+        self.assertIn(
+            "docker.io/openroad/orfs@sha256:e0d7be52a9cc12c81410744286713596a64bf1286128466f83819252449824",
+            self.runtime_log.read_text(encoding="utf-8"),
+        )
 
         original = manifest.read_bytes()
         changed = self.wolf(

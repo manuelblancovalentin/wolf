@@ -100,7 +100,10 @@ The generated resolved manifest records the host flow root, container flow root,
 working directory, `FLOW_HOME`, runtime, and image identity. Digest-pinned image
 references (`name@sha256:...`) are marked immutable in that snapshot; floating
 tags remain supported for compatibility but are reported as non-reproducible by
-backend validation.
+backend validation. A declarative `backend.orfs.container_image` override is
+resolved before planning, so the same effective image is shown in the plan,
+passed to the shell backend, frozen into the run manifest, and used by the
+container invocation.
 
 Native design collateral is optional for declarative external RTL packages. If
 `designs/<platform>/<design>/config.mk` is absent, WOLF generates a deterministic
