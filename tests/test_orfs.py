@@ -250,6 +250,12 @@ fi
         )
         self.stub_bin = self.root / "bin"
         self.stub_bin.mkdir()
+        self.python_fallback_log = self.root / "python3-fallback.log"
+        self._write_executable(
+            self.stub_bin / "python3",
+            f"#!/bin/sh\nprintf '%s\\n' called > \"$ORFS_PYTHON_FALLBACK_LOG\"\n"
+            f"PYTHONPATH={SOURCE_ROOT} exec {sys.executable} \"$@\"\n",
+        )
         self._write_executable(
             self.stub_bin / "docker",
             """#!/bin/sh
@@ -547,6 +553,44 @@ exit 0
         calls = self.call_log.read_text(encoding="utf-8").splitlines()
         targets = [value for value in calls if value in ORFS_STAGES]
         self.assertEqual(targets, ["synth", "floorplan"])
+
+    def test_direct_runner_retains_python3_provenance_fallback(self):
+        manifest = self.root / "resolved.yaml"
+        manifest.write_text(
+            "schema: wolf.resolved-run/v1\n"
+            "environment: direct\n"
+            "workspace:\n"
+            f"  root: {self.root / 'workspace'}\n"
+            "execution: {}\n",
+            encoding="utf-8",
+        )
+        environment_directory = self.root / "wolf-home" / "envs" / "direct"
+        result = self.shell(
+            """
+            mkdir -p "$WOLF_ENV_DIR"
+            unset WOLF_PYTHON_EXECUTABLE
+            bash "$WOLF_BIN/wolf.run" --backend orfs --design ibex --process asap7 \
+                --runtag direct-fallback --yes -from synth -to synth
+            """,
+            extra_env={
+                "WOLF_ENV_DIR": str(environment_directory),
+                "WOLF_RESOLVED_MANIFEST": str(manifest),
+                "WOLF_EXECUTOR": "container",
+                "WOLF_EXECUTOR_RUNTIME": "docker",
+                "WOLF_EXECUTOR_CONTAINER_IMAGE": "example/orfs@sha256:fixed",
+                "WOLF_WORKSPACE_DIR": str(self.root / "workspace"),
+                "ORFS_PYTHON_FALLBACK_LOG": str(self.python_fallback_log),
+            },
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertTrue(self.python_fallback_log.is_file())
+        self.assertTrue(
+            (
+                self.root / "workspace" / "ibex" / "ibex.asap7" / "direct-fallback"
+                / "wolf.resolved.yaml"
+            ).is_file(),
+            msg=f"stdout={result.stdout}\nstderr={result.stderr}",
+        )
 
     def test_generic_range_stops_after_orfs_failure(self):
         result = self.shell(

@@ -59,6 +59,12 @@ invocation only.
 Execution location does not define experiment location. The active/resolved
 WOLF environment does.
 
+The installed Python CLI passes its exact interpreter to the legacy runner for
+internal provenance operations, so an activated virtual environment or PATH
+cannot silently select a different Python that lacks WOLF. Intentional direct
+invocation of `bin/wolf.run` retains a compatibility fallback to `python3` from
+PATH; installed-CLI use is recommended when provenance freezing is required.
+
 Use `shell/wolf.bash` for Bash and `shell/wolf.zsh` for zsh. The zsh integration
 uses a `precmd` hook so theme-managed prompts retain the active-environment
 marker.

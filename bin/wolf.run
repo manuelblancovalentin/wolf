@@ -300,7 +300,10 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
         exit 1
     fi
     if [[ -n "${WOLF_RESOLVED_MANIFEST:-}" ]]; then
-        if ! python3 -m wolf.provenance freeze \
+        # Installed CLI invocations provide the exact interpreter that can
+        # import WOLF. Direct legacy callers retain a compatibility fallback.
+        WOLF_PYTHON_EXECUTABLE="${WOLF_PYTHON_EXECUTABLE:-python3}"
+        if ! "$WOLF_PYTHON_EXECUTABLE" -m wolf.provenance freeze \
             --source "$WOLF_RESOLVED_MANIFEST" \
             --run-directory "$RUNDIR"; then
             exit 1

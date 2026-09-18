@@ -29,6 +29,16 @@ class NativeEnvironmentCliTests(unittest.TestCase):
         self.stub_bin = self.root / "bin"
         self.stub_bin.mkdir()
         self.runtime_log = self.root / "runtime.log"
+        self.wrong_python_log = self.root / "wrong-python.log"
+        wrong_python = self.stub_bin / "python3"
+        wrong_python.write_text(
+            "#!/bin/sh\n"
+            "printf '%s\\n' called > \"$WOLF_TEST_WRONG_PYTHON_LOG\"\n"
+            "printf '%s\\n' 'wrong interpreter cannot import wolf' >&2\n"
+            "exit 127\n",
+            encoding="utf-8",
+        )
+        wrong_python.chmod(0o755)
         podman = self.stub_bin / "podman"
         podman.write_text("""#!/bin/sh
 printf '%s\n' "$@" >> "$WOLF_TEST_RUNTIME_LOG"
@@ -43,6 +53,7 @@ exit 0
         podman.chmod(0o755)
         self.env["PATH"] = str(self.stub_bin) + os.pathsep + self.env.get("PATH", "")
         self.env["WOLF_TEST_RUNTIME_LOG"] = str(self.runtime_log)
+        self.env["WOLF_TEST_WRONG_PYTHON_LOG"] = str(self.wrong_python_log)
         for key in ("WOLF_ACTIVE_ENV", "WOLF_ENV_NAME", "ORFS_ROOT"):
             self.env.pop(key, None)
         self._package("rtl", "ibex", "rtl-rev", {"design": {
@@ -196,6 +207,7 @@ backend:
             "docker.io/openroad/orfs@sha256:e0d7be52a9cc12c81410744286713596a64bf1286128466f83819252449824",
             self.runtime_log.read_text(encoding="utf-8"),
         )
+        self.assertFalse(self.wrong_python_log.exists())
 
         original = manifest.read_bytes()
         changed = self.wolf(

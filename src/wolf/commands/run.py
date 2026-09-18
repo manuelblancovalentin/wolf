@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import os
 from pathlib import Path
+import sys
 import time
 
 from wolf import ui
@@ -104,6 +105,9 @@ def command_run(args: argparse.Namespace) -> int:
     environment = os.environ.copy()
     environment.update(context.values)
     environment.update(backend_environment)
+    # Keep internal provenance operations on the interpreter that imported
+    # this CLI, regardless of the caller's PATH or activated environment.
+    environment["WOLF_PYTHON_EXECUTABLE"] = sys.executable
     environment["WOLF_HOME"] = str(context.state_root)
     if context.environment_directory:
         environment["WOLF_ENV_DIR"] = str(context.environment_directory)
