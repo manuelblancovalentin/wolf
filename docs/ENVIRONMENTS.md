@@ -72,16 +72,27 @@ directory for that invocation. Package roots come from installed records.
 
 For a complete package-backed ORFS profile, WOLF generates a deterministic
 `config.mk`, clock SDC, and `wolf.resolved-run/v1` planning manifest under
-`WOLF_HOME/generated/environments`. The adapter uses package RTL, ORFS
-design/platform collateral, canonical clock and thread values, and explicit
+`WOLF_HOME/generated/environments`. The adapter uses package RTL, canonical
+design/platform identity, canonical clock and thread values, and explicit
 `backend.orfs.make` overrides. Generated files and RTL are mounted read-only;
 ORFS `WORK_HOME` is mounted at the WOLF run directory so results do not modify
 the installed flow package.
 
+Native ORFS design collateral is used when
+`flow/designs/<platform>/<design>/config.mk` exists. For an external RTL
+package without that directory, WOLF instead creates a deterministic minimal
+base Makefile containing the resolved platform and layers the same canonical
+overrides on top. This lets arbitrary validated RTL packages use the
+declarative backend without adding their sources to the ORFS checkout. The
+generated base file and its source (`native`, `explicit`, or `generated`) are
+recorded in the resolved manifest.
+
 `backend.orfs.design_config` is an escape hatch for an existing native ORFS
-config. Legacy `ORFS_DESIGN_CONFIG`, `ORFS_SDC_FILE`, and other variable inputs
-remain supported. Backend-native Make knobs are not promoted into canonical
-WOLF fields.
+config and takes precedence over native or generated base configuration. If an
+explicit path is supplied but missing, preparation fails clearly. Legacy
+`ORFS_DESIGN_CONFIG`, `ORFS_SDC_FILE`, and other variable inputs remain
+supported. Backend-native Make knobs are not promoted into canonical WOLF
+fields.
 
 Planning uses a deterministic generated manifest without allocating a physical
 run. During real execution, the exact allocated run receives an immutable

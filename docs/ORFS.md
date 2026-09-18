@@ -95,6 +95,12 @@ SDC_FILE=/work/designs/asap7/ibex/constraint.sdc
 An explicit `backend.orfs.design_config` outside the checkout is accepted only
 because native preparation supplies a corresponding read-only container mount.
 
+Native design collateral is optional for declarative external RTL packages. If
+`designs/<platform>/<design>/config.mk` is absent, WOLF generates a deterministic
+minimal platform base configuration and layers the resolved design, source,
+include, clock, and backend overrides on top. An explicitly supplied
+`design_config` still takes precedence and must exist.
+
 ## Stages
 
 The initial public stage mapping is deliberately modest:

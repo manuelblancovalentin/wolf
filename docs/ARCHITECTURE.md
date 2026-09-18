@@ -232,8 +232,12 @@ Declarative Phase 1 resolves package semantic defaults, environment values,
 and explicit CLI overrides into the transitional `ResolvedContext`. Package
 revisions and the explicit backend survive resolution. Native ORFS preparation
 generates backend-owned Make/SDC inputs and a human-readable resolved planning
-manifest; backend-native overrides remain a separate escape hatch. Legacy
-`vars.env` profiles continue through an adapter without destructive conversion.
+manifest; backend-native overrides remain a separate escape hatch. ORFS can use
+stock `designs/<platform>/<design>/config.mk` collateral or generate a minimal
+platform base for an external RTL package when that collateral is absent. This
+is backend translation behavior, not a design-specific rule in generic WOLF
+core. Legacy `vars.env` profiles continue through an adapter without
+destructive conversion.
 
 Institutional setup scripts may be referenced as native backend/executor inputs. They are not substitutes for recording the resolved WOLF environment.
 
