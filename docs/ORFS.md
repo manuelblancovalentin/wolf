@@ -54,9 +54,10 @@ remain supported.
 | `ORFS_MAKE_VARS` | no | Newline-separated `NAME=VALUE` Make overrides. |
 | `ORFS_CONTAINER_RUNTIME` | no | `docker` or `podman`. WOLF chooses usable Podman, then usable Docker, when unset. |
 | `ORFS_CONTAINER_IMAGE` | no | Image used by either runtime; defaults to `docker.io/openroad/orfs:latest` with a reproducibility warning. Pin a digest for immutable provenance. |
-| `ORFS_CONTAINER_WORKDIR` | no | Defaults to `/work`, the mounted pinned ORFS checkout. An explicit value is retained for legacy compatibility. |
+| `ORFS_CONTAINER_WORKDIR` | no | Defaults to `/OpenROAD-flow-scripts/flow`, the image's canonical flow path overlaid with the pinned checkout. An explicit value is retained for legacy compatibility. |
 
-WOLF runs both container runtimes directly, mounts `ORFS_ROOT` at `/work` with
+WOLF runs both container runtimes directly, mounts `ORFS_ROOT` at
+`/OpenROAD-flow-scripts/flow` with
 the Fedora-compatible `:Z` label, and passes ORFS's supported headless Qt
 settings (`DISPLAY=` and `QT_QPA_PLATFORM=offscreen`). This prevents ORFS final
 report image generation from trying to initialize an X11 GUI during SSH runs.
@@ -77,20 +78,20 @@ the ORFS adapter rather than being interpreted by a shell.
 ## Host and container paths
 
 ORFS's Docker helper historically runs from the image's own
-`/OpenROAD-flow-scripts/flow`. WOLF instead executes the mounted host checkout
-at `/work` by default and sets both the container working directory and
-`FLOW_HOME` to `/work`. A relative `DESIGN_CONFIG` or `SDC_FILE` can otherwise
+`/OpenROAD-flow-scripts/flow`. WOLF overlays the mounted host checkout at that
+same canonical path and sets both the container working directory and
+`FLOW_HOME` there. A relative `DESIGN_CONFIG` or `SDC_FILE` can otherwise
 accidentally select collateral from the image instead of host-edited files.
 
 WOLF passes checkout-owned files as container-visible absolute paths under
-`/work`. In declarative native mode, package RTL and generated config/SDC use
+`/OpenROAD-flow-scripts/flow`. In declarative native mode, package RTL and generated config/SDC use
 explicit read-only mounts under `/wolf`; ORFS output uses a writable
 `WORK_HOME` at the resolved WOLF run directory. No file is selected from caller
 cwd or accidentally from image-internal collateral. For example:
 
 ```text
-DESIGN_CONFIG=/work/designs/asap7/ibex/config.mk
-SDC_FILE=/work/designs/asap7/ibex/constraint.sdc
+DESIGN_CONFIG=/OpenROAD-flow-scripts/flow/designs/asap7/ibex/config.mk
+SDC_FILE=/OpenROAD-flow-scripts/flow/designs/asap7/ibex/constraint.sdc
 ```
 
 Canonical WOLF clock constraints are expressed in picoseconds. At the ORFS
@@ -143,7 +144,7 @@ creates (or validates without overwriting) the dedicated host file
 `designs/asap7/ibex/constraint.wolf_ibex_asap7_1050ps.sdc`. It changes only the
 single `set clk_period` assignment to `1050`, leaves the stock SDC untouched,
 and passes the derived file explicitly as
-`SDC_FILE=/work/designs/asap7/ibex/constraint.wolf_ibex_asap7_1050ps.sdc`.
+`SDC_FILE=/OpenROAD-flow-scripts/flow/designs/asap7/ibex/constraint.wolf_ibex_asap7_1050ps.sdc`.
 
 Before invoking it, choose an unused dedicated ORFS variant. The default is
 `wolf_ibex_asap7_1050ps`; the harness refuses variants that do not begin with

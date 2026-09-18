@@ -71,9 +71,9 @@ bash "${WOLF_ROOT}/bin/wolf.run" \
 # stage; the physical-design stage sequence above remains synth through finish.
 ORFS_METADATA_ARGS=(
     make
-    "DESIGN_CONFIG=/work/designs/asap7/ibex/config.mk"
+    "DESIGN_CONFIG=/OpenROAD-flow-scripts/flow/designs/asap7/ibex/config.mk"
     "FLOW_VARIANT=${ORFS_FLOW_VARIANT}"
-    "SDC_FILE=/work/designs/asap7/ibex/constraint.wolf_ibex_asap7_1050ps.sdc"
+    "SDC_FILE=/OpenROAD-flow-scripts/flow/designs/asap7/ibex/constraint.wolf_ibex_asap7_1050ps.sdc"
     "SWAP_ARITH_OPERATORS="
     "OPENROAD_HIERARCHICAL=0"
     metadata-generate
@@ -84,12 +84,12 @@ if [[ "$ORFS_CONTAINER_RUNTIME" == podman ]]; then
 fi
 "$ORFS_CONTAINER_RUNTIME" run --rm -i \
     "${ORFS_METADATA_USER_ARGS[@]}" \
-    -e FLOW_HOME=/work \
-    -e WORK_HOME=/work \
+    -e FLOW_HOME=/OpenROAD-flow-scripts/flow \
+    -e WORK_HOME=/OpenROAD-flow-scripts/flow \
     -e DISPLAY= \
     -e QT_QPA_PLATFORM=offscreen \
-    -v "${ORFS_ROOT}:/work:Z" \
-    -w "${ORFS_CONTAINER_WORKDIR:-/work}" \
+    -v "${ORFS_ROOT}:/OpenROAD-flow-scripts/flow:Z" \
+    -w "${ORFS_CONTAINER_WORKDIR:-/OpenROAD-flow-scripts/flow}" \
     "$ORFS_CONTAINER_IMAGE" "${ORFS_METADATA_ARGS[@]}"
 
 python3 "${WOLF_ROOT}/tests/integration/check_orfs_ibex.py" "$ORFS_REPORTS_DIR"

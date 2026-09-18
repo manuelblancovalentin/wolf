@@ -38,8 +38,8 @@ _wolf_container_execute() {
 
     local -a user_args environment_args volume_args
     environment_args=(
-        -e "FLOW_HOME=${WOLF_CONTAINER_FLOW_HOME:-/work}"
-        -e "WORK_HOME=${WOLF_CONTAINER_WORK_HOME:-${WOLF_CONTAINER_CONTAINER_ROOT:-/work}}"
+        -e "FLOW_HOME=${WOLF_CONTAINER_FLOW_HOME:-/OpenROAD-flow-scripts/flow}"
+        -e "WORK_HOME=${WOLF_CONTAINER_WORK_HOME:-${WOLF_CONTAINER_CONTAINER_ROOT:-/OpenROAD-flow-scripts/flow}}"
     )
     if [[ "${WOLF_CONTAINER_HEADLESS:-0}" == "1" ]]; then
         # ORFS uses this upstream-supported Qt mode for final report images.
@@ -52,7 +52,7 @@ _wolf_container_execute() {
         user_args=(--user "$(id -u):$(id -g)")
     fi
 
-    volume_args=(-v "${WOLF_CONTAINER_HOST_ROOT}:${WOLF_CONTAINER_CONTAINER_ROOT:-/work}:Z")
+    volume_args=(-v "${WOLF_CONTAINER_HOST_ROOT}:${WOLF_CONTAINER_CONTAINER_ROOT:-/OpenROAD-flow-scripts/flow}:Z")
     local mount_host mount_container mount_mode mount_suffix
     while IFS='|' read -r mount_host mount_container mount_mode || [[ -n "$mount_host" ]]; do
         [[ -z "$mount_host" ]] && continue

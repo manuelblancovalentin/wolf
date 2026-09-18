@@ -452,8 +452,8 @@ exit 0
         calls = self.call_log.read_text(encoding="utf-8").splitlines()
         targets = [value for value in calls if value in ORFS_STAGES]
         self.assertEqual(targets, list(ORFS_STAGES))
-        self.assertIn("DESIGN_CONFIG=/work/designs/asap7/ibex/config.mk", calls)
-        self.assertIn("SDC_FILE=/work/designs/asap7/ibex/constraint.sdc", calls)
+        self.assertIn("DESIGN_CONFIG=/OpenROAD-flow-scripts/flow/designs/asap7/ibex/config.mk", calls)
+        self.assertIn("SDC_FILE=/OpenROAD-flow-scripts/flow/designs/asap7/ibex/constraint.sdc", calls)
         self.assertIn("FLOW_VARIANT=wolf-test", calls)
 
     def test_passthrough_make_variables_preserve_empty_and_spaced_values(self):
@@ -479,11 +479,11 @@ exit 0
         self.assertEqual(result.returncode, 0, msg=result.stderr)
         calls = self.call_log.read_text(encoding="utf-8").splitlines()
         self.assertIn("run", calls)
-        self.assertIn(f"{self.flow_root}:/work:Z", calls)
-        self.assertIn("/work", calls)
-        self.assertIn("FLOW_HOME=/work", calls)
+        self.assertIn(f"{self.flow_root}:/OpenROAD-flow-scripts/flow:Z", calls)
+        self.assertIn("/OpenROAD-flow-scripts/flow", calls)
+        self.assertIn("FLOW_HOME=/OpenROAD-flow-scripts/flow", calls)
         self.assertIn("example/orfs@sha256:test", calls)
-        self.assertIn("DESIGN_CONFIG=/work/designs/asap7/ibex/config.mk", calls)
+        self.assertIn("DESIGN_CONFIG=/OpenROAD-flow-scripts/flow/designs/asap7/ibex/config.mk", calls)
 
     def test_native_generated_inputs_use_explicit_read_only_mounts(self):
         generated = self.root / "generated"

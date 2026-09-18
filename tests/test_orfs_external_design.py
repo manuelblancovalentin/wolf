@@ -3,6 +3,8 @@ from dataclasses import replace
 import tempfile
 import unittest
 
+import yaml
+
 from wolf.backend.orfs_native import prepare_native_orfs
 from wolf.context import ResolvedContext
 from wolf.environment import ClockConstraint
@@ -82,14 +84,25 @@ class ExternalOrfsDesignTests(unittest.TestCase):
         self.assertIn("override NUM_CORES := 8", text)
         self.assertIn("/wolf/design", first["WOLF_CONTAINER_MOUNTS"])
         self.assertIn("/wolf/generated", first["WOLF_CONTAINER_MOUNTS"])
-        self.assertEqual(first["ORFS_CONTAINER_WORKDIR"], "/work")
-        self.assertEqual(first["ORFS_CONTAINER_FLOW_HOME"], "/work")
+        self.assertEqual(first["WOLF_CONTAINER_CONTAINER_ROOT"], "/OpenROAD-flow-scripts/flow")
+        self.assertEqual(first["ORFS_CONTAINER_WORKDIR"], "/OpenROAD-flow-scripts/flow")
+        self.assertEqual(first["ORFS_CONTAINER_FLOW_HOME"], "/OpenROAD-flow-scripts/flow")
         self.assertIn("set clk_period 1.05", Path(first["ORFS_SDC_FILE"]).read_text(encoding="utf-8"))
         manifest = Path(first["WOLF_RESOLVED_MANIFEST"]).read_text(encoding="utf-8")
         self.assertIn("base_config:", manifest)
         self.assertIn("base_config_source: generated", manifest)
         self.assertIn("runtime: podman", manifest)
         self.assertIn("container_image: registry.example/orfs@sha256:fixed", manifest)
+        resolved = yaml.safe_load(manifest)
+        execution = resolved["execution"]
+        self.assertEqual(execution["container_flow_root"], "/OpenROAD-flow-scripts/flow")
+        self.assertEqual(execution["container_workdir"], "/OpenROAD-flow-scripts/flow")
+        self.assertEqual(execution["flow_home"], "/OpenROAD-flow-scripts/flow")
+        self.assertEqual(
+            execution["container_flow_root"].rsplit("/flow", 1)[0]
+            + "/tools/install/yosys/bin/yosys",
+            "/OpenROAD-flow-scripts/tools/install/yosys/bin/yosys",
+        )
 
     def test_explicit_design_config_takes_precedence(self):
         native = self.root / "project" / "config.mk"
@@ -139,6 +152,10 @@ class ExternalOrfsDesignTests(unittest.TestCase):
         sdc = Path(output["ORFS_SDC_FILE"]).read_text(encoding="utf-8")
         self.assertIn("set clk_period 0.38\n", sdc)
         self.assertNotIn("set clk_period 380", sdc)
+        self.assertIn(
+            "include /OpenROAD-flow-scripts/flow/designs/asap7/fabulous-minimal/config.mk",
+            Path(output["ORFS_DESIGN_CONFIG"]).read_text(encoding="utf-8"),
+        )
 
 
 if __name__ == "__main__":

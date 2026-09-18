@@ -84,6 +84,7 @@ def _resolved_manifest(
     base_config: Path,
     base_config_source: str,
     orfs_root: Path,
+    container_root: str,
     container_workdir: str,
     flow_home: str,
     runtime: str | None = None,
@@ -108,7 +109,7 @@ def _resolved_manifest(
         "execution": {
             "executor": "container",
             "host_flow_root": str(orfs_root),
-            "container_flow_root": "/work",
+            "container_flow_root": container_root,
             "container_workdir": container_workdir,
             "flow_home": flow_home,
             "container_image_pinned": bool(container_image and "@sha256:" in container_image),
@@ -213,10 +214,19 @@ def prepare_native_orfs(
         "threads": context.threads,
         "runtime": runtime,
         "container_image": container_image,
-        "container_workdir": context.values.get("ORFS_CONTAINER_WORKDIR", "/work"),
+        "container_root": context.values.get(
+            "WOLF_CONTAINER_CONTAINER_ROOT", "/OpenROAD-flow-scripts/flow"
+        ),
+        "container_workdir": context.values.get(
+            "ORFS_CONTAINER_WORKDIR",
+            context.values.get("WOLF_CONTAINER_CONTAINER_ROOT", "/OpenROAD-flow-scripts/flow"),
+        ),
         "flow_home": context.values.get(
             "ORFS_CONTAINER_FLOW_HOME",
-            context.values.get("ORFS_CONTAINER_WORKDIR", "/work"),
+            context.values.get(
+                "ORFS_CONTAINER_WORKDIR",
+                context.values.get("WOLF_CONTAINER_CONTAINER_ROOT", "/OpenROAD-flow-scripts/flow"),
+            ),
         ),
         "overrides": overrides,
     }, sort_keys=True, separators=(",", ":"))
@@ -234,7 +244,10 @@ def prepare_native_orfs(
     config = generated / "config.mk"
     sdc = generated / "constraints.sdc"
     manifest = generated / "resolved.yaml"
-    container_workdir = context.values.get("ORFS_CONTAINER_WORKDIR", "/work")
+    container_root = context.values.get(
+        "WOLF_CONTAINER_CONTAINER_ROOT", "/OpenROAD-flow-scripts/flow"
+    )
+    container_workdir = context.values.get("ORFS_CONTAINER_WORKDIR", container_root)
     flow_home = context.values.get("ORFS_CONTAINER_FLOW_HOME", container_workdir)
 
     _write_sdc(base_sdc if base_sdc and base_sdc.is_file() else None, sdc, context)
@@ -245,7 +258,7 @@ def prepare_native_orfs(
         _container_path(path, design_root, "/wolf/design") for path in context.include_directories
     ]
     base_container = (
-        _container_path(base_config, orfs_root, "/work")
+        _container_path(base_config, orfs_root, container_root)
         if base_config_source in {"native", "explicit"} and base_config.is_relative_to(orfs_root)
         else "/wolf/generated/base-config.mk"
         if base_config_source == "generated"
@@ -275,6 +288,7 @@ def prepare_native_orfs(
                 base_config=base_config,
                 base_config_source=base_config_source,
                 orfs_root=orfs_root,
+                container_root=container_root,
                 container_workdir=container_workdir,
                 flow_home=flow_home,
                 runtime=runtime,
@@ -306,12 +320,14 @@ def prepare_native_orfs(
         "WOLF_RESOLVED_MANIFEST": str(manifest),
         "WOLF_WORKSPACE_DIR": str(context.workspace_root),
         "ORFS_NATIVE_WORKSPACE": "1",
-        # The pinned host checkout is mounted at /work by the container
+        # The pinned host checkout is mounted at the image's canonical flow
+        # path by the container executor.
         # executor. Keep Make's working directory and FLOW_HOME aligned with
         # that checkout rather than image-internal collateral.
+        "WOLF_CONTAINER_CONTAINER_ROOT": container_root,
         "ORFS_CONTAINER_WORKDIR": container_workdir,
         "ORFS_CONTAINER_FLOW_HOME": context.values.get(
-            "ORFS_CONTAINER_FLOW_HOME", context.values.get("ORFS_CONTAINER_WORKDIR", "/work")
+            "ORFS_CONTAINER_FLOW_HOME", flow_home
         ),
     }
     if runtime:

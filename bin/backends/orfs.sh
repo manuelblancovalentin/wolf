@@ -28,7 +28,7 @@ _wolf_orfs_container_path() {
     case "$host_path" in
         "${ORFS_ROOT}"/*)
             relative_path="${host_path#"${ORFS_ROOT}"/}"
-            printf '/work/%s\n' "$relative_path"
+            printf '%s/%s\n' "${WOLF_CONTAINER_CONTAINER_ROOT:-/OpenROAD-flow-scripts/flow}" "$relative_path"
             return 0
             ;;
         *) ;;
@@ -115,6 +115,7 @@ _wolf_backend_validate() {
         return 1
     fi
     ORFS_ROOT=$(cd -P -- "$ORFS_ROOT" && pwd) || return 1
+    WOLF_CONTAINER_CONTAINER_ROOT="${WOLF_CONTAINER_CONTAINER_ROOT:-/OpenROAD-flow-scripts/flow}"
     for required_path in Makefile designs util; do
         if [[ ! -e "${ORFS_ROOT}/${required_path}" ]]; then
             _wolf_orfs_error "ORFS_ROOT is not a flow checkout; missing ${required_path}"
@@ -250,11 +251,12 @@ _wolf_backend_prepare() {
 
     WOLF_CONTAINER_IMAGE="$ORFS_CONTAINER_IMAGE"
     WOLF_CONTAINER_HOST_ROOT="$ORFS_ROOT"
-    WOLF_CONTAINER_CONTAINER_ROOT="/work"
-    # Execute the mounted checkout, not the image's copy of the flow.  An
-    # explicit legacy override remains available for compatibility, but the
-    # default must agree with the pinned host ORFS package mounted at /work.
-    WOLF_CONTAINER_WORKDIR="${ORFS_CONTAINER_WORKDIR:-/work}"
+    WOLF_CONTAINER_CONTAINER_ROOT="${WOLF_CONTAINER_CONTAINER_ROOT:-/OpenROAD-flow-scripts/flow}"
+    # Execute the mounted checkout, not the image's copy of the flow. An
+    # explicit legacy override remains available for compatibility. The image
+    # keeps its tools beside this canonical flow directory. Mount
+    # the pinned host checkout over the flow path while preserving /tools.
+    WOLF_CONTAINER_WORKDIR="${ORFS_CONTAINER_WORKDIR:-/OpenROAD-flow-scripts/flow}"
     WOLF_CONTAINER_FLOW_HOME="${ORFS_CONTAINER_FLOW_HOME:-$WOLF_CONTAINER_WORKDIR}"
     WOLF_CONTAINER_HEADLESS=1
 
