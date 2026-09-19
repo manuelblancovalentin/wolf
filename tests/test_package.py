@@ -39,7 +39,7 @@ class PackageFoundationTests(unittest.TestCase):
     def test_builtin_registry_contains_phase_one_packages(self):
         self.assertEqual(
             self.registry.identifiers(),
-            ("flow/orfs", "pdk/asap7", "rtl/aes", "rtl/ibex"),
+            ("flow/orfs", "pdk/asap7", "rtl/aes", "rtl/ibex", "rtl/ibex-fabulous-mvp"),
         )
         self.assertEqual(
             self.registry.get("rtl/ibex").revision,

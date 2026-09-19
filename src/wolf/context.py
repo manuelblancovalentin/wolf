@@ -45,6 +45,18 @@ def resolve_cli_path(value: str, invocation_directory: Path) -> Path:
 
 
 @dataclass(frozen=True)
+class ResolvedSource:
+    """One ordered source input preserved from a package manifest."""
+
+    path: Path
+    language: str
+    library: str = "work"
+    order: int = 0
+    role: str = "source"
+    checksum: Optional[str] = None
+
+
+@dataclass(frozen=True)
 class ResolvedContext:
     """Complete location-independent execution inputs used by the compatibility bridge."""
 
@@ -69,7 +81,11 @@ class ResolvedContext:
     package_source_revisions: Mapping[str, str] = field(default_factory=dict)
     package_installation_paths: Mapping[str, Path] = field(default_factory=dict)
     source_files: tuple[Path, ...] = ()
+    sources: tuple[ResolvedSource, ...] = ()
     include_directories: tuple[Path, ...] = ()
+    defines: tuple[str, ...] = ()
+    vhdl_standard: Optional[str] = None
+    package_checksums: Mapping[str, str] = field(default_factory=dict)
     clocks: tuple[Any, ...] = ()
     threads: Optional[int] = None
     backend_overrides: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)

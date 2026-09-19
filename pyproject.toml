@@ -15,6 +15,7 @@ authors = [
 dependencies = [
   "PyYAML>=6.0",
   "rich>=13.0",
+  "tomli>=2.0; python_version < '3.11'",
 ]
 
 [project.scripts]
@@ -47,6 +48,6 @@ where = ["src"]
   "templates/deactivate.template",
 ]
 "share/wolf/shell" = ["shell/wolf.bash", "shell/wolf.zsh"]
-"share/wolf/registry/rtl" = ["registry/rtl/ibex.yaml", "registry/rtl/aes.yaml"]
+"share/wolf/registry/rtl" = ["registry/rtl/ibex.yaml", "registry/rtl/aes.yaml", "registry/rtl/ibex-fabulous-mvp.yaml"]
 "share/wolf/registry/pdk" = ["registry/pdk/asap7.yaml"]
 "share/wolf/registry/flow" = ["registry/flow/orfs.yaml"]

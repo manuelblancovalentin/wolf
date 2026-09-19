@@ -4,11 +4,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+try:  # Python 3.9/3.10 compatibility
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - exercised on older runtimes
+    import tomli as tomllib
 from typing import Any, Mapping, Optional
 
 import yaml
 
-from wolf.context import ResolvedContext, resolve_stored_path
+from wolf.context import ResolvedContext, ResolvedSource, resolve_stored_path
 from wolf.package.model import PackageId
 from wolf.package.registry import PackageRegistry
 from wolf.package.store import PackageStore
@@ -186,6 +190,100 @@ def _semantic(manifest: Any, section: str, field: str) -> Optional[str]:
     return value if isinstance(value, str) and value else None
 
 
+def _manifest_lines(path: Path) -> list[str]:
+    """Read an ordered package file list, ignoring comments and blanks."""
+    return [line.strip() for line in path.read_text(encoding="utf-8").splitlines()
+            if line.strip() and not line.lstrip().startswith("#")]
+
+
+def _checksum_inventory(path: Path) -> dict[str, str]:
+    if not path.is_file():
+        return {}
+    result = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        parts = line.split(None, 1)
+        if len(parts) == 2 and len(parts[0]) == 64:
+            result[parts[1].removeprefix("./")] = parts[0]
+    return result
+
+
+def _design_inputs(manifest: Any, installed: Any) -> tuple[
+    tuple[ResolvedSource, ...], tuple[Path, ...], tuple[str, ...], Optional[str], dict[str, str]
+]:
+    """Resolve generic ordered source metadata, including published TOML bundles."""
+    metadata = manifest.metadata.get("design", {})
+    if not isinstance(metadata, dict):
+        metadata = {}
+    root = installed.content_path.resolve()
+    checksums = _checksum_inventory(root / str(metadata.get("checksums", "")))
+    manifest_paths = metadata.get("manifests", {})
+    toml_data: Mapping[str, Any] = {}
+    package_manifest = manifest_paths.get("package") if isinstance(manifest_paths, dict) else None
+    if package_manifest:
+        package_path = root / str(package_manifest)
+        if not package_path.is_file():
+            raise ValueError(f"design package metadata manifest does not exist: {package_path}")
+        try:
+            toml_data = tomllib.loads(package_path.read_text(encoding="utf-8"))
+        except (OSError, tomllib.TOMLDecodeError) as error:
+            raise ValueError(f"cannot parse design package metadata {package_path}: {error}") from error
+
+    def list_path(key: str, fallback: Any = None) -> Optional[Path]:
+        value = toml_data.get(key, fallback)
+        if not isinstance(value, str) or not value:
+            return None
+        return root / str(value)
+
+    groups: list[tuple[str, str, str, Any]] = []
+    if toml_data:
+        groups.extend([
+            ("vhdl", "work", "vhdl_package", list_path("vhdl_packages")),
+            ("vhdl", "work", "vhdl_implementation", list_path("vhdl_sources")),
+            ("verilog", "work", "verilog", list_path("verilog_sources")),
+            ("verilog", "FABULOUS_EFPGA", "verilog", list_path("fabulous_library_sources")),
+            ("verilog", "work", "verilog", list_path("work_library_sources")),
+        ])
+    else:
+        patterns = metadata.get("sources", [])
+        expanded: list[str] = []
+        if not isinstance(patterns, list) or not all(isinstance(item, str) for item in patterns):
+            raise ValueError("design package metadata.design.sources must be a sequence of paths")
+        for pattern in patterns:
+            expanded.extend(path.relative_to(root).as_posix() for path in sorted(root.glob(pattern)))
+        groups.append(("verilog", "work", "source", expanded))
+    sources: list[ResolvedSource] = []
+    for language, library, role, manifest_or_patterns in groups:
+        if manifest_or_patterns is None:
+            continue
+        values = (_manifest_lines(manifest_or_patterns) if isinstance(manifest_or_patterns, Path)
+                  else list(manifest_or_patterns) if isinstance(manifest_or_patterns, list) else [])
+        if not all(isinstance(value, str) for value in values):
+            raise ValueError("design source manifests must contain ordered relative paths")
+        for value in values:
+            path = (root / value).resolve()
+            if not path.is_file():
+                raise ValueError(f"design source manifest references missing file: {path}")
+            suffix_language = language
+            if language == "verilog" and path.suffix.lower() == ".sv":
+                suffix_language = "systemverilog"
+            relative = path.relative_to(root).as_posix()
+            sources.append(ResolvedSource(
+                path=path, language=suffix_language, library=library,
+                order=len(sources), role=role, checksum=checksums.get(relative),
+            ))
+    include_path = list_path("include_dirs", metadata.get("include_dirs", []))
+    includes = _manifest_lines(include_path) if isinstance(include_path, Path) else list(include_path or [])
+    include_directories = tuple((root / str(value)).resolve() for value in includes)
+    for path in include_directories:
+        if not path.is_dir():
+            raise ValueError(f"design include directory does not exist: {path}")
+    define_path = list_path("defines", metadata.get("defines", []))
+    defines = tuple(_manifest_lines(define_path) if isinstance(define_path, Path) else list(define_path or []))
+    standard = toml_data.get("vhdl_standard")
+    source_checksums = {str((root / relative).resolve()): checksum for relative, checksum in checksums.items()}
+    return tuple(sources), include_directories, defines, standard, source_checksums
+
+
 def profile_semantics(profile: EnvironmentProfile) -> Mapping[str, Optional[str]]:
     """Return semantic package defaults without requiring package installation."""
     registry = PackageRegistry()
@@ -306,21 +404,17 @@ def resolve_declarative_environment(
         str(package.manifest.identifier): package.installation_path
         for package in installed.values()
     }
-    source_files: list[Path] = []
-    include_directories: list[Path] = []
+    sources: tuple[ResolvedSource, ...] = ()
+    source_files: tuple[Path, ...] = ()
+    include_directories: tuple[Path, ...] = ()
+    defines: tuple[str, ...] = ()
+    vhdl_standard: Optional[str] = None
+    package_checksums: dict[str, str] = {}
     if "design" in installed:
-        design_metadata = manifests["design"].metadata.get("design", {})
-        patterns = design_metadata.get("sources", []) if isinstance(design_metadata, dict) else []
-        includes = design_metadata.get("include_dirs", []) if isinstance(design_metadata, dict) else []
-        if not isinstance(patterns, list) or not all(isinstance(item, str) for item in patterns):
-            raise ValueError("design package metadata.design.sources must be a sequence of paths")
-        if not isinstance(includes, list) or not all(isinstance(item, str) for item in includes):
-            raise ValueError("design package metadata.design.include_dirs must be a sequence of paths")
-        for pattern in patterns:
-            source_files.extend(sorted(installed["design"].content_path.glob(pattern)))
-        include_directories.extend(
-            (installed["design"].content_path / relative).resolve() for relative in includes
+        sources, include_directories, defines, vhdl_standard, package_checksums = _design_inputs(
+            manifests["design"], installed["design"]
         )
+        source_files = tuple(source.path for source in sources)
     return ResolvedContext(
         state_root=state_root.resolve(),
         environment_name=profile.name,
@@ -343,9 +437,11 @@ def resolve_declarative_environment(
         package_source_revisions=package_source_revisions,
         package_installation_paths=package_installation_paths,
         source_files=tuple(dict.fromkeys(path.resolve() for path in source_files if path.is_file())),
-        include_directories=tuple(
-            dict.fromkeys(path for path in include_directories if path.is_dir())
-        ),
+        sources=sources,
+        include_directories=tuple(dict.fromkeys(path for path in include_directories if path.is_dir())),
+        defines=defines,
+        vhdl_standard=vhdl_standard,
+        package_checksums=package_checksums,
         clocks=profile.clocks,
         threads=profile.threads,
         backend_overrides=profile.backend_overrides,

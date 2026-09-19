@@ -143,7 +143,19 @@ def _resolved_manifest(
         ],
         "sources": {
             "rtl": [str(path) for path in context.source_files],
+            "ordered": [
+                {
+                    "path": str(source.path), "language": source.language,
+                    "library": source.library, "order": source.order,
+                    "role": source.role,
+                    **({"sha256": source.checksum} if source.checksum else {}),
+                }
+                for source in context.sources
+            ],
             "include_directories": [str(path) for path in context.include_directories],
+            "defines": list(context.defines),
+            **({"vhdl_standard": context.vhdl_standard} if context.vhdl_standard else {}),
+            "package_checksums": dict(context.package_checksums),
         },
         "generated": {
             "directory": str(generated),
@@ -251,7 +263,13 @@ def prepare_native_orfs(
     flow_home = context.values.get("ORFS_CONTAINER_FLOW_HOME", container_workdir)
 
     _write_sdc(base_sdc if base_sdc and base_sdc.is_file() else None, sdc, context)
+    source_inputs = (
+        tuple(source for source in context.sources if source.language in {"verilog", "systemverilog"})
+        or tuple(context.sources)
+    )
     source_values = [
+        _container_path(source.path, design_root, "/wolf/design") for source in source_inputs
+    ] if context.sources else [
         _container_path(path, design_root, "/wolf/design") for path in context.source_files
     ]
     include_values = [
@@ -272,9 +290,13 @@ def prepare_native_orfs(
         "override VERILOG_INCLUDE_DIRS := " + " ".join(_make_path(value) for value in include_values),
         "override SDC_FILE := /wolf/generated/constraints.sdc",
     ]
+    if context.defines:
+        lines.append("override VERILOG_DEFINES := " + " ".join(_make_path(value) for value in context.defines))
     exports = [
         "DESIGN_NICKNAME", "DESIGN_NAME", "VERILOG_FILES", "VERILOG_INCLUDE_DIRS", "SDC_FILE"
     ]
+    if context.defines:
+        exports.append("VERILOG_DEFINES")
     if context.threads:
         lines.append(f"override NUM_CORES := {context.threads}")
         exports.append("NUM_CORES")

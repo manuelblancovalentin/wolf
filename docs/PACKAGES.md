@@ -93,3 +93,15 @@ design/top and canonical source patterns, `pdk/asap7` provides the technology
 identity, and `flow/orfs` provides flow/backend identity and its flow root.
 Environment values override these defaults, and resolved contexts retain the
 pinned revisions. See `docs/ENVIRONMENTS.md`.
+
+## Ordered mixed-language RTL inputs
+
+RTL packages may optionally point `metadata.design.manifests.package` at a
+versioned TOML package manifest. WOLF consumes only its generic source
+description: ordered VHDL package and implementation lists, ordered
+Verilog/SystemVerilog lists, declared `vhdl_standard`, named source libraries,
+include-directory and define lists, and a `SHA256SUMS` inventory. These inputs
+are retained in the resolved context and `wolf.resolved.yaml` with their
+language, library, order, and checksums. No ESP or FABulous generator behavior
+is interpreted by WOLF. Existing Verilog-only `metadata.design.sources`
+packages continue to use their original path-pattern behavior.
