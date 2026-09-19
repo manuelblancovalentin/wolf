@@ -15,8 +15,18 @@ The generated collateral consists of:
 - `genus-inputs.yaml`, a human-readable input/provenance record.
 
 Preparation is exposed by `wolf.backend.cadence_genus.prepare_genus_inputs` and
-is intentionally separate from the legacy Flowtool shell runner. A licensed
-Kona gate should first validate HDL read, `ESP_ASIC_TOP` elaboration, hierarchy,
+is intentionally separate from the legacy Flowtool shell runner. For
+declarative `cadence-flowtool` environments, the run bridge validates Genus
+before allocation, writes directly under the exact numbered run, freezes
+`wolf.resolved.yaml`, and invokes:
+
+```text
+cd <run>/backend/cadence-genus
+genus -files run.tcl -log genus.log
+```
+
+Preparation-only plans validate and report prospective paths without
+allocating a run or invoking Genus. A licensed Kona gate should first validate HDL read, `ESP_ASIC_TOP` elaboration, hierarchy,
 and link checks. WOLF must validate `genus` and any explicitly configured
 technology files before allocating a run. Physical views are not inferred or
 bundled by WOLF; missing Liberty, LEF, QRC, or equivalent inputs must be

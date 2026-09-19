@@ -6,7 +6,9 @@ import shutil
 from typing import Mapping, Optional, Sequence
 
 from wolf.backend.base import Backend, ValidationItem
-from wolf.backend.cadence_genus import GenusInputs, prepare_genus_inputs, validate_genus
+from wolf.backend.cadence_genus import (
+    GenusInputs, prepare_genus_inputs, run_genus, validate_genus,
+)
 from wolf.context import ResolvedContext
 
 
@@ -20,6 +22,9 @@ class CadenceFlowtoolBackend(Backend):
 
     def prepare_genus_inputs(self, context: ResolvedContext, destination) -> GenusInputs:
         return prepare_genus_inputs(context, destination)
+
+    def run_genus(self, context: ResolvedContext, *, clean: bool = False):
+        return run_genus(context, clean=clean)
 
     def validate(
         self, context: Optional[Mapping[str, str]] = None

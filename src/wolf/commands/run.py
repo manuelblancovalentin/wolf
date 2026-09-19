@@ -88,7 +88,21 @@ def _summary(context: ResolvedContext) -> None:
 
 def command_run(args: argparse.Namespace) -> int:
     context = _context(args)
-    backend_environment = get_backend(context.backend).prepare_execution(context)
+    backend = get_backend(context.backend)
+    if context.format == "declarative-v1" and context.backend == "cadence-flowtool":
+        if args.plan:
+            checks = backend.validate_genus(context)
+            failures = [f"{item.name}: {item.detail}" for item in checks if not item.available]
+            if failures:
+                raise ValueError("Cadence Genus validation failed: " + "; ".join(failures))
+            _summary(context)
+            ui.key_value("Genus run directory", context.run_directory)
+            ui.key_value("Genus collateral", context.run_directory / "backend" / "cadence-genus")
+            return 0
+        status, run_directory = backend.run_genus(context, clean=getattr(args, "clean", False))
+        _final_summary(context, status, 0.0, run_directory=run_directory)
+        return status
+    backend_environment = backend.prepare_execution(context)
     _summary(context)
     if backend_environment.get("WOLF_RESOLVED_MANIFEST"):
         ui.key_value("Resolved manifest", backend_environment["WOLF_RESOLVED_MANIFEST"])

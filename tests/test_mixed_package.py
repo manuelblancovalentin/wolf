@@ -3,12 +3,12 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, Mock
 
 import yaml
 
 from wolf.backend.orfs_native import prepare_native_orfs
-from wolf.backend.cadence_genus import prepare_genus_inputs, validate_genus
+from wolf.backend.cadence_genus import GenusValidation, prepare_genus_inputs, run_genus, validate_genus
 from wolf.environment import load_environment, resolve_declarative_environment
 
 
@@ -165,6 +165,40 @@ class MixedLanguagePackageTests(unittest.TestCase):
         self.assertEqual([source.path.name for source in verilog], combined)
         self.assertTrue(all(source.library == "FABULOUS_EFPGA" for source in verilog if source.path.name.startswith("fab_")))
         self.assertTrue(all(source.library == "work" for source in verilog if source.path.name.startswith("work_")))
+
+    def test_genus_run_allocates_exact_directory_freezes_provenance_and_executes_locally(self):
+        context = self._context()
+        completed = Mock(returncode=0)
+        with patch("wolf.backend.cadence_genus.validate_genus", return_value=(GenusValidation("genus", True, "/opt/cadence/genus"),)), \
+             patch("wolf.backend.cadence_genus.subprocess.run", return_value=completed) as execute:
+            status, run = run_genus(context, clean=True)
+        self.assertEqual(status, 0)
+        self.assertEqual(run.name, "ibex-fabulous-mvp.1")
+        self.assertTrue((run / "wolf.resolved.yaml").is_file())
+        self.assertTrue((run / "backend/cadence-genus/sources.tcl").is_file())
+        execute.assert_called_once_with(
+            ["/opt/cadence/genus", "-files", "run.tcl", "-log", "genus.log"],
+            cwd=run / "backend/cadence-genus", check=False,
+        )
+        frozen = yaml.safe_load((run / "wolf.resolved.yaml").read_text())
+        self.assertEqual(frozen["workspace"]["run_directory"], str(run.resolve()))
+        self.assertEqual(frozen["execution"]["working_directory"], str((run / "backend/cadence-genus").resolve()))
+
+    def test_genus_validation_fails_before_allocating_run(self):
+        context = self._context()
+        with patch("wolf.backend.cadence_genus.validate_genus", return_value=(GenusValidation("genus", False, "unavailable"),)), \
+             self.assertRaisesRegex(ValueError, "validation failed"):
+            run_genus(context, clean=True)
+        self.assertFalse((context.workspace_root / context.design_name).exists())
+
+    def test_genus_failure_preserves_run_and_status(self):
+        context = self._context()
+        with patch("wolf.backend.cadence_genus.validate_genus", return_value=(GenusValidation("genus", True, "/opt/cadence/genus"),)), \
+             patch("wolf.backend.cadence_genus.subprocess.run", return_value=Mock(returncode=17)):
+            status, run = run_genus(context, clean=True)
+        self.assertEqual(status, 17)
+        self.assertTrue((run / "wolf.resolved.yaml").is_file())
+        self.assertTrue((run / "backend/cadence-genus/genus-inputs.yaml").is_file())
 
 
 if __name__ == "__main__":

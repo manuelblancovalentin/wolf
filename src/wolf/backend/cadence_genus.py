@@ -11,6 +11,7 @@ from decimal import Decimal
 import hashlib
 from pathlib import Path
 import shutil
+import subprocess
 from typing import Any, Mapping, Optional
 
 import yaml
@@ -31,6 +32,17 @@ class GenusInputs:
     source_script: Path
     run_script: Path
     manifest: Path
+
+
+def allocate_genus_run(context: ResolvedContext, *, clean: bool = False) -> Path:
+    """Allocate a new numbered run without modifying earlier runs."""
+    base = context.workspace_root / context.design_name / f"{context.design_name}.{context.process}"
+    if not clean and not context.run_directory.exists():
+        return context.run_directory
+    index = 1
+    while (base / f"{context.design_name}.{index}").exists():
+        index += 1
+    return base / f"{context.design_name}.{index}"
 
 
 def _period_ns(period_ps: Any) -> str:
@@ -147,3 +159,46 @@ def prepare_genus_inputs(context: ResolvedContext, destination: Path) -> GenusIn
     }
     manifest.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
     return GenusInputs(destination, source_script, run_script, manifest)
+
+
+def validate_genus_or_raise(context: ResolvedContext) -> str:
+    checks = validate_genus(context)
+    failures = [f"{item.name}: {item.detail}" for item in checks if not item.available]
+    if failures:
+        raise ValueError("Cadence Genus validation failed: " + "; ".join(failures))
+    return next(item.detail for item in checks if item.name == "genus")
+
+
+def run_genus(context: ResolvedContext, *, clean: bool = False) -> tuple[int, Path]:
+    """Allocate, prepare, freeze provenance, and execute one Genus run."""
+    genus = validate_genus_or_raise(context)
+    run_directory = allocate_genus_run(context, clean=clean)
+    inputs = prepare_genus_inputs(context, run_directory / "backend" / "cadence-genus")
+    resolved = yaml.safe_load(inputs.manifest.read_text(encoding="utf-8"))
+    resolved["schema"] = "wolf.resolved-run/v1"
+    resolved["execution"] = {
+        "executor": "native", "tool": "genus", "executable": genus,
+        "working_directory": str(inputs.directory),
+        "command": [genus, "-files", "run.tcl", "-log", "genus.log"],
+    }
+    resolved["environment"] = context.environment_name
+    resolved["workspace"] = {
+        "root": str(context.workspace_root), "run_directory": str(run_directory),
+    }
+    resolved_source = inputs.directory / "resolved.yaml"
+    resolved_source.write_text(yaml.safe_dump(resolved, sort_keys=False), encoding="utf-8")
+    from wolf.provenance import freeze_run_manifest
+    freeze_run_manifest(
+        resolved_source, run_directory,
+        generated_directory=inputs.directory,
+        generated_files={
+            "genus_sources": str(inputs.source_script),
+            "genus_constraints": str(inputs.directory / "constraints.sdc"),
+            "genus_script": str(inputs.run_script),
+        },
+    )
+    result = subprocess.run(
+        [genus, "-files", "run.tcl", "-log", "genus.log"],
+        cwd=inputs.directory, check=False,
+    )
+    return result.returncode, run_directory
