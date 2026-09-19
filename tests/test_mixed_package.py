@@ -161,6 +161,45 @@ class MixedLanguagePackageTests(unittest.TestCase):
         self.assertIn("read_hdl -sv", output.source_script.read_text(encoding="utf-8"))
         self.assertIn("ConfigFSM.v", output.source_script.read_text(encoding="utf-8"))
 
+    def test_genus_adds_synthesis_define_without_mutating_package_defines(self):
+        context = self._context()
+        output = prepare_genus_inputs(context, self.root / "defines")
+        script = output.source_script.read_text(encoding="utf-8")
+        manifest = yaml.safe_load(output.manifest.read_text(encoding="utf-8"))
+        self.assertEqual(context.defines, ("FABULOUS_TEST",))
+        self.assertIn('"FABULOUS_TEST"', script)
+        self.assertIn('"SYNTHESIS"', script)
+        self.assertEqual(manifest["define_sets"], {
+            "package_requested": ["FABULOUS_TEST"],
+            "backend_required": ["SYNTHESIS"],
+            "effective": ["FABULOUS_TEST", "SYNTHESIS"],
+        })
+        self.assertEqual(manifest["defines"], ["FABULOUS_TEST", "SYNTHESIS"])
+
+    def test_genus_define_policy_is_deterministic_and_deduplicated(self):
+        context = replace(self._context(), defines=("SYNTHESIS", "WT_DCACHE", "SYNTHESIS"))
+        first = prepare_genus_inputs(context, self.root / "defines-first")
+        second = prepare_genus_inputs(context, self.root / "defines-second")
+        first_script = first.source_script.read_text(encoding="utf-8")
+        second_script = second.source_script.read_text(encoding="utf-8")
+        first_manifest = yaml.safe_load(first.manifest.read_text(encoding="utf-8"))
+        second_manifest = yaml.safe_load(second.manifest.read_text(encoding="utf-8"))
+        self.assertEqual(first_script, second_script)
+        self.assertEqual(first_manifest["defines"], ["SYNTHESIS", "WT_DCACHE"])
+        self.assertEqual(first_manifest["define_sets"], second_manifest["define_sets"])
+        self.assertEqual(first_manifest["sources"], second_manifest["sources"])
+        self.assertEqual(first_manifest["constraints"], second_manifest["constraints"])
+        self.assertEqual(first_script.count('"SYNTHESIS"'), 1)
+
+    def test_genus_adds_synthesis_define_when_package_has_none(self):
+        context = replace(self._context(), defines=())
+        output = prepare_genus_inputs(context, self.root / "no-package-defines")
+        script = output.source_script.read_text(encoding="utf-8")
+        manifest = yaml.safe_load(output.manifest.read_text(encoding="utf-8"))
+        self.assertIn('set_db hdl_verilog_define {"SYNTHESIS"}', script)
+        self.assertEqual(manifest["define_sets"]["package_requested"], [])
+        self.assertEqual(manifest["define_sets"]["effective"], ["SYNTHESIS"])
+
     def test_genus_normalizes_supported_vhdl_standards_but_keeps_canonical_input(self):
         context = self._context()
         for value, expected in (("93", "1993"), ("1993", "1993"), ("87", "1987"),

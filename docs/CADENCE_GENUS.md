@@ -25,6 +25,13 @@ For Genus Tcl, VHDL sources use `read_hdl -vhdl`. Both `verilog` and
 syntax even when their filenames end in `.v`. The original language
 classification remains unchanged in the resolved context and provenance.
 
+Genus preparation also adds the backend-required `SYNTHESIS` define to the
+effective emitted Verilog/SystemVerilog define set. Package-requested defines
+such as `WT_DCACHE` are preserved, duplicates are removed deterministically,
+and the package, backend-required, and effective sets are recorded in
+`genus-inputs.yaml` and frozen run provenance. The canonical resolved package
+metadata is not modified.
+
 Preparation is exposed by `wolf.backend.cadence_genus.prepare_genus_inputs` and
 is intentionally separate from the legacy Flowtool shell runner. For
 declarative `cadence-flowtool` environments, the run bridge validates Genus
