@@ -1,5 +1,6 @@
 import hashlib
 import os
+from dataclasses import replace
 from pathlib import Path
 import tempfile
 import unittest
@@ -117,7 +118,7 @@ class MixedLanguagePackageTests(unittest.TestCase):
         self.assertLess(script.index("pkg.vhd"), script.index("impl.vhd"))
         self.assertIn("-library FABULOUS_EFPGA", script)
         self.assertIn("-library work", script)
-        self.assertIn("set_db hdl_vhdl_read_version 93", script)
+        self.assertIn("set_db hdl_vhdl_read_version 1993", script)
         self.assertIn("FABULOUS_TEST", script)
         run_script = output.run_script.read_text(encoding="utf-8")
         self.assertLess(run_script.index("source "), run_script.index("elaborate ESP_ASIC_TOP"))
@@ -129,6 +130,23 @@ class MixedLanguagePackageTests(unittest.TestCase):
         self.assertEqual(manifest["sources"][3]["library"], "FABULOUS_EFPGA")
         self.assertEqual(manifest["constraints"]["clocks"][0]["period_ps"], 1050)
         self.assertEqual(manifest["packages"][0]["revision"], "flow-rev")
+
+    def test_genus_normalizes_supported_vhdl_standards_but_keeps_canonical_input(self):
+        context = self._context()
+        for value, expected in (("93", "1993"), ("1993", "1993"), ("87", "1987"),
+                                ("1987", "1987"), ("08", "2008"), ("2008", "2008")):
+            with self.subTest(value=value):
+                output = prepare_genus_inputs(
+                    replace(context, vhdl_standard=value), self.root / "standards" / value
+                )
+                script = output.source_script.read_text(encoding="utf-8")
+                self.assertIn(f"set_db hdl_vhdl_read_version {expected}", script)
+                manifest = yaml.safe_load(output.manifest.read_text(encoding="utf-8"))
+                self.assertEqual(manifest["vhdl_standard"], value)
+
+    def test_genus_rejects_unsupported_vhdl_standard_before_preparation(self):
+        with self.assertRaisesRegex(ValueError, "unsupported VHDL standard"):
+            prepare_genus_inputs(replace(self._context(), vhdl_standard="2019"), self.root / "bad-standard")
 
     def test_genus_validation_is_mockable_and_checks_configured_views(self):
         context = self._context()
