@@ -57,6 +57,23 @@ class ResolvedSource:
 
 
 @dataclass(frozen=True)
+class ResolvedTechnology:
+    """Package-resolved technology views available to a backend."""
+
+    package: str
+    revision: str
+    name: str
+    root: Path
+    timing_corner: str = "typical"
+    timing_libraries: tuple[Path, ...] = ()
+    technology_lefs: tuple[Path, ...] = ()
+    cell_lefs: tuple[Path, ...] = ()
+    rc_files: tuple[Path, ...] = ()
+    gds_files: tuple[Path, ...] = ()
+    checksums: Mapping[str, str] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class ResolvedContext:
     """Complete location-independent execution inputs used by the compatibility bridge."""
 
@@ -75,6 +92,7 @@ class ResolvedContext:
     flow_name: Optional[str] = None
     design_package: Optional[str] = None
     technology_package: Optional[str] = None
+    technology: Optional[ResolvedTechnology] = None
     flow_package: Optional[str] = None
     package_revisions: Mapping[str, str] = field(default_factory=dict)
     package_paths: Mapping[str, Path] = field(default_factory=dict)

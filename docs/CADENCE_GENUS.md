@@ -32,6 +32,20 @@ and the package, backend-required, and effective sets are recorded in
 `genus-inputs.yaml` and frozen run provenance. The canonical resolved package
 metadata is not modified.
 
+Technology is resolved from the selected installed PDK package. The initial
+Genus gate uses one package-declared timing corner and its ordered NLDM Liberty
+files, emitted in `technology.tcl` before `sources.tcl`. Technology and cell
+LEFs, RC setup/extraction files, and GDS are retained as package-resolved
+physical inputs and are validated when a physical stage requests them; they
+are not required for technology-independent HDL elaboration. The generated
+technology manifest records package revision, selected corner, paths, and
+file hashes. A future private technology package can provide the same view
+metadata without committing proprietary collateral or machine-local paths.
+
+The historical `/home/manu/stylus` flow was consulted only as a reference for
+the high-level technology-loading lifecycle. It is not copied, imported, or a
+runtime dependency of WOLF.
+
 Preparation is exposed by `wolf.backend.cadence_genus.prepare_genus_inputs` and
 is intentionally separate from the legacy Flowtool shell runner. For
 declarative `cadence-flowtool` environments, the run bridge validates Genus

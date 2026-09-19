@@ -21,4 +21,22 @@ validation:
 metadata:
   technology:
     name: asap7
+    timing:
+      corner: typical
+      libraries:
+        - lib/NLDM/asap7sc7p5t_AO_RVT_TT_nldm_211120.lib.gz
+        - lib/NLDM/asap7sc7p5t_INVBUF_RVT_TT_nldm_220122.lib.gz
+        - lib/NLDM/asap7sc7p5t_OA_RVT_TT_nldm_211120.lib.gz
+        - lib/NLDM/asap7sc7p5t_SEQ_RVT_TT_nldm_220123.lib
+        - lib/NLDM/asap7sc7p5t_SIMPLE_RVT_TT_nldm_211120.lib.gz
+    physical:
+      technology_lefs:
+        - lef/asap7_tech_1x_201209.lef
+      cell_lefs:
+        - lef/asap7sc7p5t_28_R_1x_220121a.lef
+      rc:
+        - setRC.tcl
+        - rcx_patterns.rules
+      gds:
+        - gds/asap7sc7p5t_28_R_220121a.gds
   representation: view into the pinned flow/orfs platform tree

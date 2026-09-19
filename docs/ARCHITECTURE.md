@@ -181,6 +181,14 @@ Classes describe stable categories and behavior. Manifests describe instances. I
 
 `RunContext` is the central resolved value object for execution. It contains the exact selected design and revision, PDK and revision, libraries, technology options, flow and revision, backend, constraints, resolved variables, and source/tool version information.
 
+For Cadence preparation, the resolved PDK may expose a small technology view:
+ordered timing libraries and a named timing corner for synthesis, plus
+optional LEF, RC, GDS, and cell-model inputs for physical stages. These files
+are resolved from the installed package and their identities are frozen with
+the run; backend Tcl generation does not depend on the caller's filesystem or
+working directory. Private technology packages can provide the same interface
+without placing proprietary collateral in the WOLF repository.
+
 The context is immutable for a run once materialized. A changed resolved composition creates a new implementation run rather than silently changing the meaning of an existing run.
 
 ### Canonical and backend configuration

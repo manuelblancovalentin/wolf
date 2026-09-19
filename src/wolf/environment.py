@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import hashlib
 from pathlib import Path
 try:  # Python 3.9/3.10 compatibility
     import tomllib
@@ -12,7 +13,7 @@ from typing import Any, Mapping, Optional
 
 import yaml
 
-from wolf.context import ResolvedContext, ResolvedSource, resolve_stored_path
+from wolf.context import ResolvedContext, ResolvedSource, ResolvedTechnology, resolve_stored_path
 from wolf.package.model import PackageId
 from wolf.package.registry import PackageRegistry
 from wolf.package.store import PackageStore
@@ -188,6 +189,56 @@ def _semantic(manifest: Any, section: str, field: str) -> Optional[str]:
     section_data = manifest.metadata.get(section, {})
     value = section_data.get(field) if isinstance(section_data, dict) else None
     return value if isinstance(value, str) and value else None
+
+
+def _technology_inputs(manifest: Any, installed: Any) -> Optional[ResolvedTechnology]:
+    """Resolve portable technology views declared by an installed PDK package."""
+    metadata = manifest.metadata.get("technology", {})
+    if not isinstance(metadata, dict) or not installed:
+        return None
+    root = installed.content_path.resolve()
+    name = metadata.get("name")
+    if not isinstance(name, str) or not name:
+        return None
+
+    timing = metadata.get("timing", {})
+    timing = timing if isinstance(timing, dict) else {}
+    physical = metadata.get("physical", {})
+    physical = physical if isinstance(physical, dict) else {}
+
+    def paths(value: Any, field: str) -> tuple[Path, ...]:
+        if value is None:
+            return ()
+        if not isinstance(value, list) or not all(isinstance(item, str) and item for item in value):
+            raise ValueError(f"technology.{field} must be a list of relative paths")
+        resolved = []
+        for item in value:
+            path = (root / item).resolve()
+            if not path.is_relative_to(root):
+                raise ValueError(f"technology.{field} escapes installed package: {item}")
+            if not path.is_file():
+                raise ValueError(f"technology.{field} file does not exist: {path}")
+            resolved.append(path)
+        return tuple(resolved)
+
+    libraries = paths(timing.get("libraries", []), "timing.libraries")
+    technology_lefs = paths(physical.get("technology_lefs", []), "physical.technology_lefs")
+    cell_lefs = paths(physical.get("cell_lefs", []), "physical.cell_lefs")
+    rc_files = paths(physical.get("rc", []), "physical.rc")
+    gds_files = paths(physical.get("gds", []), "physical.gds")
+    all_files = (*libraries, *technology_lefs, *cell_lefs, *rc_files, *gds_files)
+    checksums = {
+        str(path): hashlib.sha256(path.read_bytes()).hexdigest() for path in all_files
+    }
+    corner = timing.get("corner", "typical")
+    if not isinstance(corner, str) or not corner:
+        raise ValueError("technology.timing.corner must be a nonempty string")
+    return ResolvedTechnology(
+        package=str(manifest.identifier), revision=manifest.revision, name=name,
+        root=root, timing_corner=corner, timing_libraries=libraries,
+        technology_lefs=technology_lefs, cell_lefs=cell_lefs, rc_files=rc_files,
+        gds_files=gds_files, checksums=checksums,
+    )
 
 
 def _manifest_lines(path: Path) -> list[str]:
@@ -440,6 +491,8 @@ def resolve_declarative_environment(
     defines: tuple[str, ...] = ()
     vhdl_standard: Optional[str] = None
     package_checksums: dict[str, str] = {}
+    resolved_technology = _technology_inputs(manifests.get("technology"), installed.get("technology")) \
+        if "technology" in manifests else None
     if "design" in installed:
         sources, include_directories, defines, vhdl_standard, package_checksums = _design_inputs(
             manifests["design"], installed["design"]
@@ -461,6 +514,7 @@ def resolve_declarative_environment(
         flow_name=flow_name,
         design_package=design.package if design else None,
         technology_package=technology.package if technology else None,
+        technology=resolved_technology,
         flow_package=flow.package if flow else None,
         package_revisions=package_revisions,
         package_paths=package_paths,

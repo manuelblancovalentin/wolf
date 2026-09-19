@@ -10,6 +10,7 @@ import yaml
 
 from wolf.backend.orfs_native import prepare_native_orfs
 from wolf.backend.cadence_genus import GenusValidation, prepare_genus_inputs, run_genus, validate_genus
+from wolf.context import ResolvedTechnology
 from wolf.environment import load_environment, resolve_declarative_environment
 
 
@@ -86,6 +87,28 @@ class MixedLanguagePackageTests(unittest.TestCase):
         profile = load_environment(self.env_dir / "wolf.yaml")
         return resolve_declarative_environment(profile, state_root=self.state, environment_directory=self.env_dir)
 
+    def _technology_context(self):
+        package_root = self.state / "packages/pdk/asap7/pdk-rev/source"
+        for relative in (
+            "lib/typical.lib", "lef/tech.lef", "lef/cells.lef", "rc/setRC.tcl",
+        ):
+            path = package_root / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(relative, encoding="utf-8")
+        manifest_path = self.registry / "pdk/asap7.yaml"
+        manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+        manifest["metadata"]["technology"] = {
+            "name": "asap7",
+            "timing": {"corner": "typical", "libraries": ["lib/typical.lib"]},
+            "physical": {
+                "technology_lefs": ["lef/tech.lef"],
+                "cell_lefs": ["lef/cells.lef"],
+                "rc": ["rc/setRC.tcl"],
+            },
+        }
+        manifest_path.write_text(yaml.safe_dump(manifest, sort_keys=False), encoding="utf-8")
+        return self._context()
+
     def test_ordered_mixed_inputs_and_provenance_are_retained(self):
         context = self._context()
         self.assertEqual([source.path.name for source in context.sources], ["pkg.vhd", "impl.vhd", "work.sv", "fab.v"])
@@ -141,6 +164,45 @@ class MixedLanguagePackageTests(unittest.TestCase):
         self.assertEqual(manifest["sources"][3]["library"], "FABULOUS_EFPGA")
         self.assertEqual(manifest["constraints"]["clocks"][0]["period_ps"], 1050)
         self.assertEqual(manifest["packages"][0]["revision"], "flow-rev")
+
+    def test_genus_loads_package_resolved_technology_before_rtl(self):
+        context = self._technology_context()
+        output = prepare_genus_inputs(context, self.root / "technology")
+        self.assertIsNotNone(output.technology_script)
+        technology = output.technology_script.read_text(encoding="utf-8")
+        run_script = output.run_script.read_text(encoding="utf-8")
+        self.assertIn("set_db library [list", technology)
+        self.assertLess(run_script.index("technology.tcl"), run_script.index("sources.tcl"))
+        manifest = yaml.safe_load(output.manifest.read_text(encoding="utf-8"))
+        self.assertEqual(manifest["technology"]["package"], "pdk/asap7")
+        self.assertEqual(manifest["technology"]["timing_corner"], "typical")
+        self.assertEqual(len(manifest["technology"]["checksums"]), 4)
+
+    def test_genus_technology_validation_distinguishes_synthesis_and_physical_inputs(self):
+        context = self._technology_context()
+        checks = validate_genus(
+            context, executable_lookup=lambda name: "/opt/cadence/genus", physical=False
+        )
+        self.assertTrue(all(item.available for item in checks))
+        physical_checks = validate_genus(
+            context, executable_lookup=lambda name: "/opt/cadence/genus", physical=True
+        )
+        self.assertTrue(all(item.available for item in physical_checks))
+        no_rc = replace(context, technology=replace(context.technology, rc_files=()))
+        checks = validate_genus(
+            no_rc, executable_lookup=lambda name: "/opt/cadence/genus", physical=True
+        )
+        self.assertFalse(next(item for item in checks if item.name == "technology RC").available)
+
+    def test_genus_rejects_missing_or_escaping_technology_assets(self):
+        manifest_path = self.registry / "pdk/asap7.yaml"
+        manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+        manifest["metadata"]["technology"] = {
+            "name": "asap7", "timing": {"libraries": ["../outside.lib"]},
+        }
+        manifest_path.write_text(yaml.safe_dump(manifest, sort_keys=False), encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "escapes installed package"):
+            self._context()
 
     def test_genus_uses_systemverilog_reader_for_verilog_family_inputs(self):
         context = self._context()
