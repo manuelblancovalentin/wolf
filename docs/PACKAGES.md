@@ -105,3 +105,9 @@ are retained in the resolved context and `wolf.resolved.yaml` with their
 language, library, order, and checksums. No ESP or FABulous generator behavior
 is interpreted by WOLF. Existing Verilog-only `metadata.design.sources`
 packages continue to use their original path-pattern behavior.
+
+Registry metadata paths (including `manifests.package` and `checksums`) are
+relative to the installed package content root. Paths named inside the TOML
+bundle are relative to the directory containing that TOML file. This permits
+published bundles nested below a Git package root without changing the
+root-level package format.

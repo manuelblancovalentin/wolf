@@ -215,10 +215,13 @@ def _design_inputs(manifest: Any, installed: Any) -> tuple[
     if not isinstance(metadata, dict):
         metadata = {}
     root = installed.content_path.resolve()
-    checksums = _checksum_inventory(root / str(metadata.get("checksums", "")))
+    checksum_path = root / str(metadata.get("checksums", ""))
+    checksums = _checksum_inventory(checksum_path)
+    checksum_root = checksum_path.parent.resolve()
     manifest_paths = metadata.get("manifests", {})
     toml_data: Mapping[str, Any] = {}
     package_manifest = manifest_paths.get("package") if isinstance(manifest_paths, dict) else None
+    bundle_root = root
     if package_manifest:
         package_path = root / str(package_manifest)
         if not package_path.is_file():
@@ -227,12 +230,13 @@ def _design_inputs(manifest: Any, installed: Any) -> tuple[
             toml_data = tomllib.loads(package_path.read_text(encoding="utf-8"))
         except (OSError, tomllib.TOMLDecodeError) as error:
             raise ValueError(f"cannot parse design package metadata {package_path}: {error}") from error
+        bundle_root = package_path.parent.resolve()
 
     def list_path(key: str, fallback: Any = None) -> Optional[Path]:
         value = toml_data.get(key, fallback)
         if not isinstance(value, str) or not value:
             return None
-        return root / str(value)
+        return bundle_root / str(value)
 
     groups: list[tuple[str, str, str, Any]] = []
     ordered_verilog_libraries: dict[str, str] = {}
@@ -283,13 +287,13 @@ def _design_inputs(manifest: Any, installed: Any) -> tuple[
         if not all(isinstance(value, str) for value in values):
             raise ValueError("design source manifests must contain ordered relative paths")
         for value in values:
-            path = (root / value).resolve()
+            path = (bundle_root / value).resolve()
             if not path.is_file():
                 raise ValueError(f"design source manifest references missing file: {path}")
             suffix_language = language
             if language == "verilog" and path.suffix.lower() == ".sv":
                 suffix_language = "systemverilog"
-            relative = path.relative_to(root).as_posix()
+            relative = path.relative_to(checksum_root).as_posix()
             resolved_library = ordered_verilog_libraries.get(value, library)
             sources.append(ResolvedSource(
                 path=path, language=suffix_language, library=resolved_library,
@@ -297,14 +301,16 @@ def _design_inputs(manifest: Any, installed: Any) -> tuple[
             ))
     include_path = list_path("include_dirs", metadata.get("include_dirs", []))
     includes = _manifest_lines(include_path) if isinstance(include_path, Path) else list(include_path or [])
-    include_directories = tuple((root / str(value)).resolve() for value in includes)
+    include_directories = tuple((bundle_root / str(value)).resolve() for value in includes)
     for path in include_directories:
         if not path.is_dir():
             raise ValueError(f"design include directory does not exist: {path}")
     define_path = list_path("defines", metadata.get("defines", []))
     defines = tuple(_manifest_lines(define_path) if isinstance(define_path, Path) else list(define_path or []))
     standard = toml_data.get("vhdl_standard")
-    source_checksums = {str((root / relative).resolve()): checksum for relative, checksum in checksums.items()}
+    source_checksums = {
+        str((checksum_root / relative).resolve()): checksum for relative, checksum in checksums.items()
+    }
     return tuple(sources), include_directories, defines, standard, source_checksums
 
 

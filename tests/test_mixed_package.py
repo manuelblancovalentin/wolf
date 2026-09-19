@@ -200,6 +200,67 @@ class MixedLanguagePackageTests(unittest.TestCase):
         self.assertTrue((run / "wolf.resolved.yaml").is_file())
         self.assertTrue((run / "backend/cadence-genus/genus-inputs.yaml").is_file())
 
+    def test_nested_bundle_resolves_all_347_sources_and_checksums(self):
+        nested = self.state / "packages" / "rtl" / "nested" / "nested-rev" / "source" / "packages" / "demo"
+        nested.mkdir(parents=True)
+        manifests = nested / "manifests"
+        manifests.mkdir()
+        vhdl_packages = [f"sources/vhdl_pkg_{index}.vhd" for index in range(71)]
+        vhdl_sources = [f"sources/vhdl_src_{index}.vhd" for index in range(158)]
+        work = [f"sources/work_{index}.sv" for index in range(88)]
+        fabulous = [f"sources/fab_{index}.v" for index in range(30)]
+        combined = work[:58] + fabulous + work[58:]
+        all_sources = vhdl_packages + vhdl_sources + combined
+        for relative in all_sources:
+            path = nested / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("-- nested fixture\n", encoding="utf-8")
+        (nested / "include").mkdir()
+        lists = {
+            "vhdl-packages.flist": vhdl_packages, "vhdl-sources.flist": vhdl_sources,
+            "verilog-sources.flist": combined, "fabulous-verilog-sources.flist": fabulous,
+            "work-verilog-sources.flist": work, "include-dirs.flist": ["include"],
+            "defines.flist": ["WT_DCACHE"],
+        }
+        for name, values in lists.items():
+            (manifests / name).write_text("\n".join(values) + "\n", encoding="utf-8")
+        (nested / "manifest.toml").write_text(
+            'schema_version = 1\nname = "demo"\ntop = "ESP_ASIC_TOP"\nvhdl_standard = "93"\n'
+            'vhdl_packages = "manifests/vhdl-packages.flist"\nvhdl_sources = "manifests/vhdl-sources.flist"\n'
+            'verilog_sources = "manifests/verilog-sources.flist"\n'
+            'fabulous_library_sources = "manifests/fabulous-verilog-sources.flist"\n'
+            'work_library_sources = "manifests/work-verilog-sources.flist"\n'
+            'include_dirs = "manifests/include-dirs.flist"\ndefines = "manifests/defines.flist"\n',
+            encoding="utf-8")
+        sums = []
+        for relative in all_sources:
+            path = nested / relative
+            sums.append(f"{hashlib.sha256(path.read_bytes()).hexdigest()}  ./{relative}")
+        (nested / "SHA256SUMS").write_text("\n".join(sums) + "\n", encoding="utf-8")
+        self._manifest("rtl", "nested", "nested-rev", {"design": {
+            "name": "nested", "top": "ESP_ASIC_TOP", "checksums": "packages/demo/SHA256SUMS",
+            "manifests": {"package": "packages/demo/manifest.toml"},
+        }})
+        (self.env_dir / "wolf.yaml").write_text(
+            "schema: wolf.environment/v1\nname: nested\ndesign:\n  package: rtl/nested\n"
+            "technology:\n  package: pdk/asap7\nflow:\n  package: flow/orfs\nworkspace:\n  root: ./work\n"
+            "constraints:\n  clocks:\n    - name: core_clock\n      port: clk_i\n      period_ps: 1050\n", encoding="utf-8")
+        context = resolve_declarative_environment(
+            load_environment(self.env_dir / "wolf.yaml"),
+            state_root=self.state, environment_directory=self.env_dir,
+        )
+        bundle_root = nested
+        self.assertEqual(len(context.sources), 347)
+        self.assertEqual(len({source.path for source in context.sources}), 347)
+        self.assertEqual(sum(source.role == "vhdl_package" for source in context.sources), 71)
+        self.assertEqual(sum(source.role == "vhdl_implementation" for source in context.sources), 158)
+        self.assertEqual(sum(source.library == "FABULOUS_EFPGA" for source in context.sources), 30)
+        self.assertEqual(sum(source.library == "work" for source in context.sources), 317)
+        self.assertTrue(all(path.is_relative_to(bundle_root) for path in context.source_files))
+        self.assertTrue(all(path.is_relative_to(bundle_root) for path in context.include_directories))
+        self.assertEqual(len(context.package_checksums), 347)
+        self.assertTrue(all(source.checksum for source in context.sources))
+
 
 if __name__ == "__main__":
     unittest.main()
