@@ -5,7 +5,7 @@ description: Qualified mixed-language ESP Ibex SoC with FABulous eFPGA accelerat
 source:
   type: git
   url: git@github.com:Memik-Lab/ogrencilab-efpga.git
-  revision: 17a83b7912f3b2d92f73b5f654f6a060608ff982
+  revision: e16a9b226b43b40acf23b70dbb8b0d1f65fae9fa
   submodules: none
 license:
   name: ESP and bundled third-party terms are preserved in the package license records
@@ -18,6 +18,7 @@ validation:
     - packages/ibex-fabulous-mvp-rtl/manifests/fabulous-verilog-sources.flist
     - packages/ibex-fabulous-mvp-rtl/manifests/work-verilog-sources.flist
     - packages/ibex-fabulous-mvp-rtl/sources/generated/ESP_ASIC_TOP.vhd
+    - packages/ibex-fabulous-mvp-rtl/sources/esp/rtl/cores/ibex/ibex/vendor/lowrisc_ip/ip/prim/rtl/prim_assert.sv
 metadata:
   design:
     name: ibex-fabulous-mvp
@@ -26,4 +27,6 @@ metadata:
     manifests:
       package: packages/ibex-fabulous-mvp-rtl/manifest.toml
   provenance:
-    package_revision: 17a83b7912f3b2d92f73b5f654f6a060608ff982
+    package_revision: e16a9b226b43b40acf23b70dbb8b0d1f65fae9fa
+    checksums_sha256: 222eb248efa0ead2757caade7713b8ee717120afc726b548960be9390821383b
+    package_manifest_sha256: 06ac415a3e6e73e87a9897eaa72d0064f59132aaed46c1090cd1b6a079247d65
