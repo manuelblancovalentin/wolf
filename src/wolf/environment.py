@@ -235,14 +235,37 @@ def _design_inputs(manifest: Any, installed: Any) -> tuple[
         return root / str(value)
 
     groups: list[tuple[str, str, str, Any]] = []
+    ordered_verilog_libraries: dict[str, str] = {}
     if toml_data:
         groups.extend([
             ("vhdl", "work", "vhdl_package", list_path("vhdl_packages")),
             ("vhdl", "work", "vhdl_implementation", list_path("vhdl_sources")),
-            ("verilog", "work", "verilog", list_path("verilog_sources")),
-            ("verilog", "FABULOUS_EFPGA", "verilog", list_path("fabulous_library_sources")),
-            ("verilog", "work", "verilog", list_path("work_library_sources")),
         ])
+        combined = list_path("verilog_sources")
+        fabulous = list_path("fabulous_library_sources")
+        work = list_path("work_library_sources")
+        if fabulous or work:
+            split_lists = {
+                "FABULOUS_EFPGA": _manifest_lines(fabulous) if fabulous else [],
+                "work": _manifest_lines(work) if work else [],
+            }
+            split_paths = [path for values in split_lists.values() for path in values]
+            if len(split_paths) != len(set(split_paths)):
+                raise ValueError("design package split Verilog manifests contain duplicate paths")
+            combined_values = _manifest_lines(combined) if combined else split_paths
+            if len(combined_values) != len(set(combined_values)):
+                raise ValueError("design package combined Verilog manifest contains duplicate paths")
+            if set(combined_values) != set(split_paths):
+                raise ValueError("design package combined and split Verilog manifests disagree")
+            ordered_verilog_libraries = {
+                path: library for library, values in split_lists.items() for path in values
+            }
+            # The combined manifest is an inventory and compilation order. The
+            # split manifests provide only the named-library assignment.
+            groups.append(("verilog", "work", "verilog", combined_values))
+        else:
+            groups.append(("verilog", "work", "verilog",
+                           _manifest_lines(combined) if combined else []))
     else:
         patterns = metadata.get("sources", [])
         expanded: list[str] = []
@@ -267,8 +290,9 @@ def _design_inputs(manifest: Any, installed: Any) -> tuple[
             if language == "verilog" and path.suffix.lower() == ".sv":
                 suffix_language = "systemverilog"
             relative = path.relative_to(root).as_posix()
+            resolved_library = ordered_verilog_libraries.get(value, library)
             sources.append(ResolvedSource(
-                path=path, language=suffix_language, library=library,
+                path=path, language=suffix_language, library=resolved_library,
                 order=len(sources), role=role, checksum=checksums.get(relative),
             ))
     include_path = list_path("include_dirs", metadata.get("include_dirs", []))

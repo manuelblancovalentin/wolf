@@ -55,7 +55,7 @@ class MixedLanguagePackageTests(unittest.TestCase):
         (self.design / "manifests").mkdir()
         files = {
             "vhdl-packages.flist": "pkg.vhd\n", "vhdl-sources.flist": "impl.vhd\n",
-            "verilog-sources.flist": "work.sv\n", "fabulous-verilog-sources.flist": "fab.v\n",
+            "verilog-sources.flist": "work.sv\nfab.v\n", "fabulous-verilog-sources.flist": "fab.v\n",
             "work-verilog-sources.flist": "work.sv\n", "include-dirs.flist": "include\n",
             "defines.flist": "FABULOUS_TEST\n",
         }
@@ -87,9 +87,9 @@ class MixedLanguagePackageTests(unittest.TestCase):
 
     def test_ordered_mixed_inputs_and_provenance_are_retained(self):
         context = self._context()
-        self.assertEqual([source.path.name for source in context.sources], ["pkg.vhd", "impl.vhd", "work.sv", "fab.v", "work.sv"])
-        self.assertEqual([source.library for source in context.sources], ["work", "work", "work", "FABULOUS_EFPGA", "work"])
-        self.assertEqual([source.language for source in context.sources], ["vhdl", "vhdl", "systemverilog", "verilog", "systemverilog"])
+        self.assertEqual([source.path.name for source in context.sources], ["pkg.vhd", "impl.vhd", "work.sv", "fab.v"])
+        self.assertEqual([source.library for source in context.sources], ["work", "work", "work", "FABULOUS_EFPGA"])
+        self.assertEqual([source.language for source in context.sources], ["vhdl", "vhdl", "systemverilog", "verilog"])
         self.assertEqual(context.vhdl_standard, "93")
         self.assertEqual(context.defines, ("FABULOUS_TEST",))
         self.assertTrue(all(source.checksum for source in context.sources))
@@ -101,7 +101,7 @@ class MixedLanguagePackageTests(unittest.TestCase):
         output = prepare_native_orfs(context, flow)
         resolved = yaml.safe_load(Path(output["WOLF_RESOLVED_MANIFEST"]).read_text())
         ordered = resolved["sources"]["ordered"]
-        self.assertEqual([item["library"] for item in ordered], ["work", "work", "work", "FABULOUS_EFPGA", "work"])
+        self.assertEqual([item["library"] for item in ordered], ["work", "work", "work", "FABULOUS_EFPGA"])
         self.assertEqual(resolved["sources"]["vhdl_standard"], "93")
         self.assertEqual(resolved["sources"]["defines"], ["FABULOUS_TEST"])
         self.assertEqual(len(resolved["sources"]["package_checksums"]), 4)
@@ -119,7 +119,10 @@ class MixedLanguagePackageTests(unittest.TestCase):
         self.assertIn("-library work", script)
         self.assertIn("set_db hdl_vhdl_read_version 93", script)
         self.assertIn("FABULOUS_TEST", script)
-        self.assertIn("elaborate ESP_ASIC_TOP", output.run_script.read_text(encoding="utf-8"))
+        run_script = output.run_script.read_text(encoding="utf-8")
+        self.assertLess(run_script.index("source "), run_script.index("elaborate ESP_ASIC_TOP"))
+        self.assertLess(run_script.index("elaborate ESP_ASIC_TOP"), run_script.index("read_sdc "))
+        self.assertLess(run_script.index("read_sdc "), run_script.index("check_design"))
         self.assertIn("-period 1.05", output.directory.joinpath("constraints.sdc").read_text(encoding="utf-8"))
         manifest = yaml.safe_load(output.manifest.read_text(encoding="utf-8"))
         self.assertEqual(manifest["sources"][0]["role"], "vhdl_package")
@@ -136,6 +139,32 @@ class MixedLanguagePackageTests(unittest.TestCase):
         broken = context.__class__(**{**context.__dict__, "values": context_values})
         checks = validate_genus(broken, executable_lookup=lambda name: "/opt/cadence/genus")
         self.assertFalse(next(item for item in checks if item.name == "LEF_FILES").available)
+
+    def test_real_package_shape_has_347_unique_entries_and_inventory_order(self):
+        manifests = self.design / "manifests"
+        vhdl_packages = [f"vhdl_pkg_{index}.vhd" for index in range(71)]
+        vhdl_sources = [f"vhdl_src_{index}.vhd" for index in range(158)]
+        work = [f"work_{index}.sv" for index in range(88)]
+        fabulous = [f"fab_{index}.v" for index in range(30)]
+        combined = work[:58] + fabulous + work[58:]
+        for name in vhdl_packages + vhdl_sources + work + fabulous:
+            (self.design / name).write_text("-- fixture\n", encoding="utf-8")
+        lists = {
+            "vhdl-packages.flist": vhdl_packages, "vhdl-sources.flist": vhdl_sources,
+            "verilog-sources.flist": combined, "fabulous-verilog-sources.flist": fabulous,
+            "work-verilog-sources.flist": work,
+        }
+        for name, values in lists.items():
+            (manifests / name).write_text("\n".join(values) + "\n", encoding="utf-8")
+        context = self._context()
+        self.assertEqual(len(context.sources), 347)
+        self.assertEqual(len({source.path for source in context.sources}), 347)
+        verilog = context.sources[229:]
+        self.assertEqual(sum(source.library == "FABULOUS_EFPGA" for source in verilog), 30)
+        self.assertEqual(sum(source.library == "work" for source in verilog), 88)
+        self.assertEqual([source.path.name for source in verilog], combined)
+        self.assertTrue(all(source.library == "FABULOUS_EFPGA" for source in verilog if source.path.name.startswith("fab_")))
+        self.assertTrue(all(source.library == "work" for source in verilog if source.path.name.startswith("work_")))
 
 
 if __name__ == "__main__":
