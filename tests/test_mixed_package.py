@@ -124,6 +124,17 @@ class MixedLanguagePackageTests(unittest.TestCase):
         self.assertLess(run_script.index("source "), run_script.index("elaborate ESP_ASIC_TOP"))
         self.assertLess(run_script.index("elaborate ESP_ASIC_TOP"), run_script.index("read_sdc "))
         self.assertLess(run_script.index("read_sdc "), run_script.index("check_design"))
+        self.assertIn("if {[catch {", run_script)
+        self.assertIn('puts stderr "WOLF Genus failure: $error"', run_script)
+        self.assertIn("dict get $options -errorinfo", run_script)
+        self.assertIn("exit 1", run_script)
+        self.assertTrue(run_script.rstrip().endswith("exit 0"))
+        catch_body = run_script.split("if {[catch {", 1)[1].split("} error options]", 1)[0]
+        self.assertLess(catch_body.index("source "), catch_body.index("elaborate "))
+        self.assertLess(catch_body.index("elaborate "), catch_body.index("read_sdc "))
+        self.assertLess(catch_body.index("read_sdc "), catch_body.index("check_design"))
+        self.assertLess(catch_body.index("check_design"), catch_body.index("report_hierarchy"))
+        self.assertLess(catch_body.index("report_hierarchy"), catch_body.index("report_messages"))
         self.assertIn("-period 1.05", output.directory.joinpath("constraints.sdc").read_text(encoding="utf-8"))
         manifest = yaml.safe_load(output.manifest.read_text(encoding="utf-8"))
         self.assertEqual(manifest["sources"][0]["role"], "vhdl_package")
@@ -236,6 +247,20 @@ class MixedLanguagePackageTests(unittest.TestCase):
         self.assertEqual(status, 17)
         self.assertTrue((run / "wolf.resolved.yaml").is_file())
         self.assertTrue((run / "backend/cadence-genus/genus-inputs.yaml").is_file())
+
+    def test_genus_script_failure_path_is_fail_fast_and_success_is_explicit(self):
+        context = self._context()
+        output = prepare_genus_inputs(context, self.root / "fail-fast")
+        script = output.run_script.read_text(encoding="utf-8")
+        self.assertIn("exit 1", script)
+        self.assertIn("exit 0", script)
+
+        with patch("wolf.backend.cadence_genus.validate_genus", return_value=(
+            GenusValidation("genus", True, "/opt/cadence/genus"),
+        )), patch("wolf.backend.cadence_genus.subprocess.run", return_value=Mock(returncode=23)):
+            status, run = run_genus(context, clean=True)
+        self.assertEqual(status, 23)
+        self.assertTrue((run / "wolf.resolved.yaml").is_file())
 
     def test_nested_bundle_resolves_all_347_sources_and_checksums(self):
         nested = self.state / "packages" / "rtl" / "nested" / "nested-rev" / "source" / "packages" / "demo"

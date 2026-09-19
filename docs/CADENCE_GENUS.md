@@ -11,7 +11,12 @@ The generated collateral consists of:
 - `sources.tcl`, with VHDL packages before VHDL implementations and each
   Verilog/SystemVerilog source in resolved order;
 - `run.tcl`, which performs elaboration, unresolved-design checks, and basic
-  hierarchy/message reports;
+  hierarchy/message reports inside one Tcl error boundary. Any failure while
+  sourcing HDL, elaborating, reading constraints, checking the design, or
+  writing reports prints the original Tcl error and error information, then
+  exits Genus nonzero. The script exits zero only after every operation
+  succeeds. WOLF uses this process status as the execution result rather than
+  treating log text as a success signal;
 - `genus-inputs.yaml`, a human-readable input/provenance record.
 
 For Genus Tcl, VHDL sources use `read_hdl -vhdl`. Both `verilog` and
