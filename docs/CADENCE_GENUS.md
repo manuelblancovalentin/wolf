@@ -14,6 +14,12 @@ The generated collateral consists of:
   hierarchy/message reports;
 - `genus-inputs.yaml`, a human-readable input/provenance record.
 
+For Genus Tcl, VHDL sources use `read_hdl -vhdl`. Both `verilog` and
+`systemverilog` package classifications deliberately use Genus's `read_hdl
+-sv` reader, because modern Verilog-family sources may contain SystemVerilog
+syntax even when their filenames end in `.v`. The original language
+classification remains unchanged in the resolved context and provenance.
+
 Preparation is exposed by `wolf.backend.cadence_genus.prepare_genus_inputs` and
 is intentionally separate from the legacy Flowtool shell runner. For
 declarative `cadence-flowtool` environments, the run bridge validates Genus

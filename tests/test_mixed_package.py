@@ -131,6 +131,25 @@ class MixedLanguagePackageTests(unittest.TestCase):
         self.assertEqual(manifest["constraints"]["clocks"][0]["period_ps"], 1050)
         self.assertEqual(manifest["packages"][0]["revision"], "flow-rev")
 
+    def test_genus_uses_systemverilog_reader_for_verilog_family_inputs(self):
+        context = self._context()
+        output = prepare_genus_inputs(context, self.root / "reader-modes")
+        script = output.source_script.read_text(encoding="utf-8")
+        self.assertIn("read_hdl -vhdl", script)
+        self.assertGreaterEqual(script.count("read_hdl -sv"), 2)
+        self.assertNotIn("-verilog", script)
+        manifest = yaml.safe_load(output.manifest.read_text(encoding="utf-8"))
+        self.assertEqual([item["language"] for item in manifest["sources"]],
+                         ["vhdl", "vhdl", "systemverilog", "verilog"])
+        configfsm = self.root / "reader-modes" / "ConfigFSM.v"
+        configfsm.write_text("module ConfigFSM; endmodule\n", encoding="utf-8")
+        source = replace(context.sources[3], path=configfsm)
+        output = prepare_genus_inputs(
+            replace(context, sources=context.sources[:3] + (source,)), self.root / "configfsm"
+        )
+        self.assertIn("read_hdl -sv", output.source_script.read_text(encoding="utf-8"))
+        self.assertIn("ConfigFSM.v", output.source_script.read_text(encoding="utf-8"))
+
     def test_genus_normalizes_supported_vhdl_standards_but_keeps_canonical_input(self):
         context = self._context()
         for value, expected in (("93", "1993"), ("1993", "1993"), ("87", "1987"),

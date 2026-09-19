@@ -121,7 +121,7 @@ def prepare_genus_inputs(context: ResolvedContext, destination: Path) -> GenusIn
         defines = " ".join(_tcl_quote(value) for value in context.defines)
         lines.append(f"set_db hdl_verilog_define {{{defines}}}")
     for source in context.sources:
-        language = "-vhdl" if source.language == "vhdl" else "-sv" if source.language == "systemverilog" else "-verilog"
+        language = "-vhdl" if source.language == "vhdl" else "-sv"
         lines.append(f"read_hdl {language} -library {source.library} {_tcl_quote(str(source.path))}")
     source_script.write_text("\n".join(lines) + "\n", encoding="utf-8")
     constraints.write_text("\n".join(
