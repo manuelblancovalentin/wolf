@@ -72,3 +72,8 @@ image configuration, and constructed Make arguments are backend metadata for
 future run-manifest persistence.
 
 See `docs/ORFS.md` for configuration and the opt-in Ibex regression harness.
+
+The `cadence-flowtool` compatibility backend also exposes a small generic
+Genus preparation layer for mixed-language RTL packages. See
+[`CADENCE_GENUS.md`](CADENCE_GENUS.md). It consumes resolved package metadata
+and remains separate from the legacy Flowtool shell execution path.

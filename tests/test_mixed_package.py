@@ -8,6 +8,7 @@ from unittest.mock import patch
 import yaml
 
 from wolf.backend.orfs_native import prepare_native_orfs
+from wolf.backend.cadence_genus import prepare_genus_inputs, validate_genus
 from wolf.environment import load_environment, resolve_declarative_environment
 
 
@@ -108,6 +109,33 @@ class MixedLanguagePackageTests(unittest.TestCase):
         self.assertIn("work.sv", config)
         self.assertNotIn("pkg.vhd", config)
         self.assertIn("VERILOG_DEFINES := FABULOUS_TEST", config)
+
+    def test_genus_preparation_preserves_order_libraries_and_constraints(self):
+        context = self._context()
+        output = prepare_genus_inputs(context, self.root / "run" / "backend" / "cadence-genus")
+        script = output.source_script.read_text(encoding="utf-8")
+        self.assertLess(script.index("pkg.vhd"), script.index("impl.vhd"))
+        self.assertIn("-library FABULOUS_EFPGA", script)
+        self.assertIn("-library work", script)
+        self.assertIn("set_db hdl_vhdl_read_version 93", script)
+        self.assertIn("FABULOUS_TEST", script)
+        self.assertIn("elaborate ESP_ASIC_TOP", output.run_script.read_text(encoding="utf-8"))
+        self.assertIn("-period 1.05", output.directory.joinpath("constraints.sdc").read_text(encoding="utf-8"))
+        manifest = yaml.safe_load(output.manifest.read_text(encoding="utf-8"))
+        self.assertEqual(manifest["sources"][0]["role"], "vhdl_package")
+        self.assertEqual(manifest["sources"][3]["library"], "FABULOUS_EFPGA")
+        self.assertEqual(manifest["constraints"]["clocks"][0]["period_ps"], 1050)
+        self.assertEqual(manifest["packages"][0]["revision"], "flow-rev")
+
+    def test_genus_validation_is_mockable_and_checks_configured_views(self):
+        context = self._context()
+        checks = validate_genus(context, executable_lookup=lambda name: "/opt/cadence/genus" if name == "genus" else None)
+        self.assertTrue(checks[0].available)
+        context_values = dict(context.values)
+        context_values["LEF_FILES"] = str(self.root / "missing.lef")
+        broken = context.__class__(**{**context.__dict__, "values": context_values})
+        checks = validate_genus(broken, executable_lookup=lambda name: "/opt/cadence/genus")
+        self.assertFalse(next(item for item in checks if item.name == "LEF_FILES").available)
 
 
 if __name__ == "__main__":

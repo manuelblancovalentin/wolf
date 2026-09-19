@@ -6,12 +6,20 @@ import shutil
 from typing import Mapping, Optional, Sequence
 
 from wolf.backend.base import Backend, ValidationItem
+from wolf.backend.cadence_genus import GenusInputs, prepare_genus_inputs, validate_genus
+from wolf.context import ResolvedContext
 
 
 class CadenceFlowtoolBackend(Backend):
     name = "cadence-flowtool"
     description = "Cadence Flowtool/Genus/Innovus compatibility backend"
     adapter_filename = "cadence-flowtool.sh"
+
+    def validate_genus(self, context: ResolvedContext):
+        return validate_genus(context)
+
+    def prepare_genus_inputs(self, context: ResolvedContext, destination) -> GenusInputs:
+        return prepare_genus_inputs(context, destination)
 
     def validate(
         self, context: Optional[Mapping[str, str]] = None
