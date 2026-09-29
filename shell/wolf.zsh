@@ -38,10 +38,34 @@ wolf() {
                 _wolf_command activate "$@"
                 return $?
             fi
-            _wolf_command _shell-activate "$2" >/dev/null
+            local _wolf_activate_json
+            _wolf_activate_json=$(_wolf_command _shell-activate "$2")
             local wolf_status=$?
             [ "$wolf_status" -eq 0 ] || return "$wolf_status"
             export WOLF_ACTIVE_ENV="$2"
+            # Export the environment's declared env: map. Each key's prior
+            # value (or absence) is saved once so deactivate can restore it,
+            # the same save-once/restore-on-deactivate pattern used for the
+            # RPROMPT marker below.
+            _WOLF_ACTIVE_ENV_VAR_NAMES=""
+            local _wolf_env_key _wolf_env_value _wolf_saved_var
+            while IFS= read -r -d '' _wolf_env_key && IFS= read -r -d '' _wolf_env_value; do
+                _wolf_saved_var="_WOLF_SAVED_ENV_${_wolf_env_key}"
+                if (( ! ${(P)+_wolf_saved_var} )); then
+                    if (( ${(P)+_wolf_env_key} )); then
+                        typeset -g "${_wolf_saved_var}=${(P)_wolf_env_key}"
+                    else
+                        typeset -g "${_wolf_saved_var}=__WOLF_UNSET__"
+                    fi
+                fi
+                export "${_wolf_env_key}=${_wolf_env_value}"
+                _WOLF_ACTIVE_ENV_VAR_NAMES="${_WOLF_ACTIVE_ENV_VAR_NAMES}${_wolf_env_key} "
+            done < <(printf '%s' "$_wolf_activate_json" | python3 -c '
+import json, sys
+for key, value in (json.load(sys.stdin).get("env") or {}).items():
+    sys.stdout.write(key + "\0" + value + "\0")
+')
+            export _WOLF_ACTIVE_ENV_VAR_NAMES
             _wolf_zsh_prompt
             ;;
         deactivate)
@@ -50,6 +74,19 @@ wolf() {
                 return 0
             fi
             unset WOLF_ACTIVE_ENV
+            local _wolf_env_key _wolf_saved_var
+            for _wolf_env_key in ${=_WOLF_ACTIVE_ENV_VAR_NAMES-}; do
+                _wolf_saved_var="_WOLF_SAVED_ENV_${_wolf_env_key}"
+                if (( ${(P)+_wolf_saved_var} )); then
+                    if [ "${(P)_wolf_saved_var}" = "__WOLF_UNSET__" ]; then
+                        unset "$_wolf_env_key"
+                    else
+                        export "${_wolf_env_key}=${(P)_wolf_saved_var}"
+                    fi
+                    unset "$_wolf_saved_var"
+                fi
+            done
+            unset _WOLF_ACTIVE_ENV_VAR_NAMES
             _wolf_zsh_prompt
             ;;
         *)

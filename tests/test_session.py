@@ -21,6 +21,11 @@ class BashIntegrationTests(unittest.TestCase):
             (self.root / "envs" / name / "vars.env").write_text(
                 'DESIGN_NAME="ibex"\nPROCESS="asap7"\nBACKEND="orfs"\nWORKSPACE_DIR="work"\n'
             )
+        (self.root / "envs" / "withenv").mkdir()
+        (self.root / "envs" / "withenv" / "wolf.yaml").write_text(
+            "schema: wolf.environment/v1\nname: withenv\nenv:\n"
+            "  GENUS_NUM_CPUS: \"64\"\n  WOLF_SHELL_TEST_VAR: passthrough\n"
+        )
         self.env = os.environ.copy()
         self.env.update({
             "WOLF_HOME": str(self.root),
@@ -47,6 +52,18 @@ wolf info >/dev/null || exit $?
 cd /; wolf run --plan >/dev/null || exit $?
 wolf deactivate
 [ -z "${{WOLF_ACTIVE_ENV+x}}" ] && [ "$PS1" = "$original_ps1" ] && [ "$$" = "$original_pid" ] && [ "$KEEP" = value ] || exit 12
+'''
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+
+    def test_activation_exports_and_restores_declared_env_vars(self):
+        result = self.bash(
+            f'''source "{REPO_ROOT}/shell/wolf.bash"
+GENUS_NUM_CPUS=preexisting
+wolf activate withenv || exit $?
+[ "$GENUS_NUM_CPUS" = 64 ] && [ "$WOLF_SHELL_TEST_VAR" = passthrough ] || exit 10
+wolf deactivate
+[ "$GENUS_NUM_CPUS" = preexisting ] && [ -z "${{WOLF_SHELL_TEST_VAR+x}}" ] || exit 11
 '''
         )
         self.assertEqual(result.returncode, 0, msg=result.stderr)
@@ -99,6 +116,18 @@ wolf info >/dev/null || exit $?
 cd /; wolf run --plan >/dev/null || exit $?
 wolf deactivate
 [[ -z "${{WOLF_ACTIVE_ENV+x}}" && "$PROMPT" = "$original_ps1" && "$RPROMPT" = "$original_rps1" && "$$" = "$original_pid" && "$KEEP" = value ]] || exit 12
+'''
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+
+    def test_zsh_activation_exports_and_restores_declared_env_vars(self):
+        result = self.zsh(
+            f'''source "{REPO_ROOT}/shell/wolf.zsh"
+GENUS_NUM_CPUS=preexisting
+wolf activate withenv || exit $?
+[[ "$GENUS_NUM_CPUS" = 64 && "$WOLF_SHELL_TEST_VAR" = passthrough ]] || exit 10
+wolf deactivate
+[[ "$GENUS_NUM_CPUS" = preexisting && -z "${{WOLF_SHELL_TEST_VAR+x}}" ]] || exit 11
 '''
         )
         self.assertEqual(result.returncode, 0, msg=result.stderr)
