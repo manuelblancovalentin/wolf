@@ -39,7 +39,10 @@ def command_info(args: argparse.Namespace) -> int:
     ui.key_value("Package", manifest.identifier)
     ui.key_value("Description", manifest.description)
     ui.key_value("Source type", manifest.source.type)
-    ui.key_value("Upstream", manifest.source.url)
+    if manifest.source.type == "local-path":
+        ui.key_value("Host-local root", manifest.source.root)
+    else:
+        ui.key_value("Upstream", manifest.source.url)
     ui.key_value("Pinned revision", manifest.revision)
     ui.key_value("Registry", manifest.registry_name)
     ui.key_value("Registry type", manifest.registry_type)
