@@ -98,6 +98,24 @@ backend:
         self.assertEqual(context.package_revisions["rtl/ibex"], "rtl-rev")
         self.assertEqual(context.backend_overrides["orfs"]["make"]["OPENROAD_HIERARCHICAL"], 0)
 
+    def test_env_map_is_parsed_and_resolved_into_context(self):
+        extra = "env:\n  GENUS_NUM_CPUS: \"64\"\n  SOME_FLAG: \"1\"\n"
+        profile = load_environment(self._write(self._complete_yaml(extra)), expected_name="demo")
+        context = resolve_declarative_environment(
+            profile, state_root=self.state, environment_directory=self.environment
+        )
+        self.assertEqual(dict(context.env_vars), {"GENUS_NUM_CPUS": "64", "SOME_FLAG": "1"})
+
+    def test_env_map_rejects_invalid_keys_and_non_string_values(self):
+        cases = (
+            ("env:\n  \"not valid\": \"1\"\n", "valid environment variable names"),
+            ("env:\n  OK_KEY: 1\n", "must be a string"),
+        )
+        for index, (extra, message) in enumerate(cases):
+            with self.subTest(message=message):
+                with self.assertRaisesRegex(ValueError, message):
+                    load_environment(self._write(self._complete_yaml(extra), f"bad-env-{index}.yaml"))
+
     def test_environment_values_override_package_defaults(self):
         text = self._complete_yaml().replace("  package: rtl/ibex\ntechnology:", "  package: rtl/ibex\n  name: renamed\n  top: custom_top\ntechnology:")
         context = resolve_declarative_environment(

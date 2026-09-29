@@ -107,6 +107,7 @@ class ResolvedContext:
     clocks: tuple[Any, ...] = ()
     threads: Optional[int] = None
     backend_overrides: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
+    env_vars: Mapping[str, str] = field(default_factory=dict)
 
 
 def resolve_context(

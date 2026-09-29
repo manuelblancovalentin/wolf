@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import hashlib
 from pathlib import Path
+import re
 try:  # Python 3.9/3.10 compatibility
     import tomllib
 except ModuleNotFoundError:  # pragma: no cover - exercised on older runtimes
@@ -19,11 +20,13 @@ from wolf.package.registry import PackageRegistry
 from wolf.package.store import PackageStore
 
 
+_ENV_VAR_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
 ENVIRONMENT_SCHEMA = "wolf.environment/v1"
 ENVIRONMENT_FILENAME = "wolf.yaml"
 _TOP_LEVEL_FIELDS = {
     "schema", "name", "design", "technology", "flow", "workspace",
-    "constraints", "resources", "backend",
+    "constraints", "resources", "backend", "env",
 }
 
 
@@ -52,6 +55,7 @@ class EnvironmentProfile:
     clocks: tuple[ClockConstraint, ...] = ()
     threads: Optional[int] = None
     backend_overrides: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
+    env_vars: Mapping[str, str] = field(default_factory=dict)
 
 
 def _mapping(value: Any, field: str, *, optional: bool = False) -> Mapping[str, Any]:
@@ -149,6 +153,13 @@ def load_environment(path: Path, *, expected_name: Optional[str] = None) -> Envi
             raise ValueError("backend names must be nonempty strings")
         _mapping(overrides, f"backend.{backend_name}")
 
+    env_vars = _mapping(data.get("env"), "env", optional=True)
+    for env_key, env_value in env_vars.items():
+        if not isinstance(env_key, str) or not _ENV_VAR_NAME.fullmatch(env_key):
+            raise ValueError(f"env keys must be valid environment variable names, got {env_key!r}")
+        if not isinstance(env_value, str):
+            raise ValueError(f"env.{env_key} must be a string")
+
     return EnvironmentProfile(
         name=name,
         path=path,
@@ -159,6 +170,7 @@ def load_environment(path: Path, *, expected_name: Optional[str] = None) -> Envi
         clocks=tuple(clocks),
         threads=threads,
         backend_overrides=backend,
+        env_vars=env_vars,
     )
 
 
@@ -529,4 +541,5 @@ def resolve_declarative_environment(
         clocks=profile.clocks,
         threads=profile.threads,
         backend_overrides=profile.backend_overrides,
+        env_vars=profile.env_vars,
     )
