@@ -5,7 +5,7 @@ description: Qualified mixed-language ESP Ibex SoC with FABulous eFPGA accelerat
 source:
   type: git
   url: git@github.com:Memik-Lab/ogrencilab-efpga.git
-  revision: 43520e03a287ec348da8d21e887bc3172dde3598
+  revision: 555ff6e2f973c7cc1dcdca71ea626a8a1f939c55
   submodules: none
 license:
   name: ESP and bundled third-party terms are preserved in the package license records
@@ -27,6 +27,6 @@ metadata:
     manifests:
       package: packages/ibex-fabulous-mvp-rtl/manifest.toml
   provenance:
-    package_revision: 43520e03a287ec348da8d21e887bc3172dde3598
-    checksums_sha256: 1c53c334e710f82998c713e7736fa177296d4a8d7b289e739f731399a0d64272
-    package_manifest_sha256: 66845693f9884cc84388f16f2a1a4ef3f41207fe18712fe49741247cdfec801e
+    package_revision: 555ff6e2f973c7cc1dcdca71ea626a8a1f939c55
+    checksums_sha256: ce48234f817e34e0af4cad59e1a71558b1fc687c72f4f7a49abfe6a9f86beb9d
+    package_manifest_sha256: cad01bf3cc31534aabfaa69350357058e7435d670cb04b87559c5762782d8686
