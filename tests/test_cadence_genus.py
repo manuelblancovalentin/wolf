@@ -221,6 +221,42 @@ class GenusSynthesisFlowTests(unittest.TestCase):
         self.assertEqual(manifest["synthesis_stages"], ["syn_generic", "syn_map", "syn_opt"])
         self.assertTrue(manifest["outputs"]["netlist"].endswith("demo.opt.v"))
 
+    def test_explicit_from_to_is_recorded_and_wins_over_flow_name(self):
+        inputs = prepare_genus_inputs(
+            self._context(flow_name=FLOW_GENUS_SYN_OPT), self.root / "backend" / "cadence-genus",
+            from_stage="syn_map", to_stage="syn_map",
+        )
+        flow_config = inputs.flow_config_script.read_text(encoding="utf-8")
+        self.assertIn('set wolf_from_stage "syn_map"', flow_config)
+        self.assertIn('set wolf_to_stage "syn_map"', flow_config)
+        manifest = yaml.safe_load(inputs.manifest.read_text(encoding="utf-8"))
+        self.assertEqual(manifest["from_stage"], "syn_map")
+        self.assertEqual(manifest["to_stage"], "syn_map")
+        # Only the stage(s) this invocation actually executes, not the
+        # cumulative range flow_name would otherwise imply.
+        self.assertEqual(manifest["synthesis_stages"], ["syn_map"])
+
+    def test_from_stage_defaults_to_elaborate_when_only_to_stage_given(self):
+        inputs = prepare_genus_inputs(
+            self._context(), self.root / "backend" / "cadence-genus", to_stage="syn_generic",
+        )
+        manifest = yaml.safe_load(inputs.manifest.read_text(encoding="utf-8"))
+        self.assertEqual(manifest["from_stage"], "elaborate")
+        self.assertEqual(manifest["to_stage"], "syn_generic")
+
+    def test_unsupported_stage_name_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "unsupported stage"):
+            prepare_genus_inputs(
+                self._context(), self.root / "backend" / "cadence-genus", from_stage="not-a-stage",
+            )
+
+    def test_from_stage_after_to_stage_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "comes after"):
+            prepare_genus_inputs(
+                self._context(), self.root / "backend" / "cadence-genus",
+                from_stage="syn_map", to_stage="syn_generic",
+            )
+
     def test_dont_use_cells_are_resolved_into_flow_config(self):
         inputs = prepare_genus_inputs(
             self._context(flow_name=FLOW_GENUS_SYN_GENERIC, dont_use_cells=("*_lvt", "AOI*")),
@@ -367,6 +403,13 @@ proc syn_opt {} { puts "STUB syn_opt" }
 proc read_physical {args} { puts "STUB read_physical $args" }
 proc init_design {} { puts "STUB init_design" }
 proc read_def {f} { puts "STUB read_def $f" }
+proc write_db {f} {
+    puts "STUB write_db $f"
+    set fh [open $f w]
+    puts $fh "stub checkpoint"
+    close $fh
+}
+proc read_db {f} { puts "STUB read_db $f" }
 rename source source_orig
 proc source {f} {
     if {[string match "*sources.tcl" $f]} {
@@ -387,9 +430,9 @@ proc source {f} {
     def tearDown(self):
         self.temporary.cleanup()
 
-    def _run(self, context) -> str:
+    def _run(self, context, *, from_stage=None, to_stage=None, expect_success=True) -> str:
         destination = self.root / "backend" / "cadence-genus"
-        inputs = prepare_genus_inputs(context, destination)
+        inputs = prepare_genus_inputs(context, destination, from_stage=from_stage, to_stage=to_stage)
         stub = self.root / "stub_run.tcl"
         stub.write_text(
             self._STUB_COMMANDS + f'source_orig {{{inputs.run_script}}}\n', encoding="utf-8"
@@ -397,8 +440,11 @@ proc source {f} {
         result = subprocess.run(
             [TCLSH, str(stub)], capture_output=True, text=True, check=False,
         )
-        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
-        return result.stdout
+        if expect_success:
+            self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        else:
+            self.assertNotEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        return result.stdout + result.stderr
 
     def test_elaboration_flow_runs_expected_commands_in_order(self):
         context = ResolvedContext(
@@ -435,6 +481,42 @@ proc source {f} {
         )
         indices = [output.index(fragment) for fragment in ordered]
         self.assertEqual(indices, sorted(indices))
+        checkpoints = self.root / "backend" / "cadence-genus" / "checkpoints"
+        for stage in ("elaborate", "syn_generic", "syn_map", "syn_opt"):
+            self.assertTrue((checkpoints / f"{stage}.db").is_file())
+
+    def test_resuming_from_a_checkpoint_skips_earlier_stages(self):
+        context = ResolvedContext(
+            state_root=self.root, environment_name="demo", environment_directory=self.root,
+            workspace_root=self.root, design_name="demo", process="generic", backend="cadence-flowtool",
+            run_tag="demo", run_directory=self.root / "run", values={},
+            format="declarative-v1", design_top="top",
+            sources=(self.source,), source_files=(self.source.path,),
+        )
+        first = self._run(context, from_stage="elaborate", to_stage="syn_generic")
+        self.assertIn("STUB elaborate top", first)
+        self.assertIn("STUB syn_generic", first)
+
+        second = self._run(context, from_stage="syn_map", to_stage="syn_map")
+        self.assertNotIn("STUB elaborate", second)
+        self.assertNotIn("STUB syn_generic", second)
+        self.assertIn(
+            f"STUB read_db {self.root / 'backend' / 'cadence-genus' / 'checkpoints' / 'syn_generic.db'}",
+            second,
+        )
+        self.assertIn("STUB syn_map", second)
+        self.assertIn("STUB write_hdl > outputs/demo.mapped.v", second)
+
+    def test_resuming_without_a_checkpoint_fails_clearly(self):
+        context = ResolvedContext(
+            state_root=self.root, environment_name="demo", environment_directory=self.root,
+            workspace_root=self.root, design_name="demo", process="generic", backend="cadence-flowtool",
+            run_tag="demo", run_directory=self.root / "run", values={},
+            format="declarative-v1", design_top="top",
+            sources=(self.source,), source_files=(self.source.path,),
+        )
+        output = self._run(context, from_stage="syn_map", to_stage="syn_map", expect_success=False)
+        self.assertIn("no checkpoint found for stage 'syn_generic'", output)
 
     def test_physical_aware_flow_reads_physical_and_inits_design(self):
         lef = self.root / "tech.lef"

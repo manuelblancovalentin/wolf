@@ -11,7 +11,13 @@
 #
 # flow-config.tcl (sourced before this file) sets the resolved, run-specific
 # values every proc below reads:
-#   wolf_flow_name          one of wolf_flow_stages' keys, below
+#   wolf_flow_name          informational only (see wolf_from_stage/wolf_to_stage)
+#   wolf_from_stage         first entry of wolf_stage_order (below) to run --
+#                           anything after "elaborate" resumes from that
+#                           stage's checkpoint instead of re-running earlier
+#                           stages
+#   wolf_to_stage           last entry of wolf_stage_order to run
+#   wolf_checkpoint_dir     directory write_db/read_db checkpoints live in
 #   wolf_design_name        design name, used for netlist output filenames
 #   wolf_design_top         top-level module/entity passed to `elaborate`
 #   wolf_max_cpus_per_server  thread count, or "" if none was resolved
@@ -145,51 +151,87 @@ proc wolf_flow_write_reports {netlist_suffix} {
     }
 }
 
-# The synthesis stages each selectable flow name runs, and the netlist
-# filename suffix its last stage writes. genus-elaboration runs none of
-# them; each later name runs everything the one before it does, plus one
-# more stage.
-array set wolf_flow_stages {
-    genus-elaboration {}
-    genus-syn-generic {syn_generic}
-    genus-syn-map     {syn_generic syn_map}
-    genus-syn-opt     {syn_generic syn_map syn_opt}
-}
+# Canonical stage order. wolf_from_stage/wolf_to_stage each name one entry;
+# the range between them (inclusive) is what this run actually executes --
+# see wolf_run_flow. genus-elaboration/-syn-generic/-syn-map/-syn-opt are
+# shorthand `flow.name` values mapping to common (elaborate, X) ranges; the
+# real primitive is always this from/to range plus checkpoint reuse.
+set wolf_stage_order {elaborate syn_generic syn_map syn_opt}
 array set wolf_flow_netlist_suffix {
     syn_generic generic
     syn_map     mapped
     syn_opt     opt
 }
 
+proc wolf_checkpoint_path {stage} {
+    return [file join $::wolf_checkpoint_dir "$stage.db"]
+}
+
+# Every stage's post-run design state is saved so a later run can resume
+# from it via wolf_flow_read_checkpoint instead of re-running everything
+# before it -- the whole point being that an expensive stage (syn_generic on
+# a large design, for instance) is only ever paid for once.
+proc wolf_flow_write_checkpoint {stage} {
+    wolf_step "Checkpointing $stage"
+    file mkdir $::wolf_checkpoint_dir
+    write_db [wolf_checkpoint_path $stage]
+}
+
+proc wolf_flow_read_checkpoint {stage} {
+    set path [wolf_checkpoint_path $stage]
+    if {![file exists $path]} {
+        error "no checkpoint found for stage '$stage' at $path; run -from\
+            a stage whose checkpoint already exists, or -from elaborate to\
+            start fresh"
+    }
+    wolf_step "Restoring checkpoint: $stage"
+    read_db $path
+}
+
 proc wolf_run_flow {} {
-    if {![info exists ::wolf_flow_stages($::wolf_flow_name)]} {
-        puts stderr "WOLF Genus failure: unsupported flow $::wolf_flow_name"
+    set order $::wolf_stage_order
+    set from_index [lsearch -exact $order $::wolf_from_stage]
+    set to_index [lsearch -exact $order $::wolf_to_stage]
+    if {$from_index < 0 || $to_index < 0 || $to_index < $from_index} {
+        puts stderr "WOLF Genus failure: invalid stage range\
+            $::wolf_from_stage..$::wolf_to_stage (expected an ordered pair\
+            from {$order})"
         if {!$::wolf_interactive} { exit 1 }
         return
     }
-    set stages $::wolf_flow_stages($::wolf_flow_name)
     if {[catch {
         wolf_flow_configure_resources
-        wolf_flow_load_technology
-        wolf_flow_apply_overrides
-        wolf_flow_read_physical
-        wolf_flow_read_sources
-        wolf_flow_elaborate
-        wolf_flow_init_design
-        wolf_flow_read_def
-        wolf_flow_read_constraints
+        if {$from_index == 0} {
+            wolf_flow_load_technology
+            wolf_flow_apply_overrides
+            wolf_flow_read_physical
+            wolf_flow_read_sources
+            wolf_flow_elaborate
+            wolf_flow_init_design
+            wolf_flow_read_def
+            wolf_flow_read_constraints
+            wolf_flow_write_checkpoint elaborate
+        } else {
+            # Re-asserting technology/overrides is harmless even though the
+            # restored checkpoint already carries its own session state.
+            wolf_flow_load_technology
+            wolf_flow_apply_overrides
+            wolf_flow_read_checkpoint [lindex $order [expr {$from_index - 1}]]
+        }
         set netlist_suffix ""
-        if {[llength $stages] > 0} {
-            wolf_flow_set_dont_use
-            wolf_flow_create_cost_group
-            foreach stage $stages {
-                switch $stage {
-                    syn_generic { wolf_flow_syn_generic }
-                    syn_map     { wolf_flow_syn_map }
-                    syn_opt     { wolf_flow_syn_opt }
+        for {set i [expr {$from_index > 0 ? $from_index : 1}]} {$i <= $to_index} {incr i} {
+            set stage [lindex $order $i]
+            switch $stage {
+                syn_generic {
+                    wolf_flow_set_dont_use
+                    wolf_flow_create_cost_group
+                    wolf_flow_syn_generic
                 }
+                syn_map { wolf_flow_syn_map }
+                syn_opt { wolf_flow_syn_opt }
             }
-            set netlist_suffix $::wolf_flow_netlist_suffix([lindex $stages end])
+            wolf_flow_write_checkpoint $stage
+            set netlist_suffix $::wolf_flow_netlist_suffix($stage)
         }
         wolf_flow_check_design
         wolf_flow_write_reports $netlist_suffix

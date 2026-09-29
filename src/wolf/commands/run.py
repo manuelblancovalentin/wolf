@@ -180,6 +180,7 @@ def command_run(args: argparse.Namespace) -> int:
             status, run_directory = backend.run_genus(
                 context, clean=getattr(args, "clean", False),
                 interactive=getattr(args, "interactive", False),
+                from_stage=args.from_stage, to_stage=args.to_stage,
             )
         _final_summary(context, status, 0.0, run_directory=run_directory)
         return status

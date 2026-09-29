@@ -50,26 +50,23 @@ GENUS_REQUIRED_DEFINES = ("SYNTHESIS",)
 _ALLOWED_CADENCE_FLOWTOOL_OVERRIDES = frozenset({"genus"})
 _ALLOWED_GENUS_OVERRIDES = frozenset({"set_db"})
 
-# Selectable Genus flows. Each name is a `flow.name` an environment can
-# choose; the value is the ordered synthesis stages it runs on top of the
-# elaboration pipeline every flow shares. Elaboration-only remains the
-# default so existing environments are unaffected.
+# Canonical stage order -- must match flows/cadence-genus/flow.tcl's
+# `wolf_stage_order` exactly. -from/-to name one entry each; the inclusive
+# range between them is what actually runs (see `_resolve_stage_range`).
+STAGE_ORDER = ("elaborate", "syn_generic", "syn_map", "syn_opt")
+
+# `flow.name` values remain supported as shorthand for the common "run
+# everything from elaborate through X" range -- not a separate mechanism.
 FLOW_GENUS_ELABORATION = "genus-elaboration"
 FLOW_GENUS_SYN_GENERIC = "genus-syn-generic"
 FLOW_GENUS_SYN_MAP = "genus-syn-map"
 FLOW_GENUS_SYN_OPT = "genus-syn-opt"
 
-_SYNTHESIS_STAGES: Mapping[str, tuple[str, ...]] = {
-    FLOW_GENUS_ELABORATION: (),
-    FLOW_GENUS_SYN_GENERIC: ("syn_generic",),
-    FLOW_GENUS_SYN_MAP: ("syn_generic", "syn_map"),
-    FLOW_GENUS_SYN_OPT: ("syn_generic", "syn_map", "syn_opt"),
-}
-
-_SYNTHESIS_STAGE_TITLES = {
-    "syn_generic": "Synthesizing to generic gates",
-    "syn_map": "Mapping to technology library",
-    "syn_opt": "Optimizing mapped netlist",
+_FLOW_NAME_STAGE_RANGE: Mapping[str, str] = {
+    FLOW_GENUS_ELABORATION: "elaborate",
+    FLOW_GENUS_SYN_GENERIC: "syn_generic",
+    FLOW_GENUS_SYN_MAP: "syn_map",
+    FLOW_GENUS_SYN_OPT: "syn_opt",
 }
 
 _SYNTHESIS_STAGE_NETLIST_SUFFIX = {
@@ -79,16 +76,31 @@ _SYNTHESIS_STAGE_NETLIST_SUFFIX = {
 }
 
 
-def _resolve_synthesis_stages(context: ResolvedContext) -> tuple[str, ...]:
-    """Return the ordered synthesis stages the selected flow runs, if any."""
-    flow_name = context.flow_name or FLOW_GENUS_ELABORATION
-    try:
-        return _SYNTHESIS_STAGES[flow_name]
-    except KeyError:
-        raise ValueError(
-            f"unsupported cadence-flowtool flow {flow_name!r}; expected one of "
-            + ", ".join(sorted(_SYNTHESIS_STAGES))
-        ) from None
+def _resolve_stage_range(
+    context: ResolvedContext, from_stage: Optional[str], to_stage: Optional[str]
+) -> tuple[str, str]:
+    """Return the (from, to) stage names this run should execute.
+
+    An explicit -from/-to pair (checkpoint reuse's real primitive) always
+    wins. Without one, `flow.name` is shorthand for "elaborate through X".
+    """
+    if from_stage is None and to_stage is None:
+        flow_name = context.flow_name or FLOW_GENUS_ELABORATION
+        try:
+            return "elaborate", _FLOW_NAME_STAGE_RANGE[flow_name]
+        except KeyError:
+            raise ValueError(
+                f"unsupported cadence-flowtool flow {flow_name!r}; expected one of "
+                + ", ".join(sorted(_FLOW_NAME_STAGE_RANGE))
+            ) from None
+    from_stage = from_stage or "elaborate"
+    to_stage = to_stage or STAGE_ORDER[-1]
+    for stage in (from_stage, to_stage):
+        if stage not in STAGE_ORDER:
+            raise ValueError(f"unsupported stage {stage!r}; expected one of {STAGE_ORDER}")
+    if STAGE_ORDER.index(from_stage) > STAGE_ORDER.index(to_stage):
+        raise ValueError(f"-from {from_stage!r} comes after -to {to_stage!r}")
+    return from_stage, to_stage
 
 
 def _tcl_scalar(value: Any) -> str:
@@ -252,14 +264,20 @@ def _effective_genus_defines(context: ResolvedContext) -> tuple[str, ...]:
 
 
 def prepare_genus_inputs(
-    context: ResolvedContext, destination: Path, *, interactive: bool = False
+    context: ResolvedContext, destination: Path, *,
+    interactive: bool = False, from_stage: Optional[str] = None, to_stage: Optional[str] = None,
 ) -> GenusInputs:
     """Write deterministic Genus scripts and a provenance manifest."""
     if not context.sources:
         raise ValueError("Cadence Genus preparation requires ordered resolved sources")
     if not context.design_top:
         raise ValueError("Cadence Genus preparation requires design.top")
-    synthesis_stages = _resolve_synthesis_stages(context)
+    resolved_from_stage, resolved_to_stage = _resolve_stage_range(context, from_stage, to_stage)
+    synthesis_stages = tuple(
+        stage for stage in STAGE_ORDER[STAGE_ORDER.index(resolved_from_stage):
+                                        STAGE_ORDER.index(resolved_to_stage) + 1]
+        if stage != "elaborate"
+    )
     genus_vhdl_standard = _normalize_vhdl_standard(context.vhdl_standard)
     destination = destination.resolve()
     destination.mkdir(parents=True, exist_ok=True)
@@ -323,6 +341,7 @@ def prepare_genus_inputs(
     technology_lefs = context.technology.technology_lefs if context.technology else ()
     cell_lefs = context.technology.cell_lefs if context.technology else ()
     flow_root = _flow_root(context)
+    checkpoint_dir = destination / "checkpoints"
 
     # Resolved, run-specific *values* only -- every step this run performs,
     # and the order it performs them in, is defined in flow_root/flow.tcl
@@ -333,6 +352,9 @@ def prepare_genus_inputs(
     flow_config_script.write_text(
         "# Generated by WOLF; resolved values consumed by flow.tcl.\n"
         f"set wolf_flow_name {_tcl_quote(context.flow_name or FLOW_GENUS_ELABORATION)}\n"
+        f"set wolf_from_stage {_tcl_quote(resolved_from_stage)}\n"
+        f"set wolf_to_stage {_tcl_quote(resolved_to_stage)}\n"
+        f"set wolf_checkpoint_dir {_tcl_quote(str(checkpoint_dir))}\n"
         f"set wolf_design_name {_tcl_quote(context.design_name)}\n"
         f"set wolf_design_top {_tcl_quote(context.design_top)}\n"
         f"set wolf_max_cpus_per_server "
@@ -400,6 +422,9 @@ def prepare_genus_inputs(
         },
         "flow": context.flow_name or FLOW_GENUS_ELABORATION,
         "flow_root": str(flow_root),
+        "from_stage": resolved_from_stage,
+        "to_stage": resolved_to_stage,
+        "checkpoint_dir": str(checkpoint_dir),
         "synthesis_stages": list(synthesis_stages),
         "dont_use_cells": list(dont_use_cells),
         "floorplan_def": str(context.floorplan_def) if context.floorplan_def else None,
@@ -439,7 +464,8 @@ def validate_genus_or_raise(context: ResolvedContext) -> str:
 
 
 def run_genus(
-    context: ResolvedContext, *, clean: bool = False, interactive: bool = False
+    context: ResolvedContext, *, clean: bool = False, interactive: bool = False,
+    from_stage: Optional[str] = None, to_stage: Optional[str] = None,
 ) -> tuple[int, Path]:
     """Allocate, prepare, freeze provenance, and execute one Genus run.
 
@@ -448,11 +474,17 @@ def run_genus(
     process down; the caller regains control by typing ``exit`` there. Batch
     mode (the default) always exits so the process status is a reliable
     success/failure signal for automation.
+
+    from_stage/to_stage select the checkpoint range this run executes (see
+    flows/cadence-genus/flow.tcl); a run without -c/--clean reuses the same
+    numbered run directory, so an earlier stage's checkpoint written there
+    is still on disk for a later -from to resume from.
     """
     genus = validate_genus_or_raise(context)
     run_directory = allocate_genus_run(context, clean=clean)
     inputs = prepare_genus_inputs(
-        context, run_directory / "backend" / "cadence-genus", interactive=interactive
+        context, run_directory / "backend" / "cadence-genus", interactive=interactive,
+        from_stage=from_stage, to_stage=to_stage,
     )
     resolved = yaml.safe_load(inputs.manifest.read_text(encoding="utf-8"))
     resolved["schema"] = "wolf.resolved-run/v1"

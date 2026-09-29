@@ -152,6 +152,12 @@ prompt instead of exiting automatically when the run finishes or fails; type
 .B exit
 there to return.
 .TP
+.BI "wolf run -from " stage " -to " stage
+Cadence Flowtool declarative runs only. Select the
+.IR elaborate ", " syn_generic ", " syn_map ", or " syn_opt
+stage range this invocation executes; earlier stages are skipped by
+resuming an earlier run's checkpoint instead of being re-run.
+.TP
 .BI "wolf activate " name
 With the Bash integration loaded, activate the selected WOLF environment in the
 current shell. It does not change the working directory. Use

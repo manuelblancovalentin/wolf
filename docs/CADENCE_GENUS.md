@@ -39,8 +39,13 @@ the flow scripts above, never flow logic:
   technology, explicit Genus attribute overrides, and clock constraints;
 - `flow-config.tcl`: plain `set` statements for the run's resolved scalars
   (design name/top, thread count, dont-use cell list, physical view paths,
-  interactive flag) that `flow.tcl`'s procs read — see that file's header
-  comment for the exact list;
+  `-from`/`-to` stage range, checkpoint directory, interactive flag) that
+  `flow.tcl`'s procs read — see that file's header comment for the exact
+  list;
+- `checkpoints/<stage>.db`: a `write_db` checkpoint per stage that ran, so a
+  later run's `-from` can resume via `read_db` instead of repeating earlier,
+  possibly expensive stages — see
+  [Checkpointing and resuming a run](#checkpointing-and-resuming-a-run);
 - `run.tcl`, a thin, almost-fixed driver: it sources `flow-config.tcl`, then
   the flow root's `presentation.tcl` and `flow.tcl`, then calls
   `wolf_run_flow`. It contains no step logic of its own;
@@ -115,6 +120,9 @@ elaboration pipeline:
 | `genus-syn-opt`      | `syn_generic`, `syn_map`, `syn_opt`        | `outputs/<design>.opt.v`     |
 
 An unrecognized `flow.name` is rejected before any Genus input is written.
+`flow.name` is shorthand for a common "elaborate through X" range over the
+real primitive, `-from`/`-to` -- see
+[Checkpointing and resuming a run](#checkpointing-and-resuming-a-run).
 
 Before the first synthesis stage, `prepare_genus_inputs` optionally marks
 PDK-configured cells unusable (`set_db [get_db base_cells $pattern]
@@ -151,6 +159,30 @@ metadata:
       dont_use:
         - "*_lvt"
 ```
+
+## Checkpointing and resuming a run
+
+Every stage (`elaborate`, `syn_generic`, `syn_map`, `syn_opt`) writes a
+`write_db` checkpoint to `<run>/backend/cadence-genus/checkpoints/<stage>.db`
+once it finishes. `wolf run`'s existing `-from`/`-to` flags select which
+stages actually execute this invocation:
+
+```bash
+wolf run --environment my-environment -from syn_map -to syn_map
+```
+
+reads the `syn_generic` checkpoint (via `read_db`) instead of re-running
+`read_hdl`/`elaborate`/`syn_generic`, then runs only `syn_map`. Without
+`-c`/`--clean`, a run reuses the same numbered run directory, so an earlier
+invocation's checkpoints are still there for a later `-from` to resume from.
+Resuming from a stage whose checkpoint is missing fails clearly before
+touching Genus rather than silently starting over.
+
+`flow.name` remains a shorthand for the common "elaborate through X" range
+when `-from`/`-to` are not given (`genus-syn-map` == `-from elaborate -to
+syn_map`) -- but `-from`/`-to` plus checkpoint reuse are the real primitive
+underneath it, and take precedence whenever given explicitly. Combine with
+`--interactive` to inspect a resumed run (e.g. `gui_show`) once it finishes.
 
 ## Physical views, floorplan DEF, and MMMC
 

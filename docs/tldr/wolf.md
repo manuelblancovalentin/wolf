@@ -87,6 +87,10 @@
 
 `wolf run --environment {{environment}} --interactive`
 
+- Resume Cadence Genus at a mapping stage using a prior run's checkpoint:
+
+`wolf run --environment {{environment}} -from syn_map -to syn_map`
+
 - Load Bash integration to enable in-place activation and command completion:
 
 `source ./shell/wolf.bash && wolf activate {{environment}}`

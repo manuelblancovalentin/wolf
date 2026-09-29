@@ -23,8 +23,12 @@ class CadenceFlowtoolBackend(Backend):
     def prepare_genus_inputs(self, context: ResolvedContext, destination) -> GenusInputs:
         return prepare_genus_inputs(context, destination)
 
-    def run_genus(self, context: ResolvedContext, *, clean: bool = False, interactive: bool = False):
-        return run_genus(context, clean=clean, interactive=interactive)
+    def run_genus(
+        self, context: ResolvedContext, *, clean: bool = False, interactive: bool = False,
+        from_stage: Optional[str] = None, to_stage: Optional[str] = None,
+    ):
+        return run_genus(context, clean=clean, interactive=interactive,
+                          from_stage=from_stage, to_stage=to_stage)
 
     def validate(
         self, context: Optional[Mapping[str, str]] = None

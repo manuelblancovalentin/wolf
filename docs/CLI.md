@@ -121,3 +121,9 @@ Genus at its own interactive prompt at the end of a run, or after a failure,
 instead of exiting automatically; type `exit` there to return control. Batch
 mode (the default) always exits so its process status is a reliable
 automation signal. See [Cadence Genus backend](CADENCE_GENUS.md#interactive-runs).
+
+For cadence-flowtool declarative runs, `wolf run -from STAGE -to STAGE`
+(`elaborate`, `syn_generic`, `syn_map`, or `syn_opt`) selects which stages
+this invocation executes; earlier stages are skipped by resuming from a
+prior run's checkpoint instead of being re-run. See
+[Checkpointing and resuming a run](CADENCE_GENUS.md#checkpointing-and-resuming-a-run).
