@@ -6,6 +6,7 @@ import argparse
 import os
 
 from wolf import ui
+from wolf.commands.common import resolve_environment_name
 from wolf.commands.env import _environment_path, _read_variables
 from wolf.commands.run import _context
 from wolf.environment import environment_manifest, load_environment, profile_semantics
@@ -14,12 +15,7 @@ from wolf.package.store import PackageStore
 
 
 def command_info(args: argparse.Namespace) -> int:
-    name = args.environment or os.environ.get("WOLF_ACTIVE_ENV")
-    if not name:
-        raise ValueError(
-            "no WOLF environment is active; use wolf info <environment> or "
-            "wolf activate <environment>"
-        )
+    name = resolve_environment_name(args.environment)
     path = _environment_path(name)
     if not path.is_dir():
         raise ValueError(f"active WOLF environment {name!r} does not exist")

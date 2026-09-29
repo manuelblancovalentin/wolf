@@ -12,6 +12,7 @@ import tempfile
 
 import yaml
 
+from wolf.commands.common import resolve_environment_name
 from wolf.environment import ENVIRONMENT_FILENAME, load_environment, normalize_environment
 from wolf.legacy import LegacyCommandError, run_env
 from wolf.paths import environments_dir
@@ -99,36 +100,38 @@ def command_create(args: argparse.Namespace) -> int:
 
 
 def command_remove(args: argparse.Namespace) -> int:
-    path = _existing_environment(args.name)
-    if os.environ.get("WOLF_ENV_NAME") or os.environ.get("WOLF_ACTIVE_ENV") == args.name:
+    name = resolve_environment_name(args.name)
+    path = _existing_environment(name)
+    if os.environ.get("WOLF_ENV_NAME") or os.environ.get("WOLF_ACTIVE_ENV") == name:
         raise ValueError("deactivate the current WOLF environment before removing one")
     if not args.yes:
-        answer = input(f"Remove WOLF environment {args.name!r} permanently? [y/N] ")
+        answer = input(f"Remove WOLF environment {name!r} permanently? [y/N] ")
         if answer.lower() not in {"y", "yes"}:
-            ui.info(f"WOLF environment {args.name!r} was not removed")
+            ui.info(f"WOLF environment {name!r} was not removed")
             return 0
     if (path / ENVIRONMENT_FILENAME).is_file():
         shutil.rmtree(path)
     else:
-        run_env(["remove", "--yes", "--name", args.name])
+        run_env(["remove", "--yes", "--name", name])
     if path.exists() or path.is_symlink():
         raise LegacyCommandError("legacy environment removal did not remove the environment")
-    ui.success(f"Removed WOLF environment {args.name!r}")
+    ui.success(f"Removed WOLF environment {name!r}")
     return 0
 
 
 def command_set(args: argparse.Namespace) -> int:
-    path = _existing_environment(args.name)
+    name = resolve_environment_name(args.name)
+    path = _existing_environment(name)
     manifest = path / ENVIRONMENT_FILENAME
     if manifest.is_file():
-        _set_declarative_value(manifest, args.key, args.value, args.name)
-        ui.success(f"Set {args.key} in WOLF environment {args.name!r}")
+        _set_declarative_value(manifest, args.key, args.value, name)
+        ui.success(f"Set {args.key} in WOLF environment {name!r}")
         return 0
     if not _VARIABLE_NAME.fullmatch(args.key):
         raise ValueError(f"invalid environment variable name: {args.key!r}")
     legacy_error = None
     try:
-        run_env(["set", args.name, args.key, args.value], environment_name=args.name)
+        run_env(["set", name, args.key, args.value], environment_name=name)
     except LegacyCommandError as error:
         # Legacy Bash may return the status of its in-process export even after
         # correctly persisting a value containing whitespace. Verify the file
@@ -141,7 +144,7 @@ def command_set(args: argparse.Namespace) -> int:
         raise LegacyCommandError("legacy environment variable update was not persisted")
     if legacy_error is not None and str(legacy_error) != "legacy environment operation failed":
         raise legacy_error
-    ui.success(f"Set {args.key} in WOLF environment {args.name!r}")
+    ui.success(f"Set {args.key} in WOLF environment {name!r}")
     return 0
 
 
@@ -186,7 +189,7 @@ def _set_declarative_value(path: Path, key: str, raw_value: str, name: str) -> N
 
 
 def command_clone(args: argparse.Namespace) -> int:
-    source = _existing_environment(args.source)
+    source = _existing_environment(resolve_environment_name(args.source))
     destination = _environment_path(args.destination)
     if destination.exists() or destination.is_symlink():
         raise ValueError(f"WOLF environment {args.destination!r} already exists")
@@ -232,7 +235,7 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     )
 
     remove_parser = commands.add_parser("remove", help="remove an environment")
-    remove_parser.add_argument("name")
+    remove_parser.add_argument("name", nargs="?", help="defaults to the active environment")
     remove_parser.add_argument("-y", "--yes", action="store_true", help="do not prompt")
     remove_parser.set_defaults(
         handler=command_remove,
@@ -241,7 +244,7 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     )
 
     set_parser = commands.add_parser("set", help="persist an environment variable")
-    set_parser.add_argument("name")
+    set_parser.add_argument("name", nargs="?", help="defaults to the active environment")
     set_parser.add_argument("key")
     set_parser.add_argument("value")
     set_parser.set_defaults(
@@ -251,7 +254,7 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     )
 
     clone_parser = commands.add_parser("clone", help="clone a declarative environment")
-    clone_parser.add_argument("source")
+    clone_parser.add_argument("source", nargs="?", help="defaults to the active environment")
     clone_parser.add_argument("destination")
     clone_parser.set_defaults(
         handler=command_clone,

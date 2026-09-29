@@ -4,14 +4,14 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 
 from wolf import ui
+from wolf.commands.common import resolve_environment_name
 from wolf.status import load_status, render_human, select_run
 
 
 def command_status(args: argparse.Namespace) -> int:
-    environment = args.environment or os.environ.get("WOLF_ACTIVE_ENV")
+    environment = resolve_environment_name(args.environment, required=False)
     run = select_run(environment, args.run)
     if run is None:
         if args.run:

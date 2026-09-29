@@ -178,6 +178,41 @@ backend:
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("Environment: native", result.stdout)
 
+    def test_info_defaults_to_active_environment(self):
+        active = dict(self.env, WOLF_ACTIVE_ENV="native")
+        result = self.wolf("info", environment=active)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Environment: native", result.stdout)
+
+    def test_env_set_defaults_to_active_environment(self):
+        active = dict(self.env, WOLF_ACTIVE_ENV="native")
+        result = self.wolf("env", "set", "resources.threads", "16", environment=active)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        info = self.wolf("info", "native")
+        self.assertIn("Threads: 16", info.stdout)
+
+    def test_env_set_without_active_environment_or_name_fails_clearly(self):
+        result = self.wolf("env", "set", "resources.threads", "16")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("no WOLF environment is active", result.stderr)
+
+    def test_env_clone_defaults_source_to_active_environment(self):
+        active = dict(self.env, WOLF_ACTIVE_ENV="native")
+        result = self.wolf("env", "clone", "native-clone", environment=active)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        info = self.wolf("info", "native-clone")
+        self.assertEqual(info.returncode, 0, info.stderr)
+        self.assertIn("Design: ibex", info.stdout)
+
+    def test_env_remove_without_name_falls_back_but_active_guard_still_applies(self):
+        # Falling back to the active environment for removal still hits the
+        # existing "deactivate before removing the active environment" guard;
+        # the fallback composes with that safety check rather than bypassing it.
+        active = dict(self.env, WOLF_ACTIVE_ENV="native")
+        result = self.wolf("env", "remove", "--yes", environment=active)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("deactivate", result.stderr)
+
     def test_real_allocation_freezes_manifest_and_associates_generated_files(self):
         result = self.wolf(
             "run", "--environment", "native", "--runtag", "frozen", "--yes",

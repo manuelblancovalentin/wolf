@@ -350,7 +350,8 @@ constraints:
     def test_info_requires_name_without_active_environment(self):
         info = self.wolf("info")
         self.assertEqual(info.returncode, 2)
-        self.assertIn("wolf info <environment>", info.stderr)
+        self.assertIn("no WOLF environment is active", info.stderr)
+        self.assertIn("wolf activate <environment>", info.stderr)
 
     def test_deactivate_is_safe_without_active_environment(self):
         deactivate = self.wolf("deactivate")
