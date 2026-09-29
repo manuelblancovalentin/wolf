@@ -19,7 +19,7 @@ wolf() {
             if [ -z "${_WOLF_ORIGINAL_PS1+x}" ]; then
                 _WOLF_ORIGINAL_PS1=${PS1-}
             fi
-            PS1="${_WOLF_ORIGINAL_PS1} [${2}]"
+            PS1="\[\033[38;5;135m\]«${2}»\[\033[0m\] ${_WOLF_ORIGINAL_PS1}"
             export WOLF_ACTIVE_ENV="$2"
             # Export the environment's declared env: map. Each key's prior
             # value (or absence) is saved once so deactivate can restore it,

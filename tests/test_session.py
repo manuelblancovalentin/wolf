@@ -47,7 +47,7 @@ original_pid=$$; original_pwd=$PWD; original_path=$PATH; original_ps1='custom> '
 wolf activate foo || exit $?
 [ "$$" = "$original_pid" ] && [ "$PWD" = "$original_pwd" ] && [ "$PATH" = "$original_path" ] && [ "$KEEP" = value ] && [ "$WOLF_ACTIVE_ENV" = foo ] || exit 10
 wolf activate bar || exit $?
-[ "$WOLF_ACTIVE_ENV" = bar ] && [ "$PS1" = 'custom>  [bar]' ] || exit 11
+[ "$WOLF_ACTIVE_ENV" = bar ] && [ "$PS1" = '\[\033[38;5;135m\]«bar»\[\033[0m\] custom> ' ] || exit 11
 wolf info >/dev/null || exit $?
 cd /; wolf run --plan >/dev/null || exit $?
 wolf deactivate

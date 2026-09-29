@@ -104,3 +104,25 @@ def key_value(key: object, value: object) -> None:
     line.append(": ")
     line.append(str(value))
     console.print(line, soft_wrap=True)
+
+
+def section(title: str) -> None:
+    """Print a bold banded section title, e.g. within a pre-run summary."""
+    console.print(Text(f" {title} ", style="bold white on blue"), soft_wrap=True)
+
+
+def confirm(prompt: str, *, assume_yes: bool = False) -> bool:
+    """Ask the user to proceed, honoring an already-affirmed -y/--yes flag."""
+    if assume_yes:
+        return True
+    line = Text()
+    line.append(" ", style="bold red")
+    line.append(prompt, style="bold red")
+    line.append(" ")
+    line.append("[y/N]: ", style="bold yellow")
+    console.print(line, end="", soft_wrap=True)
+    try:
+        reply = input()
+    except EOFError:
+        reply = ""
+    return reply.strip().lower() in ("y", "yes")

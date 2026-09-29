@@ -91,22 +91,69 @@ def _context(args: argparse.Namespace) -> ResolvedContext:
     )
 
 
-def _summary(context: ResolvedContext) -> None:
+def _summary(
+    context: ResolvedContext,
+    *,
+    from_stage: str | None = None,
+    to_stage: str | None = None,
+) -> None:
+    ui.section("Pre-run summary")
+
+    ui.section("Design options")
     ui.key_value("Environment", context.environment_name or "shell/CLI")
-    ui.key_value("Format", context.format)
     ui.key_value("Design", context.design_name)
     if context.design_top:
         ui.key_value("Top", context.design_top)
+    ui.key_value("Run tag", context.run_tag)
+
+    ui.section("Technology specification")
     ui.key_value("Technology", context.process)
-    if context.flow_name:
-        ui.key_value("Flow", context.flow_name)
-    ui.key_value("Backend", context.backend)
-    ui.key_value("Workspace root", context.workspace_root)
-    ui.key_value("Run directory", context.run_directory)
+    if context.technology:
+        technology = context.technology
+        ui.key_value("Technology package", f"{context.technology_package} ({technology.revision})")
+        ui.key_value("Timing corner", technology.timing_corner)
+        for library in technology.timing_libraries:
+            ui.key_value("  Timing library", library)
     for package, revision in sorted(context.package_revisions.items()):
         ui.key_value(f"Package {package}", revision)
+
+    ui.section("Flow workspace")
+    if context.flow_name:
+        ui.key_value("Flow", context.flow_name)
+    ui.key_value("Workspace root", context.workspace_root)
+    ui.key_value("Run directory", context.run_directory)
+
+    ui.section("Inputs")
+    if context.source_files:
+        ui.key_value("Source files", len(context.source_files))
+        for source in context.sources:
+            ui.key_value(f"  [{source.order}] {source.library}", source.path)
+    if context.include_directories:
+        ui.key_value("Include directories", ", ".join(str(p) for p in context.include_directories))
+    if context.defines:
+        ui.key_value("Defines", ", ".join(context.defines))
+    if context.vhdl_standard:
+        ui.key_value("VHDL standard", context.vhdl_standard)
+
+    ui.section("Flow configurations")
+    if context.threads:
+        ui.key_value("Threads", context.threads)
+    for key, value in sorted(context.env_vars.items()):
+        ui.key_value(f"env.{key}", value)
+    for scope, overrides in context.backend_overrides.items():
+        ui.key_value(f"backend.{scope}", overrides)
     for clock in context.clocks:
         ui.key_value(f"Clock {clock.name}", f"{clock.port} @ {clock.period_ps:g} ps")
+
+    if from_stage or to_stage:
+        ui.section("Flow run sequence")
+        if from_stage:
+            ui.key_value("From stage", from_stage)
+        if to_stage:
+            ui.key_value("To stage", to_stage)
+
+    ui.section("Execution backend")
+    ui.key_value("Backend", context.backend)
 
 
 def command_run(args: argparse.Namespace) -> int:
@@ -118,16 +165,23 @@ def command_run(args: argparse.Namespace) -> int:
             failures = [f"{item.name}: {item.detail}" for item in checks if not item.available]
             if failures:
                 raise ValueError("Cadence Genus validation failed: " + "; ".join(failures))
-            _summary(context)
+            _summary(context, from_stage=args.from_stage, to_stage=args.to_stage)
             ui.key_value("Genus run directory", context.run_directory)
             ui.key_value("Genus collateral", context.run_directory / "backend" / "cadence-genus")
             return 0
+        _summary(context, from_stage=args.from_stage, to_stage=args.to_stage)
+        if not ui.confirm(
+            f"Proceed with previous configuration and run backend {context.backend}?",
+            assume_yes=args.yes,
+        ):
+            ui.info("Aborted; no run was started.")
+            return 1
         with _overlay_environment(context.env_vars):
             status, run_directory = backend.run_genus(context, clean=getattr(args, "clean", False))
         _final_summary(context, status, 0.0, run_directory=run_directory)
         return status
     backend_environment = backend.prepare_execution(context)
-    _summary(context)
+    _summary(context, from_stage=args.from_stage, to_stage=args.to_stage)
     if backend_environment.get("WOLF_RESOLVED_MANIFEST"):
         ui.key_value("Resolved manifest", backend_environment["WOLF_RESOLVED_MANIFEST"])
     if backend_environment.get("ORFS_DESIGN_CONFIG"):
@@ -140,6 +194,13 @@ def command_run(args: argparse.Namespace) -> int:
         ui.key_value("Container image", backend_environment["ORFS_CONTAINER_IMAGE"])
     if args.plan:
         return 0
+    if context.format == "declarative-v1":
+        if not ui.confirm(
+            f"Proceed with previous configuration and run backend {context.backend}?",
+            assume_yes=args.yes,
+        ):
+            ui.info("Aborted; no run was started.")
+            return 1
     environment = os.environ.copy()
     environment.update(context.values)
     environment.update(backend_environment)
@@ -161,7 +222,9 @@ def command_run(args: argparse.Namespace) -> int:
                    "--process", context.process]
     if args.runtag:
         runner_args.extend(["--runtag", context.run_tag])
-    if args.yes:
+    if args.yes or context.format == "declarative-v1":
+        # Declarative environments are already confirmed above; do not make
+        # the legacy runner prompt a second time.
         runner_args.append("--yes")
     if getattr(args, "clean", False):
         runner_args.append("--clean")

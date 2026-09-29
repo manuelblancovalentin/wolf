@@ -1,15 +1,17 @@
 # Zsh integration for WOLF. Source once per shell session or from ~/.zshrc.
 
-# Remove the marker used by the first zsh integration revision, which appended
-# to PROMPT and could appear immediately before the command line in multiline
-# themes.  Keep WOLF's marker in RPROMPT instead.
+# Remove markers used by earlier zsh integration revisions (a PROMPT suffix,
+# then an RPROMPT suffix) before switching to a PROMPT prefix.
 if [ -n "${_WOLF_ZSH_MARKER-}" ]; then
     PROMPT=${PROMPT%" ${_WOLF_ZSH_MARKER}"}
 fi
 if [ -n "${_WOLF_ZSH_BASE_RPROMPT+x}" ]; then
     RPROMPT=$_WOLF_ZSH_BASE_RPROMPT
 fi
-unset _WOLF_ZSH_BASE_PROMPT _WOLF_ZSH_MARKER
+if [ -n "${_WOLF_ZSH_BASE_PROMPT+x}" ]; then
+    PROMPT=$_WOLF_ZSH_BASE_PROMPT
+fi
+unset _WOLF_ZSH_BASE_PROMPT _WOLF_ZSH_MARKER _WOLF_ZSH_PROMPT_MARKER
 unset _WOLF_ZSH_BASE_RPROMPT _WOLF_ZSH_RPROMPT_MARKER
 
 _wolf_command() {
@@ -18,17 +20,17 @@ _wolf_command() {
 
 _wolf_zsh_prompt() {
     if [ -z "${WOLF_ACTIVE_ENV-}" ]; then
-        if [ -n "${_WOLF_ZSH_BASE_RPROMPT+x}" ]; then
-            RPROMPT=$_WOLF_ZSH_BASE_RPROMPT
-            unset _WOLF_ZSH_BASE_RPROMPT _WOLF_ZSH_RPROMPT_MARKER
+        if [ -n "${_WOLF_ZSH_BASE_PROMPT+x}" ]; then
+            PROMPT=$_WOLF_ZSH_BASE_PROMPT
+            unset _WOLF_ZSH_BASE_PROMPT _WOLF_ZSH_PROMPT_MARKER
         fi
         return 0
     fi
-    if [ -z "${_WOLF_ZSH_BASE_RPROMPT+x}" ]; then
-        _WOLF_ZSH_BASE_RPROMPT=$RPROMPT
+    if [ -z "${_WOLF_ZSH_BASE_PROMPT+x}" ]; then
+        _WOLF_ZSH_BASE_PROMPT=$PROMPT
     fi
-    _WOLF_ZSH_RPROMPT_MARKER="[%F{yellow}${WOLF_ACTIVE_ENV}%f]"
-    RPROMPT="${_WOLF_ZSH_BASE_RPROMPT} ${_WOLF_ZSH_RPROMPT_MARKER}"
+    _WOLF_ZSH_PROMPT_MARKER="%F{135}«${WOLF_ACTIVE_ENV}»%f"
+    PROMPT="${_WOLF_ZSH_PROMPT_MARKER} ${_WOLF_ZSH_BASE_PROMPT}"
 }
 
 wolf() {
@@ -46,7 +48,7 @@ wolf() {
             # Export the environment's declared env: map. Each key's prior
             # value (or absence) is saved once so deactivate can restore it,
             # the same save-once/restore-on-deactivate pattern used for the
-            # RPROMPT marker below.
+            # PROMPT marker below.
             _WOLF_ACTIVE_ENV_VAR_NAMES=""
             local _wolf_env_key _wolf_env_value _wolf_saved_var
             while IFS= read -r -d '' _wolf_env_key && IFS= read -r -d '' _wolf_env_value; do

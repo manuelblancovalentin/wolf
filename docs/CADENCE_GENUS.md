@@ -100,6 +100,13 @@ cd <run>/backend/cadence-genus
 genus -files run.tcl -log genus.log
 ```
 
+Before invoking Genus, `wolf run` prints a categorized pre-run summary
+(design options, technology specification, workspace, inputs, flow
+configuration, run sequence, execution backend) and asks for confirmation,
+mirroring the historical Bash runner's summary and prompt. Pass `-y`/`--yes`
+to skip it. `wolf run --plan` prints the same summary without prompting or
+invoking Genus.
+
 Preparation-only plans validate and report prospective paths without
 allocating a run or invoking Genus. A licensed Kona gate should first validate HDL read, `ESP_ASIC_TOP` elaboration, hierarchy,
 and link checks. WOLF must validate `genus` and any explicitly configured
