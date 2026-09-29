@@ -19,7 +19,10 @@ class PackageFoundationTests(unittest.TestCase):
         self.root = Path(self.temporary.name)
         self.environment = mock.patch.dict(
             os.environ,
-            {"WOLF_HOME": str(self.root / "wolf-home")},
+            {
+                "WOLF_HOME": str(self.root / "wolf-home"),
+                "XDG_CONFIG_HOME": str(self.root / "config"),
+            },
             clear=False,
         )
         self.environment.start()
