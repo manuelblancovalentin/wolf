@@ -46,6 +46,30 @@ The historical `/home/manu/stylus` flow was consulted only as a reference for
 the high-level technology-loading lifecycle. It is not copied, imported, or a
 runtime dependency of WOLF.
 
+## Genus attribute overrides
+
+Some Genus attributes are tool policy rather than package metadata or
+canonical WOLF semantics, and cannot be inferred from a resolved design
+(for example `hdl_max_memory_address_range`, which caps generic memory
+inference during elaboration). These are supplied explicitly through the
+`backend.cadence-flowtool` escape hatch in `wolf.yaml`:
+
+```yaml
+backend:
+  cadence-flowtool:
+    genus:
+      set_db:
+        hdl_max_memory_address_range: 65536
+```
+
+When present, `prepare_genus_inputs` writes `overrides.tcl` and sources it
+before `sources.tcl` and `elaborate`, so overrides take effect before Genus
+touches the design. Override values must be scalars (string, number, or
+boolean); the resolved key/value pairs are also recorded in
+`genus-inputs.yaml` and frozen run provenance. Unknown keys under
+`backend.cadence-flowtool` or `backend.cadence-flowtool.genus` are rejected
+rather than silently ignored.
+
 Preparation is exposed by `wolf.backend.cadence_genus.prepare_genus_inputs` and
 is intentionally separate from the legacy Flowtool shell runner. For
 declarative `cadence-flowtool` environments, the run bridge validates Genus

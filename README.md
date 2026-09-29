@@ -108,6 +108,89 @@ Local and Git registries are supported for institutional or private manifests.
 WOLF does not store Git credentials; authentication remains Git's
 responsibility. See [Packages](docs/PACKAGES.md) and [Registries](docs/REGISTRIES.md).
 
+## How to
+
+Short, self-contained recipes for common tasks. Each assumes a working WOLF
+install (`wolf --version` succeeds).
+
+**Install an open-source PDK package.**
+
+```bash
+wolf install flow/orfs
+wolf install pdk/asap7
+wolf package info pdk/asap7
+```
+
+`pdk/asap7` is a `package-path` view into the pinned `flow/orfs` checkout —
+open collateral, safe to fetch and commit a manifest for in `registry/`.
+
+**Register a licensed or otherwise host-local PDK.**
+
+Licensed PDKs live on institutional infrastructure and must never be fetched
+by WOLF or committed to `registry/`. A `local-path` package source instead
+references an already-resident absolute directory as-is:
+
+```yaml
+# /somewhere/not/in/git/local-registry/pdk/tsmc65.yaml
+schema_version: 1
+kind: pdk
+name: tsmc65
+description: Site-local TSMC 65LP digital timing libraries
+source:
+  type: local-path
+  root: /path/to/institutional/pdk/root
+  revision: site-label-or-version
+metadata:
+  technology:
+    name: tsmc65
+    timing:
+      corner: typical
+      libraries:
+        - relative/path/to/typical.lib
+```
+
+```bash
+wolf registry add site-pdk /somewhere/not/in/git/local-registry --type local
+wolf install pdk/tsmc65
+wolf env set my-environment technology "{package: pdk/tsmc65}"
+```
+
+See [Packages](PACKAGES.md) for the full `local-path` schema.
+
+**Create and customize a flow without forking the shared base.**
+
+```bash
+wolf flow init my-flow \
+  --from /path/to/shared/base/flow \
+  --to /path/to/my-project-repo/wolf/flows/my-flow \
+  --manifest /path/to/my-project-repo/wolf/registry/flow/my-flow.yaml \
+  --backend cadence-flowtool \
+  --revision "$(git -C /path/to/my-project-repo rev-parse HEAD)"
+```
+
+Edit anything under `--to` freely — cell lists, steps, whatever the project
+needs — then commit it inside your own project repo. See [Flows](FLOWS.md).
+
+**Add a flow or PDK registry and install from it.**
+
+```bash
+wolf registry add my-flows /path/to/my-project-repo/wolf/registry --type local
+wolf registry list
+wolf install flow/my-flow
+```
+
+**Override a single backend-native Genus attribute without forking a flow.**
+
+```yaml
+backend:
+  cadence-flowtool:
+    genus:
+      set_db:
+        hdl_max_memory_address_range: 65536
+```
+
+See [Genus attribute overrides](CADENCE_GENUS.md#genus-attribute-overrides).
+
 ## Configuration and setup
 
 `wolf init` creates persistent XDG-style configuration and can explicitly
@@ -169,8 +252,10 @@ validated.
 - [Environments](docs/ENVIRONMENTS.md)
 - [Packages](docs/PACKAGES.md)
 - [Registries](docs/REGISTRIES.md)
+- [Flows](docs/FLOWS.md)
 - [Configuration](docs/CONFIGURATION.md)
 - [ORFS backend](docs/ORFS.md)
+- [Cadence Genus backend](docs/CADENCE_GENUS.md)
 - [Testing](docs/TESTING.md)
 - [Runnable example](examples/ibex-asap7-orfs/README.md)
 - [Man page](docs/man/wolf.1)
