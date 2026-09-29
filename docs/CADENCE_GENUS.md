@@ -46,6 +46,25 @@ The historical `/home/manu/stylus` flow was consulted only as a reference for
 the high-level technology-loading lifecycle. It is not copied, imported, or a
 runtime dependency of WOLF.
 
+## Thread configuration and step presentation
+
+`prepare_genus_inputs` sets `max_cpus_per_server` when a thread count is
+resolved. WOLF's own canonical `resources.threads` wins when set; otherwise
+the backend honors `GENUS_NUM_CPUS` if the environment's `env:` map declares
+it — a long-standing Cadence-flow convention, recognized here as
+backend-native policy (read from the resolved, reproducible `env:` map, never
+the ambient process environment). Neither present means no attribute is
+emitted and Genus keeps its own default. The resolved value (or `null`) is
+recorded in `genus-inputs.yaml` as `max_cpus_per_server`.
+
+`run.tcl` also wraps each operation (technology load, overrides, source
+read, elaborate, constraints, design check, reports) in a small
+`wolf_step`/`wolf_sep` Tcl helper pair that prints an ANSI-colored title and
+divider — freshly written, inspired by the concept of bracketing each step
+with a colored banner rather than derived from any specific flow's script
+content. This only affects Genus's own subprocess stdout; it has no relation
+to `wolf.ui`/Rich, which governs the Python CLI's own terminal output.
+
 ## Genus attribute overrides
 
 Some Genus attributes are tool policy rather than package metadata or
