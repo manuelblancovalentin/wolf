@@ -40,6 +40,7 @@ class PackageSource:
     package: Optional[PackageId] = None
     path: Optional[str] = None
     parent_revision: Optional[str] = None
+    root: Optional[str] = None
 
 
 @dataclass(frozen=True)

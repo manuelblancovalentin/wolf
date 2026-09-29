@@ -110,6 +110,44 @@ validation:
         with self.assertRaisesRegex(ValueError, "must not escape"):
             load_manifest(manifest)
 
+    def test_local_path_manifest_requires_absolute_root(self):
+        manifest = self.root / "relative-root.yaml"
+        manifest.write_text(
+            '''schema_version: 1
+kind: pdk
+name: relative
+description: invalid local-path fixture
+source:
+  type: local-path
+  root: relative/path
+  revision: site-2026.1
+validation:
+  required_paths: []
+''', encoding="utf-8"
+        )
+        with self.assertRaisesRegex(ValueError, "requires an absolute root"):
+            load_manifest(manifest)
+
+    def test_local_path_manifest_parses_absolute_root(self):
+        manifest = self.root / "absolute-root.yaml"
+        manifest.write_text(
+            '''schema_version: 1
+kind: pdk
+name: tsmc65
+description: host-resident technology fixture
+source:
+  type: local-path
+  root: /opt/pdk/tsmc65
+  revision: site-2026.1
+validation:
+  required_paths: []
+''', encoding="utf-8"
+        )
+        loaded = load_manifest(manifest)
+        self.assertEqual(loaded.source.type, "local-path")
+        self.assertEqual(loaded.source.root, "/opt/pdk/tsmc65")
+        self.assertEqual(loaded.source.revision, "site-2026.1")
+
 
 class StaticRegistry:
     def __init__(self, *manifests):
@@ -249,6 +287,54 @@ class PackageInstallerTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(PackageInstallError, "install flow/demo first"):
             PackageInstaller(StaticRegistry(parent, child), self.store).install("pdk/demo")
+
+    def test_local_path_installs_by_reference_without_copying_content(self):
+        root = self.root / "host-local-pdk"
+        (root / "lib").mkdir(parents=True)
+        (root / "lib" / "typical.lib").write_text("library fixture\n", encoding="utf-8")
+        manifest = PackageManifest(
+            schema_version=1,
+            identifier=PackageId.parse("pdk/demo"),
+            description="host-resident technology fixture",
+            source=PackageSource(
+                type="local-path", url="", revision="site-2026.1", root=str(root),
+            ),
+            required_paths=("lib/typical.lib",),
+        )
+        installed, created = PackageInstaller(StaticRegistry(manifest), self.store).install("pdk/demo")
+        self.assertTrue(created)
+        self.assertEqual(installed.content_path, root)
+        self.assertEqual(installed.source_revision, "site-2026.1")
+        self.assertFalse((installed.installation_path / "source").exists())
+        self.assertFalse((installed.installation_path / "content").exists())
+        repeated, repeated_created = PackageInstaller(StaticRegistry(manifest), self.store).install("pdk/demo")
+        self.assertFalse(repeated_created)
+        self.assertEqual(repeated.content_path, root)
+
+    def test_local_path_requires_existing_root_and_required_content(self):
+        manifest = PackageManifest(
+            schema_version=1,
+            identifier=PackageId.parse("pdk/demo"),
+            description="host-resident technology fixture",
+            source=PackageSource(
+                type="local-path", url="", revision="site-2026.1",
+                root=str(self.root / "missing-pdk"),
+            ),
+            required_paths=("lib/typical.lib",),
+        )
+        with self.assertRaisesRegex(PackageInstallError, "does not exist"):
+            PackageInstaller(StaticRegistry(manifest), self.store).install("pdk/demo")
+        root = self.root / "incomplete-pdk"
+        root.mkdir()
+        manifest = PackageManifest(
+            schema_version=1,
+            identifier=PackageId.parse("pdk/demo2"),
+            description="host-resident technology fixture",
+            source=PackageSource(type="local-path", url="", revision="site-2026.1", root=str(root)),
+            required_paths=("lib/typical.lib",),
+        )
+        with self.assertRaisesRegex(PackageInstallError, "missing required content"):
+            PackageInstaller(StaticRegistry(manifest), self.store).install("pdk/demo2")
 
     def test_invalid_or_partial_installations_are_never_overwritten(self):
         repository, revision = self.repository("bad-source", {"other.txt": "wrong\n"})

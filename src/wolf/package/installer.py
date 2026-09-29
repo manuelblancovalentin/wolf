@@ -92,6 +92,8 @@ class PackageInstaller:
                 self._install_git(manifest, staging)
             elif manifest.source.type == "package-path":
                 self._install_package_path(manifest, staging, destination)
+            elif manifest.source.type == "local-path":
+                self._install_local_path(manifest, staging)
             else:
                 raise PackageInstallError(
                     f"unsupported package source type {manifest.source.type!r}"
@@ -175,6 +177,33 @@ class PackageInstaller:
             manifest,
             content_path="content",
             source_revision=tree_revision,
+        )
+
+    def _install_local_path(self, manifest: PackageManifest, staging: Path) -> None:
+        """Reference host-resident, already-licensed content in place.
+
+        Unlike ``git`` and ``package-path`` sources, WOLF never fetches or
+        copies this content: the manifest supplies an absolute path that the
+        caller's own institution already provides, and installation only
+        records that path as provenance.
+        """
+        source = manifest.source
+        assert source.root is not None
+        root = Path(source.root).expanduser()
+        if not root.is_absolute():
+            raise PackageInstallError(
+                f"package {manifest.identifier} local-path root must be absolute: {root}"
+            )
+        if not root.is_dir():
+            raise PackageInstallError(
+                f"package {manifest.identifier} local-path root does not exist: {root}"
+            )
+        self._validate(manifest, root)
+        _write_record(
+            staging / "installed.yaml",
+            manifest,
+            content_path=str(root),
+            source_revision=manifest.revision,
         )
 
     @staticmethod

@@ -68,18 +68,23 @@ def load_manifest(
     PackageId.parse(str(identifier))
     source_data = _mapping(data.get("source"), "source")
     source_type = _required_string(source_data, "type")
-    if source_type not in {"git", "package-path"}:
+    if source_type not in {"git", "package-path", "local-path"}:
         raise ValueError(f"unsupported package source type {source_type!r} in {path}")
     package = source_data.get("package")
+    root = source_data.get("root")
+    if source_type == "local-path":
+        if not isinstance(root, str) or not root or not Path(root).is_absolute():
+            raise ValueError(f"local-path source in {path} requires an absolute root")
     source = PackageSource(
         type=source_type,
-        url=_required_string(source_data, "url"),
+        url=_required_string(source_data, "url") if source_type != "local-path" else "",
         revision=_required_string(source_data, "revision"),
         submodules=source_data.get("submodules") == "recursive",
         package=PackageId.parse(package) if package else None,
         path=_relative_path(source_data.get("path"), "source.path")
         if source_type == "package-path" else None,
         parent_revision=source_data.get("parent_revision"),
+        root=root if source_type == "local-path" else None,
     )
     if source.type == "package-path" and (source.package is None or not source.path):
         raise ValueError(f"package-path source in {path} requires package and path")
