@@ -51,6 +51,22 @@ in a declarative profile.
 .TP
 .B wolf process list
 List legacy process definitions found in the WOLF state directory.
+.SH FLOW COMMANDS
+.TP
+.BI "wolf flow init " "name --from source --to destination --manifest path --backend backend --revision label"
+Copy a base flow's scripts from
+.I source
+into a new, independently editable directory at
+.IR destination ,
+then write a
+.B flow
+package manifest (local-path source) at
+.IR path .
+The base flow tree is only ever read, never modified. Register the manifest's
+directory with
+.B wolf registry add
+to make the flow installable as
+.IR flow/name .
 .SH BACKEND COMMANDS
 .TP
 .B wolf backend list

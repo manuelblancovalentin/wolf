@@ -39,6 +39,10 @@
 
 `wolf process list`
 
+- Bootstrap an independently editable copy of a base flow's scripts:
+
+`wolf flow init {{name}} --from {{/path/to/base/flow}} --to {{/path/to/project/flows/name}} --manifest {{/path/to/registry/flow/name.yaml}} --backend {{cadence-flowtool}} --revision {{label}}`
+
 - List built-in backends:
 
 `wolf backend list`
