@@ -66,6 +66,27 @@ An installed `flow/orfs` supplies the ORFS flow root when `ORFS_ROOT` is not
 configured. Explicit/environment `ORFS_ROOT` remains higher precedence, so
 external and institutional checkouts continue to work.
 
+## Host-resident technology (`local-path` sources)
+
+Licensed PDKs and other institution-local collateral cannot be fetched by
+WOLF's Git-based installer, and their content must never enter the
+git-tracked `registry/` tree. A manifest may instead use a `local-path`
+source:
+
+```yaml
+source:
+  type: local-path
+  root: /abs/path/already/present/on/this/host
+  revision: some-site-local-label
+```
+
+Installing a `local-path` package never clones or copies anything; it only
+validates `validation.required_paths` against the given root and records that
+absolute path as `content_path`. Manifests using this source type belong in a
+separate `local` registry (see `docs/REGISTRIES.md`), never in the committed
+`registry/` tree, since `root` and `revision` are host-specific and may point
+at license-encumbered content.
+
 ## Integration smoke test
 
 The real network test is opt-in because ORFS recursive submodules consume
