@@ -139,6 +139,43 @@ class OrfsPythonBackendTests(unittest.TestCase):
         execution_environment = legacy.call_args.args[1]
         self.assertEqual(execution_environment["ORFS_ROOT"], str(flow))
 
+    def test_generic_run_passes_declared_env_vars_through_untouched(self):
+        manifest = PackageRegistry().get("flow/orfs")
+        with tempfile.TemporaryDirectory(prefix="wolf-run-env-passthrough-") as temporary:
+            root = Path(temporary)
+            content = root / "source"
+            flow = content / "flow"
+            flow.mkdir(parents=True)
+            installed = InstalledPackage(
+                manifest=manifest,
+                installation_path=root,
+                content_path=content,
+                installed_at="test",
+                source_revision=manifest.revision,
+            )
+            context = ResolvedContext(
+                state_root=root,
+                environment_name="test",
+                environment_directory=root / "env",
+                workspace_root=root / "work",
+                design_name="ibex",
+                process="asap7",
+                backend="orfs",
+                run_tag="ibex",
+                run_directory=root / "work" / "ibex" / "ibex.asap7" / "ibex",
+                values={"WORKSPACE_DIR": str(root / "work")},
+                env_vars={"GENUS_NUM_CPUS": "64"},
+            )
+            args = mock.Mock(
+                plan=False, yes=False, from_stage=None, to_stage=None, passthrough=[]
+            )
+            with mock.patch("wolf.backend.orfs.PackageStore.read", return_value=installed), mock.patch(
+                "wolf.commands.run._context", return_value=context
+            ), mock.patch("wolf.commands.run.run_legacy", return_value=0) as legacy:
+                self.assertEqual(run_command.command_run(args), 0)
+        execution_environment = legacy.call_args.args[1]
+        self.assertEqual(execution_environment["GENUS_NUM_CPUS"], "64")
+
     def test_invalid_orfs_root_is_reported_clearly(self):
         checks = {
             item.name: item

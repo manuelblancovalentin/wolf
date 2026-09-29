@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 import os
 from pathlib import Path
 import sys
 import time
+from typing import Iterator, Mapping
 
 from wolf import ui
 from wolf.backend import get_backend
+from wolf.commands.common import resolve_environment_name
 from wolf.commands.env import _environment_path, _read_variables
 from wolf.context import ResolvedContext, resolve_context
 from wolf.context import resolve_cli_path
@@ -22,8 +25,28 @@ from wolf.legacy import run_legacy
 from wolf.paths import state_root
 
 
+@contextmanager
+def _overlay_environment(overrides: Mapping[str, str]) -> Iterator[None]:
+    """Temporarily overlay process environment for a backend that execs its
+    own subprocess without taking an explicit env mapping. WOLF core owns the
+    merge; no backend needs any code to receive these values."""
+    if not overrides:
+        yield
+        return
+    previous = {key: os.environ.get(key) for key in overrides}
+    os.environ.update(overrides)
+    try:
+        yield
+    finally:
+        for key, value in previous.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+
 def _context(args: argparse.Namespace) -> ResolvedContext:
-    environment_name = args.environment or os.environ.get("WOLF_ACTIVE_ENV") or os.environ.get("WOLF_ENV_NAME")
+    environment_name = resolve_environment_name(args.environment, required=False)
     environment_directory = None
     values: dict[str, str] = {}
     if environment_name:
@@ -99,7 +122,8 @@ def command_run(args: argparse.Namespace) -> int:
             ui.key_value("Genus run directory", context.run_directory)
             ui.key_value("Genus collateral", context.run_directory / "backend" / "cadence-genus")
             return 0
-        status, run_directory = backend.run_genus(context, clean=getattr(args, "clean", False))
+        with _overlay_environment(context.env_vars):
+            status, run_directory = backend.run_genus(context, clean=getattr(args, "clean", False))
         _final_summary(context, status, 0.0, run_directory=run_directory)
         return status
     backend_environment = backend.prepare_execution(context)
@@ -129,6 +153,10 @@ def command_run(args: argparse.Namespace) -> int:
         environment["WOLF_ENV_NAME"] = context.environment_name
     if context.format == "declarative-v1":
         environment["WOLF_SEMANTIC_SUMMARY"] = "true"
+    # Generic, backend-agnostic passthrough: WOLF core has no opinion on what
+    # any of these keys mean, and always applies last so an environment's own
+    # declared values are never silently shadowed.
+    environment.update(context.env_vars)
     runner_args = ["--backend", context.backend, "--design", context.design_name,
                    "--process", context.process]
     if args.runtag:
