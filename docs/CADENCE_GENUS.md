@@ -65,6 +65,74 @@ with a colored banner rather than derived from any specific flow's script
 content. This only affects Genus's own subprocess stdout; it has no relation
 to `wolf.ui`/Rich, which governs the Python CLI's own terminal output.
 
+## Synthesis flows
+
+By default, `flow.name` selects `genus-elaboration`: elaborate, read
+constraints, `check_design -unresolved`, and hierarchy/message reports (the
+behavior described above). Three additional flow names run further,
+technology-independent-through-mapped synthesis stages on top of the same
+elaboration pipeline:
+
+| `flow.name`         | Stages run (in order)                    | Netlist written           |
+|----------------------|-------------------------------------------|---------------------------|
+| `genus-elaboration`  | *(none — elaborate only)*                  | *(none)*                  |
+| `genus-syn-generic`  | `syn_generic`                              | `outputs/<design>.generic.v` |
+| `genus-syn-map`      | `syn_generic`, `syn_map`                   | `outputs/<design>.mapped.v`  |
+| `genus-syn-opt`      | `syn_generic`, `syn_map`, `syn_opt`        | `outputs/<design>.opt.v`     |
+
+An unrecognized `flow.name` is rejected before any Genus input is written.
+
+Before the first synthesis stage, `prepare_genus_inputs` optionally marks
+PDK-configured cells unusable (`set_db [get_db base_cells $pattern]
+.dont_use true` for each pattern in the selected technology package's
+`technology.synthesis.dont_use` metadata — plain cell-name globs, never
+arbitrary Tcl), then groups the standard Cadence Genus synthesis cost paths
+(`in2out`/`in2reg`/`reg2out`/`reg2reg`, via `group_path` over
+`all_inputs`/`all_outputs`/`all_registers`) — ordinary Cadence Genus practice
+for any design, not specific to any project's methodology. WOLF resolves one
+flat SDC per run rather than multiple constraint-mode/analysis-view objects,
+so this grouping happens once rather than once per view; a future multi-corner
+SDC model would extend it to iterate views the same way.
+
+A synthesis-flow run also adds `report_area > reports/area.rpt` and writes
+the resulting netlist with `write_hdl`. `genus-inputs.yaml` records `flow`,
+`synthesis_stages`, and `dont_use_cells` for provenance.
+
+Point an environment at a synthesis flow the same way as any other flow
+package:
+
+```yaml
+flow:
+  package: flow/genus-syn-generic   # or an inline {name: genus-syn-generic, backend: cadence-flowtool}
+```
+
+To declare dont-use cells, add `synthesis.dont_use` to the technology
+package's metadata alongside its existing `timing`/`physical` sections:
+
+```yaml
+metadata:
+  technology:
+    name: tsmc65
+    synthesis:
+      dont_use:
+        - "*_lvt"
+```
+
+## Interactive runs
+
+By default (batch mode) the generated `run.tcl` always calls `exit` --
+`exit 0` once every operation succeeds, `exit 1` after printing the original
+Tcl error if one fails -- so the Genus process always terminates and its
+subprocess exit code is a reliable pass/fail signal for automation. Passing
+`--interactive` to `wolf run` (cadence-flowtool declarative runs only) omits
+both `exit` calls: Genus's own CLI is inherited from the caller's terminal
+throughout (WOLF never redirects Genus's stdio), so once the script finishes
+-- or fails, after WOLF prints the Tcl error -- Genus simply falls through
+into its own interactive prompt instead of tearing the process down. Type
+`exit` at that prompt when done. Because the process no longer exits on its
+own, its exit code no longer reflects catch-block success/failure in
+interactive mode; use it for hands-on inspection, not automation.
+
 ## Genus attribute overrides
 
 Some Genus attributes are tool policy rather than package metadata or

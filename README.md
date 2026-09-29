@@ -221,6 +221,21 @@ backend:
 
 See [Genus attribute overrides](CADENCE_GENUS.md#genus-attribute-overrides).
 
+**Run real Genus synthesis, not just elaboration.**
+
+```yaml
+flow:
+  package: flow/genus-syn-generic   # or genus-syn-map / genus-syn-opt
+```
+
+```bash
+wolf run --environment my-environment -y
+```
+
+Produces a generic (or mapped/optimized) netlist under `outputs/` plus area,
+hierarchy, and message reports. See
+[Synthesis flows](docs/CADENCE_GENUS.md#synthesis-flows).
+
 ## Configuration and setup
 
 `wolf init` creates persistent XDG-style configuration and can explicitly

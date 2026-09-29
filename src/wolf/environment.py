@@ -217,6 +217,8 @@ def _technology_inputs(manifest: Any, installed: Any) -> Optional[ResolvedTechno
     timing = timing if isinstance(timing, dict) else {}
     physical = metadata.get("physical", {})
     physical = physical if isinstance(physical, dict) else {}
+    synthesis = metadata.get("synthesis", {})
+    synthesis = synthesis if isinstance(synthesis, dict) else {}
 
     def paths(value: Any, field: str) -> tuple[Path, ...]:
         if value is None:
@@ -245,11 +247,14 @@ def _technology_inputs(manifest: Any, installed: Any) -> Optional[ResolvedTechno
     corner = timing.get("corner", "typical")
     if not isinstance(corner, str) or not corner:
         raise ValueError("technology.timing.corner must be a nonempty string")
+    dont_use = synthesis.get("dont_use", [])
+    if not isinstance(dont_use, list) or not all(isinstance(item, str) and item for item in dont_use):
+        raise ValueError("technology.synthesis.dont_use must be a list of nonempty cell name patterns")
     return ResolvedTechnology(
         package=str(manifest.identifier), revision=manifest.revision, name=name,
         root=root, timing_corner=corner, timing_libraries=libraries,
         technology_lefs=technology_lefs, cell_lefs=cell_lefs, rc_files=rc_files,
-        gds_files=gds_files, checksums=checksums,
+        gds_files=gds_files, checksums=checksums, dont_use_cells=tuple(dont_use),
     )
 
 

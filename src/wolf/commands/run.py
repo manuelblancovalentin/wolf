@@ -177,7 +177,10 @@ def command_run(args: argparse.Namespace) -> int:
             ui.info("Aborted; no run was started.")
             return 1
         with _overlay_environment(context.env_vars):
-            status, run_directory = backend.run_genus(context, clean=getattr(args, "clean", False))
+            status, run_directory = backend.run_genus(
+                context, clean=getattr(args, "clean", False),
+                interactive=getattr(args, "interactive", False),
+            )
         _final_summary(context, status, 0.0, run_directory=run_directory)
         return status
     backend_environment = backend.prepare_execution(context)
@@ -312,5 +315,10 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     parser.add_argument("-c", "--clean", action="store_true",
                         help="allocate a new numbered implementation run")
     parser.add_argument("--plan", action="store_true", help="show resolved paths without execution")
+    parser.add_argument(
+        "--interactive", action="store_true",
+        help="leave the underlying tool's own CLI open at a prompt instead of exiting "
+             "automatically when the run finishes or fails (cadence-flowtool only)",
+    )
     parser.add_argument("passthrough", nargs=argparse.REMAINDER)
     parser.set_defaults(handler=command_run, ui_kind="run", ui_section="Resolved run")

@@ -83,6 +83,10 @@
 
 `wolf run --yes`
 
+- Run Cadence Genus and stay at its own prompt to inspect it when done:
+
+`wolf run --environment {{environment}} --interactive`
+
 - Load Bash integration to enable in-place activation and command completion:
 
 `source ./shell/wolf.bash && wolf activate {{environment}}`

@@ -47,6 +47,46 @@ GENUS_REQUIRED_DEFINES = ("SYNTHESIS",)
 _ALLOWED_CADENCE_FLOWTOOL_OVERRIDES = frozenset({"genus"})
 _ALLOWED_GENUS_OVERRIDES = frozenset({"set_db"})
 
+# Selectable Genus flows. Each name is a `flow.name` an environment can
+# choose; the value is the ordered synthesis stages it runs on top of the
+# elaboration pipeline every flow shares. Elaboration-only remains the
+# default so existing environments are unaffected.
+FLOW_GENUS_ELABORATION = "genus-elaboration"
+FLOW_GENUS_SYN_GENERIC = "genus-syn-generic"
+FLOW_GENUS_SYN_MAP = "genus-syn-map"
+FLOW_GENUS_SYN_OPT = "genus-syn-opt"
+
+_SYNTHESIS_STAGES: Mapping[str, tuple[str, ...]] = {
+    FLOW_GENUS_ELABORATION: (),
+    FLOW_GENUS_SYN_GENERIC: ("syn_generic",),
+    FLOW_GENUS_SYN_MAP: ("syn_generic", "syn_map"),
+    FLOW_GENUS_SYN_OPT: ("syn_generic", "syn_map", "syn_opt"),
+}
+
+_SYNTHESIS_STAGE_TITLES = {
+    "syn_generic": "Synthesizing to generic gates",
+    "syn_map": "Mapping to technology library",
+    "syn_opt": "Optimizing mapped netlist",
+}
+
+_SYNTHESIS_STAGE_NETLIST_SUFFIX = {
+    "syn_generic": "generic",
+    "syn_map": "mapped",
+    "syn_opt": "opt",
+}
+
+
+def _resolve_synthesis_stages(context: ResolvedContext) -> tuple[str, ...]:
+    """Return the ordered synthesis stages the selected flow runs, if any."""
+    flow_name = context.flow_name or FLOW_GENUS_ELABORATION
+    try:
+        return _SYNTHESIS_STAGES[flow_name]
+    except KeyError:
+        raise ValueError(
+            f"unsupported cadence-flowtool flow {flow_name!r}; expected one of "
+            + ", ".join(sorted(_SYNTHESIS_STAGES))
+        ) from None
+
 
 def _tcl_scalar(value: Any) -> str:
     if isinstance(value, bool):
@@ -90,6 +130,35 @@ _WOLF_TCL_PRESENTATION = (
     "    puts \"\\033\\[1;34m| $title\\033\\[0m\"\n"
     "    puts [wolf_sep]\n"
     "}\n"
+)
+
+
+def _dont_use_tcl(patterns: tuple[str, ...]) -> str:
+    """Mark PDK-configured cells unusable before generic synthesis.
+
+    Each pattern is a plain cell-name glob from the technology package's own
+    `synthesis.dont_use` metadata (never an arbitrary Tcl expression), kept
+    to Genus's ordinary ``get_db`` name-glob matching.
+    """
+    quoted = " ".join(_tcl_quote(pattern) for pattern in patterns)
+    return (
+        f"foreach dont_use_cell {{{quoted}}} {{\n"
+        "        set_db [get_db base_cells $dont_use_cell] .dont_use true\n"
+        "    }"
+    )
+
+
+# Standard Cadence Genus path-grouping idiom (in2out/in2reg/reg2out/reg2reg),
+# generic Cadence practice rather than any specific flow's methodology.
+# WOLF resolves one flat SDC per run rather than multiple constraint-mode
+# views, so grouping happens once rather than per analysis view.
+_COST_GROUP_TCL = (
+    "group_path -name in2out -from [all_inputs] -to [all_outputs]\n"
+    "    if {[sizeof_collection [all_registers]] > 0} {\n"
+    "        group_path -name in2reg -from [all_inputs] -to [all_registers]\n"
+    "        group_path -name reg2out -from [all_registers] -to [all_outputs]\n"
+    "        group_path -name reg2reg -from [all_registers] -to [all_registers]\n"
+    "    }"
 )
 
 
@@ -201,12 +270,15 @@ def _effective_genus_defines(context: ResolvedContext) -> tuple[str, ...]:
     return tuple(effective)
 
 
-def prepare_genus_inputs(context: ResolvedContext, destination: Path) -> GenusInputs:
+def prepare_genus_inputs(
+    context: ResolvedContext, destination: Path, *, interactive: bool = False
+) -> GenusInputs:
     """Write deterministic Genus scripts and a provenance manifest."""
     if not context.sources:
         raise ValueError("Cadence Genus preparation requires ordered resolved sources")
     if not context.design_top:
         raise ValueError("Cadence Genus preparation requires design.top")
+    synthesis_stages = _resolve_synthesis_stages(context)
     genus_vhdl_standard = _normalize_vhdl_standard(context.vhdl_standard)
     destination = destination.resolve()
     destination.mkdir(parents=True, exist_ok=True)
@@ -268,14 +340,34 @@ def prepare_genus_inputs(context: ResolvedContext, destination: Path) -> GenusIn
     steps.append(("Reading sources", f"source {_tcl_quote(str(source_script))}"))
     steps.append(("Elaborating design", f"elaborate {context.design_top}"))
     steps.append(("Reading constraints", f"read_sdc {_tcl_quote(str(constraints))}"))
+
+    dont_use_cells = context.technology.dont_use_cells if context.technology else ()
+    if synthesis_stages:
+        if dont_use_cells:
+            steps.append(("Applying dont-use cells", _dont_use_tcl(dont_use_cells)))
+        steps.append(("Grouping synthesis cost paths", _COST_GROUP_TCL))
+        for stage in synthesis_stages:
+            steps.append((_SYNTHESIS_STAGE_TITLES[stage], stage))
+
     steps.append(("Checking design", "check_design -unresolved"))
-    steps.append((
-        "Writing reports",
-        "report_hierarchy > reports/hierarchy.rpt\n    report_messages > reports/messages.rpt",
-    ))
+    report_lines = ["report_hierarchy > reports/hierarchy.rpt", "report_messages > reports/messages.rpt"]
+    netlist_relative: str | None = None
+    if synthesis_stages:
+        report_lines.append("report_area > reports/area.rpt")
+        suffix = _SYNTHESIS_STAGE_NETLIST_SUFFIX[synthesis_stages[-1]]
+        netlist_relative = f"outputs/{context.design_name}.{suffix}.v"
+        report_lines.append(f"write_hdl > {netlist_relative}")
+    steps.append(("Writing reports", "\n    ".join(report_lines)))
+
+    # Interactive runs stay at Genus's own prompt instead of exiting, so a
+    # failure -- or simply the end of the script -- hands the tool's CLI
+    # back for inspection; the caller types `exit` when done. Batch runs
+    # (the default) always exit so automation gets a clean process status.
     run_operations = "".join(
         f"    wolf_step {_tcl_quote(title)}\n    {operation}\n" for title, operation in steps
     )
+    failure_exit = "" if interactive else "    exit 1\n"
+    success_exit = "" if interactive else "exit 0\n"
     run_script.write_text(
         "# Generated by WOLF; execution is intentionally separate from preparation.\n"
         + _WOLF_TCL_PRESENTATION
@@ -286,9 +378,9 @@ def prepare_genus_inputs(context: ResolvedContext, destination: Path) -> GenusIn
         "    puts stderr \"WOLF Genus failure: $error\"\n"
         "    if {[dict exists $options -errorinfo]} { puts stderr [dict get $options -errorinfo] }\n"
         "    if {[dict exists $options -errorcode]} { puts stderr \"ErrorCode: [dict get $options -errorcode]\" }\n"
-        "    exit 1\n"
-        "}\n"
-        "exit 0\n",
+        + failure_exit
+        + "}\n"
+        + success_exit,
         encoding="utf-8",
     )
     records = [
@@ -319,9 +411,12 @@ def prepare_genus_inputs(context: ResolvedContext, destination: Path) -> GenusIn
         ]},
         "outputs": {
             "reports": str(destination / "reports"),
-            "netlist": str(destination / "outputs" / f"{context.design_name}.v"),
+            "netlist": str(destination / netlist_relative) if netlist_relative else None,
             "constraints": str(constraints),
         },
+        "flow": context.flow_name or FLOW_GENUS_ELABORATION,
+        "synthesis_stages": list(synthesis_stages),
+        "dont_use_cells": list(dont_use_cells),
         "technology": ({
             "package": context.technology.package,
             "revision": context.technology.revision,
@@ -356,11 +451,22 @@ def validate_genus_or_raise(context: ResolvedContext) -> str:
     return next(item.detail for item in checks if item.name == "genus")
 
 
-def run_genus(context: ResolvedContext, *, clean: bool = False) -> tuple[int, Path]:
-    """Allocate, prepare, freeze provenance, and execute one Genus run."""
+def run_genus(
+    context: ResolvedContext, *, clean: bool = False, interactive: bool = False
+) -> tuple[int, Path]:
+    """Allocate, prepare, freeze provenance, and execute one Genus run.
+
+    In interactive mode Genus is never told to exit, so a run that finishes
+    -- or fails -- hands its own CLI back at a prompt instead of tearing the
+    process down; the caller regains control by typing ``exit`` there. Batch
+    mode (the default) always exits so the process status is a reliable
+    success/failure signal for automation.
+    """
     genus = validate_genus_or_raise(context)
     run_directory = allocate_genus_run(context, clean=clean)
-    inputs = prepare_genus_inputs(context, run_directory / "backend" / "cadence-genus")
+    inputs = prepare_genus_inputs(
+        context, run_directory / "backend" / "cadence-genus", interactive=interactive
+    )
     resolved = yaml.safe_load(inputs.manifest.read_text(encoding="utf-8"))
     resolved["schema"] = "wolf.resolved-run/v1"
     resolved["execution"] = {

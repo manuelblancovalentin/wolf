@@ -85,7 +85,13 @@ class MixedLanguagePackageTests(unittest.TestCase):
 
     def _context(self):
         profile = load_environment(self.env_dir / "wolf.yaml")
-        return resolve_declarative_environment(profile, state_root=self.state, environment_directory=self.env_dir)
+        context = resolve_declarative_environment(
+            profile, state_root=self.state, environment_directory=self.env_dir
+        )
+        # This fixture's flow package (flow/orfs) exercises mixed-language
+        # source ordering shared by both backends; it is not a Genus flow
+        # selection, so Genus preparation tests default to elaboration.
+        return replace(context, flow_name=None)
 
     def _technology_context(self):
         package_root = self.state / "packages/pdk/asap7/pdk-rev/source"

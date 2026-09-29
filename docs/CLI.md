@@ -115,3 +115,9 @@ progress and summaries. Package installs stream Git progress and report
 elapsed wall time. Declarative runs print canonical semantic pre-run values;
 legacy profiles retain their compatibility summary. A completed run reports
 stage timing and a small set of backend-owned optional metrics.
+
+`wolf run --interactive` (cadence-flowtool declarative runs only) leaves
+Genus at its own interactive prompt at the end of a run, or after a failure,
+instead of exiting automatically; type `exit` there to return control. Batch
+mode (the default) always exits so its process status is a reliable
+automation signal. See [Cadence Genus backend](CADENCE_GENUS.md#interactive-runs).

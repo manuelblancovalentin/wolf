@@ -146,6 +146,12 @@ exact allocation before backend execution.
 Skip pre-run and per-stage confirmations while retaining progress and result
 summaries.
 .TP
+.B wolf run --interactive
+Cadence Flowtool declarative runs only. Leave Genus at its own interactive
+prompt instead of exiting automatically when the run finishes or fails; type
+.B exit
+there to return.
+.TP
 .BI "wolf activate " name
 With the Bash integration loaded, activate the selected WOLF environment in the
 current shell. It does not change the working directory. Use

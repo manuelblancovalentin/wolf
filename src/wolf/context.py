@@ -71,6 +71,7 @@ class ResolvedTechnology:
     rc_files: tuple[Path, ...] = ()
     gds_files: tuple[Path, ...] = ()
     checksums: Mapping[str, str] = field(default_factory=dict)
+    dont_use_cells: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
