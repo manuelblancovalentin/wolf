@@ -69,6 +69,15 @@ The runner replaces `run.latest.d` as a symlink itself, without dereferencing
 the previous run directory. Existing numbered runs are never modified when the
 latest association advances.
 
+An environment's `env:` map (see [Environments](ENVIRONMENTS.md)) is exported
+into the shell on `wolf activate` and restored on `wolf deactivate`, using the
+same save-once/restore-on-deactivate pattern already used for the prompt
+marker: each key's prior value (or absence) is saved the first time it is
+overwritten, and restored exactly once deactivation runs. `wolf run` merges
+the same map into whatever subprocess the selected backend execs, at the
+generic run-orchestration layer; no backend has any code that interprets what
+a key means.
+
 Use `shell/wolf.bash` for Bash and `shell/wolf.zsh` for zsh. The zsh integration
 uses a `precmd` hook so theme-managed prompts retain the active-environment
 marker.

@@ -179,6 +179,36 @@ wolf registry list
 wolf install flow/my-flow
 ```
 
+**Pass an environment variable through to a run, and to your activated shell.**
+
+```yaml
+env:
+  GENUS_NUM_CPUS: "64"
+```
+
+```bash
+wolf env set my-environment env '{}'   # once, if the environment has no env: block yet
+wolf env set my-environment env.GENUS_NUM_CPUS 64
+wolf run --environment my-environment  # GENUS_NUM_CPUS reaches the backend's subprocess
+wolf activate my-environment           # GENUS_NUM_CPUS is exported in this shell too
+wolf deactivate                        # restored (or unset) automatically
+```
+
+WOLF core never interprets these keys; they pass through untouched to
+whatever the backend execs.
+
+**Omit the environment name once it's active.**
+
+```bash
+wolf activate my-environment
+wolf info                 # same as: wolf info my-environment
+wolf run --plan           # same as: wolf run --environment my-environment --plan
+wolf env set env.FOO bar  # same as: wolf env set my-environment env.FOO bar
+```
+
+An explicitly given name always overrides the active one; if nothing is
+active and no name is given, the command fails clearly rather than guessing.
+
 **Override a single backend-native Genus attribute without forking a flow.**
 
 ```yaml

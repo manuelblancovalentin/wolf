@@ -40,12 +40,22 @@ backend:
     make:
       SWAP_ARITH_OPERATORS: ""
       OPENROAD_HIERARCHICAL: 0
+env:
+  GENUS_NUM_CPUS: "64"
 ```
 
 Phase 1 accepts `name`, `design`, `technology`, `flow`, `workspace`,
-`constraints`, `resources`, and `backend`. Unknown fields and unsupported
-schema versions are errors. Design, technology, and flow package references
-must use the corresponding `rtl`, `pdk`, and `flow` package kinds.
+`constraints`, `resources`, `backend`, and `env`. Unknown fields and
+unsupported schema versions are errors. Design, technology, and flow package
+references must use the corresponding `rtl`, `pdk`, and `flow` package kinds.
+
+`env` is a plain string-to-string map, unrelated to `resources` (which is
+about allocation, e.g. thread count). WOLF core has no opinion on what any
+key means: `wolf run` merges the map, untouched, into whatever subprocess the
+selected backend execs, and `wolf activate`/`wolf deactivate` export and
+restore the same map in the interactive shell (see
+[CLI reference](CLI.md#active-environments)). Keys must be valid environment
+variable names (`[A-Za-z_][A-Za-z0-9_]*`); values must be strings.
 
 Package metadata supplies semantic defaults. For the built-in packages these
 include Ibex's design name/top, ASAP7's technology name, and ORFS's flow/backend
@@ -108,6 +118,7 @@ setter updates existing paths:
 
 ```bash
 wolf env set ibex-asap7 constraints.clocks.0.period_ps 1100
+wolf env set ibex-asap7 env.GENUS_NUM_CPUS 64
 wolf env clone ibex-asap7 ibex-asap7-1100
 ```
 
@@ -116,3 +127,29 @@ installed packages. Phase 1 cloning supports declarative-v1 profiles only.
 Legacy profiles are detected by the absence of `wolf.yaml`, resolve through the
 compatibility adapter, display `Format: legacy`, and are never rewritten
 destructively.
+
+`env.KEY` follows the same convention as `constraints.clocks.0.period_ps` or
+`backend.orfs.make.KEY`: it sets a leaf under an already-existing structured
+path. If the environment has no `env:` block yet, set the whole block first
+(`wolf env set ibex-asap7 env '{}'`), then set individual keys under it.
+
+## Defaulting to the active environment
+
+`wolf activate <environment>` (via the Bash/zsh integration) sets
+`WOLF_ACTIVE_ENV` in the current shell. Every subcommand that accepts an
+environment name — `run --environment`, `info`, `status --environment`,
+`env set`, `env clone` (as the clone source), and `env remove` — falls back
+to `WOLF_ACTIVE_ENV` when the argument is omitted; an explicitly given name
+always wins. If nothing is active and no name is given, the command fails
+clearly rather than guessing:
+
+```bash
+wolf activate ibex-asap7
+wolf info                              # same as: wolf info ibex-asap7
+wolf env set env.GENUS_NUM_CPUS 64     # same as: wolf env set ibex-asap7 env.GENUS_NUM_CPUS 64
+wolf run --plan
+```
+
+`wolf env remove` still requires deactivating the environment first if it
+happens to be the active one — the fallback composes with that existing
+safety check rather than bypassing it.

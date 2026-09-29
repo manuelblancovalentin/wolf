@@ -34,19 +34,32 @@ Create a legacy-compatible environment and its current metadata files.
 Validate and import a versioned declarative environment. Relative stored paths
 resolve from the input file's directory.
 .TP
-.BI "wolf env clone " "source destination"
+.BI "wolf env clone " "[source] destination"
 Clone a declarative-v1 profile without duplicating installed packages.
+.I source
+defaults to the active environment (see
+.B WOLF_ACTIVE_ENV
+below) when omitted.
 .TP
-.BI "wolf env remove " name
+.BI "wolf env remove " "[name]"
 Remove an environment after interactive confirmation.
+.I name
+defaults to the active environment when omitted; removing the active
+environment still requires
+.B wolf deactivate
+first.
 .TP
-.BI "wolf env remove --yes " name
+.BI "wolf env remove --yes " "[name]"
 Remove an environment without prompting.
 .TP
-.BI "wolf env set " "name key value"
+.BI "wolf env set " "[name] key value"
 Persist a legacy variable, or update an existing structured path such as
 .B constraints.clocks.0.period_ps
+or
+.B env.GENUS_NUM_CPUS
 in a declarative profile.
+.I name
+defaults to the active environment when omitted.
 .SH PROCESS COMMANDS
 .TP
 .B wolf process list
@@ -174,6 +187,15 @@ global WOLF requirements and are not checked here.
 Compatibility/testing override for WOLF-owned data stores. Persistent global
 configuration is found through XDG at
 .IR ~/.config/wolf/config.yaml .
+.TP
+.B WOLF_ACTIVE_ENV
+Set by
+.B wolf activate
+through the Bash/zsh integration. Every subcommand that accepts an
+environment name falls back to this value when the argument is omitted; an
+explicitly given name always wins.
+.B WOLF_ENV_NAME
+is a secondary fallback set by the legacy Bash activation path.
 .SH EXIT STATUS
 WOLF exits with status 0 on success and nonzero on invalid input, missing state,
 an unavailable operation, or command failure.

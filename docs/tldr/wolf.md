@@ -31,6 +31,16 @@
 
 `wolf env set {{environment}} constraints.clocks.0.period_ps {{1100}}`
 
+- Pass an arbitrary variable through to whatever the backend execs, and into
+  the interactive shell on activation (set `env: {}` first if the block
+  doesn't exist yet):
+
+`wolf env set {{environment}} env.{{GENUS_NUM_CPUS}} {{64}}`
+
+- Activate an environment, then omit its name on later commands:
+
+`wolf activate {{environment}} && wolf info && wolf run --plan`
+
 - Remove an environment without prompting:
 
 `wolf env remove --yes {{environment}}`
