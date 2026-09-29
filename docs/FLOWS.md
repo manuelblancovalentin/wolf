@@ -16,7 +16,10 @@ same base flow would inherit the edit.
 
 `wolf flow init` avoids that by copying the base flow's scripts into a new,
 independently editable directory and emitting a ready-to-register `flow`
-package manifest for it:
+package manifest for it. For Cadence Genus, WOLF's own bundled default flow
+scripts at [`flows/cadence-genus`](../flows/cadence-genus) are the
+recommended `--from` source — see
+[The flow scripts are real files, not generated code](CADENCE_GENUS.md#the-flow-scripts-are-real-files-not-generated-code):
 
 ```bash
 wolf flow init ibex-fabulous-genus-tsmc65 \

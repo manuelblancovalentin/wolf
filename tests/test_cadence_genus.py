@@ -1,3 +1,5 @@
+import shutil
+import subprocess
 from pathlib import Path
 import tempfile
 import unittest
@@ -9,6 +11,9 @@ from wolf.backend.cadence_genus import (
     prepare_genus_inputs,
 )
 from wolf.context import ResolvedContext, ResolvedSource, ResolvedTechnology
+from wolf.paths import builtin_flow_root
+
+TCLSH = shutil.which("tclsh")
 
 
 class GenusSetDbOverrideTests(unittest.TestCase):
@@ -35,23 +40,19 @@ class GenusSetDbOverrideTests(unittest.TestCase):
     def test_no_overrides_produces_no_overrides_script(self):
         inputs = prepare_genus_inputs(self._context(), self.root / "backend" / "cadence-genus")
         self.assertIsNone(inputs.overrides_script)
-        run_text = inputs.run_script.read_text(encoding="utf-8")
-        self.assertNotIn("overrides.tcl", run_text)
+        flow_config = inputs.flow_config_script.read_text(encoding="utf-8")
+        self.assertIn('set wolf_overrides_script ""', flow_config)
         manifest = yaml.safe_load(inputs.manifest.read_text(encoding="utf-8"))
         self.assertEqual(manifest["genus_overrides"], {})
 
-    def test_set_db_override_is_emitted_and_sourced_before_elaborate(self):
+    def test_set_db_override_is_emitted_and_referenced(self):
         overrides = {"cadence-flowtool": {"genus": {"set_db": {"hdl_max_memory_address_range": 65536}}}}
         inputs = prepare_genus_inputs(self._context(overrides), self.root / "backend" / "cadence-genus")
         self.assertIsNotNone(inputs.overrides_script)
         overrides_text = inputs.overrides_script.read_text(encoding="utf-8")
         self.assertIn("set_db hdl_max_memory_address_range 65536", overrides_text)
-
-        run_text = inputs.run_script.read_text(encoding="utf-8")
-        overrides_index = run_text.index("overrides.tcl")
-        elaborate_index = run_text.index("elaborate top")
-        self.assertLess(overrides_index, elaborate_index)
-
+        flow_config = inputs.flow_config_script.read_text(encoding="utf-8")
+        self.assertIn(str(inputs.overrides_script), flow_config)
         manifest = yaml.safe_load(inputs.manifest.read_text(encoding="utf-8"))
         self.assertEqual(manifest["genus_overrides"], {"hdl_max_memory_address_range": 65536})
 
@@ -87,7 +88,7 @@ class GenusSetDbOverrideTests(unittest.TestCase):
             prepare_genus_inputs(self._context(overrides), self.root / "backend" / "cadence-genus")
 
 
-class GenusThreadsAndPresentationTests(unittest.TestCase):
+class GenusThreadsTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory(prefix="wolf-genus-threads-")
         self.root = Path(self.temporary.name)
@@ -108,17 +109,17 @@ class GenusThreadsAndPresentationTests(unittest.TestCase):
             threads=threads, env_vars=env_vars or {},
         )
 
-    def test_no_thread_source_emits_no_resource_step(self):
+    def test_no_thread_source_leaves_empty_config(self):
         inputs = prepare_genus_inputs(self._context(), self.root / "backend" / "cadence-genus")
-        run_text = inputs.run_script.read_text(encoding="utf-8")
-        self.assertNotIn("max_cpus_per_server", run_text)
+        flow_config = inputs.flow_config_script.read_text(encoding="utf-8")
+        self.assertIn('set wolf_max_cpus_per_server ""', flow_config)
         manifest = yaml.safe_load(inputs.manifest.read_text(encoding="utf-8"))
         self.assertIsNone(manifest["max_cpus_per_server"])
 
     def test_canonical_threads_set_max_cpus_per_server(self):
         inputs = prepare_genus_inputs(self._context(threads=32), self.root / "backend" / "cadence-genus")
-        run_text = inputs.run_script.read_text(encoding="utf-8")
-        self.assertIn("set_db max_cpus_per_server 32", run_text)
+        flow_config = inputs.flow_config_script.read_text(encoding="utf-8")
+        self.assertIn("set wolf_max_cpus_per_server 32", flow_config)
         manifest = yaml.safe_load(inputs.manifest.read_text(encoding="utf-8"))
         self.assertEqual(manifest["max_cpus_per_server"], 32)
 
@@ -126,17 +127,16 @@ class GenusThreadsAndPresentationTests(unittest.TestCase):
         inputs = prepare_genus_inputs(
             self._context(env_vars={"GENUS_NUM_CPUS": "64"}), self.root / "backend" / "cadence-genus"
         )
-        run_text = inputs.run_script.read_text(encoding="utf-8")
-        self.assertIn("set_db max_cpus_per_server 64", run_text)
+        flow_config = inputs.flow_config_script.read_text(encoding="utf-8")
+        self.assertIn("set wolf_max_cpus_per_server 64", flow_config)
 
     def test_canonical_threads_win_over_genus_num_cpus_env_var(self):
         inputs = prepare_genus_inputs(
             self._context(threads=32, env_vars={"GENUS_NUM_CPUS": "64"}),
             self.root / "backend" / "cadence-genus",
         )
-        run_text = inputs.run_script.read_text(encoding="utf-8")
-        self.assertIn("set_db max_cpus_per_server 32", run_text)
-        self.assertNotIn("max_cpus_per_server 64", run_text)
+        flow_config = inputs.flow_config_script.read_text(encoding="utf-8")
+        self.assertIn("set wolf_max_cpus_per_server 32", flow_config)
 
     def test_non_integer_genus_num_cpus_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "env.GENUS_NUM_CPUS must be an integer"):
@@ -145,24 +145,16 @@ class GenusThreadsAndPresentationTests(unittest.TestCase):
                 self.root / "backend" / "cadence-genus",
             )
 
-    def test_run_script_wraps_each_operation_in_a_step_banner(self):
-        inputs = prepare_genus_inputs(self._context(threads=8), self.root / "backend" / "cadence-genus")
-        run_text = inputs.run_script.read_text(encoding="utf-8")
-        self.assertIn("proc wolf_step", run_text)
-        for title in (
-            "Configuring resources", "Reading sources", "Elaborating design",
-            "Reading constraints", "Checking design", "Writing reports",
-        ):
-            self.assertIn(f'wolf_step "{title}"', run_text)
-        # Steps appear in execution order.
-        indices = [run_text.index(f'wolf_step "{title}"') for title in (
-            "Configuring resources", "Reading sources", "Elaborating design",
-            "Reading constraints", "Checking design", "Writing reports",
-        )]
-        self.assertEqual(indices, sorted(indices))
-
 
 class GenusSynthesisFlowTests(unittest.TestCase):
+    """Resolved-value plumbing for the selectable Genus flows.
+
+    The actual step logic and ordering these flows run lives in the shared,
+    static flows/cadence-genus/flow.tcl -- exercised end-to-end for real by
+    GenusFlowExecutionTests below -- so these tests only check that
+    prepare_genus_inputs resolves and records the right values for it.
+    """
+
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory(prefix="wolf-genus-synthesis-")
         self.root = Path(self.temporary.name)
@@ -173,12 +165,13 @@ class GenusSynthesisFlowTests(unittest.TestCase):
     def tearDown(self):
         self.temporary.cleanup()
 
-    def _context(self, *, flow_name=None, dont_use_cells=()) -> ResolvedContext:
+    def _context(self, *, flow_name=None, dont_use_cells=(), floorplan_def=None,
+                 technology_lefs=()) -> ResolvedContext:
         technology = None
-        if dont_use_cells:
+        if dont_use_cells or technology_lefs:
             technology = ResolvedTechnology(
                 package="pdk/demo", revision="1", name="demo", root=self.root,
-                dont_use_cells=dont_use_cells,
+                dont_use_cells=dont_use_cells, technology_lefs=technology_lefs,
             )
         return ResolvedContext(
             state_root=self.root, environment_name="demo", environment_directory=self.root,
@@ -186,13 +179,13 @@ class GenusSynthesisFlowTests(unittest.TestCase):
             run_tag="demo", run_directory=self.root / "run", values={},
             format="declarative-v1", design_top="top", flow_name=flow_name,
             sources=(self.source,), source_files=(self.source.path,), technology=technology,
+            floorplan_def=floorplan_def,
         )
 
     def test_default_flow_is_elaboration_only(self):
         inputs = prepare_genus_inputs(self._context(), self.root / "backend" / "cadence-genus")
-        run_text = inputs.run_script.read_text(encoding="utf-8")
-        self.assertNotIn("syn_generic", run_text)
-        self.assertNotIn("group_path", run_text)
+        flow_config = inputs.flow_config_script.read_text(encoding="utf-8")
+        self.assertIn(f'set wolf_flow_name "{FLOW_GENUS_ELABORATION}"', flow_config)
         manifest = yaml.safe_load(inputs.manifest.read_text(encoding="utf-8"))
         self.assertEqual(manifest["flow"], FLOW_GENUS_ELABORATION)
         self.assertEqual(manifest["synthesis_stages"], [])
@@ -204,75 +197,111 @@ class GenusSynthesisFlowTests(unittest.TestCase):
                 self._context(flow_name="not-a-real-flow"), self.root / "backend" / "cadence-genus"
             )
 
-    def test_syn_generic_flow_groups_paths_and_writes_generic_netlist(self):
+    def test_syn_generic_flow_is_recorded(self):
         inputs = prepare_genus_inputs(
             self._context(flow_name=FLOW_GENUS_SYN_GENERIC), self.root / "backend" / "cadence-genus"
         )
-        run_text = inputs.run_script.read_text(encoding="utf-8")
-        self.assertIn("group_path -name in2out -from [all_inputs] -to [all_outputs]", run_text)
-        self.assertIn("group_path -name in2reg", run_text)
-        self.assertIn("syn_generic", run_text)
-        self.assertNotIn("syn_map", run_text)
-        self.assertNotIn("syn_opt", run_text)
-        # Cost grouping happens after constraints are read and before synthesis.
-        constraints_index = run_text.index("Reading constraints")
-        grouping_index = run_text.index("Grouping synthesis cost paths")
-        synthesis_index = run_text.index('wolf_step "Synthesizing to generic gates"')
-        self.assertLess(constraints_index, grouping_index)
-        self.assertLess(grouping_index, synthesis_index)
-        self.assertIn("write_hdl > outputs/demo.generic.v", run_text)
         manifest = yaml.safe_load(inputs.manifest.read_text(encoding="utf-8"))
         self.assertEqual(manifest["synthesis_stages"], ["syn_generic"])
         self.assertTrue(manifest["outputs"]["netlist"].endswith("demo.generic.v"))
 
-    def test_syn_map_flow_runs_generic_then_map(self):
+    def test_syn_map_flow_is_recorded(self):
         inputs = prepare_genus_inputs(
             self._context(flow_name=FLOW_GENUS_SYN_MAP), self.root / "backend" / "cadence-genus"
         )
-        run_text = inputs.run_script.read_text(encoding="utf-8")
-        generic_index = run_text.index('wolf_step "Synthesizing to generic gates"')
-        map_index = run_text.index('wolf_step "Mapping to technology library"')
-        self.assertLess(generic_index, map_index)
-        self.assertIn("write_hdl > outputs/demo.mapped.v", run_text)
         manifest = yaml.safe_load(inputs.manifest.read_text(encoding="utf-8"))
         self.assertEqual(manifest["synthesis_stages"], ["syn_generic", "syn_map"])
+        self.assertTrue(manifest["outputs"]["netlist"].endswith("demo.mapped.v"))
 
-    def test_syn_opt_flow_runs_all_three_stages_in_order(self):
+    def test_syn_opt_flow_is_recorded(self):
         inputs = prepare_genus_inputs(
             self._context(flow_name=FLOW_GENUS_SYN_OPT), self.root / "backend" / "cadence-genus"
         )
-        run_text = inputs.run_script.read_text(encoding="utf-8")
-        indices = [
-            run_text.index(f'wolf_step "{title}"') for title in (
-                "Synthesizing to generic gates", "Mapping to technology library",
-                "Optimizing mapped netlist",
-            )
-        ]
-        self.assertEqual(indices, sorted(indices))
-        self.assertIn("write_hdl > outputs/demo.opt.v", run_text)
         manifest = yaml.safe_load(inputs.manifest.read_text(encoding="utf-8"))
         self.assertEqual(manifest["synthesis_stages"], ["syn_generic", "syn_map", "syn_opt"])
+        self.assertTrue(manifest["outputs"]["netlist"].endswith("demo.opt.v"))
 
-    def test_dont_use_cells_applied_before_cost_grouping_when_configured(self):
+    def test_dont_use_cells_are_resolved_into_flow_config(self):
         inputs = prepare_genus_inputs(
             self._context(flow_name=FLOW_GENUS_SYN_GENERIC, dont_use_cells=("*_lvt", "AOI*")),
             self.root / "backend" / "cadence-genus",
         )
-        run_text = inputs.run_script.read_text(encoding="utf-8")
-        self.assertIn('foreach dont_use_cell {"*_lvt" "AOI*"}', run_text)
-        self.assertIn("set_db [get_db base_cells $dont_use_cell] .dont_use true", run_text)
-        dont_use_index = run_text.index('wolf_step "Applying dont-use cells"')
-        grouping_index = run_text.index("Grouping synthesis cost paths")
-        self.assertLess(dont_use_index, grouping_index)
+        flow_config = inputs.flow_config_script.read_text(encoding="utf-8")
+        self.assertIn('set wolf_dont_use_cells {"*_lvt" "AOI*"}', flow_config)
         manifest = yaml.safe_load(inputs.manifest.read_text(encoding="utf-8"))
         self.assertEqual(manifest["dont_use_cells"], ["*_lvt", "AOI*"])
 
-    def test_no_dont_use_step_when_technology_declares_none(self):
+    def test_no_dont_use_cells_when_technology_declares_none(self):
         inputs = prepare_genus_inputs(
             self._context(flow_name=FLOW_GENUS_SYN_GENERIC), self.root / "backend" / "cadence-genus"
         )
+        flow_config = inputs.flow_config_script.read_text(encoding="utf-8")
+        self.assertIn("set wolf_dont_use_cells {}", flow_config)
+
+    def test_floorplan_def_without_physical_views_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "floorplan_def requires"):
+            prepare_genus_inputs(
+                self._context(floorplan_def=self.root / "floor.def"),
+                self.root / "backend" / "cadence-genus",
+            )
+
+    def test_floorplan_def_with_physical_views_is_resolved(self):
+        lef = self.root / "tech.lef"
+        lef.write_text("lef\n", encoding="utf-8")
+        deff = self.root / "floor.def"
+        deff.write_text("def\n", encoding="utf-8")
+        inputs = prepare_genus_inputs(
+            self._context(floorplan_def=deff, technology_lefs=(lef,)),
+            self.root / "backend" / "cadence-genus",
+        )
+        flow_config = inputs.flow_config_script.read_text(encoding="utf-8")
+        self.assertIn(str(deff), flow_config)
+        self.assertIn(str(lef), flow_config)
+        manifest = yaml.safe_load(inputs.manifest.read_text(encoding="utf-8"))
+        self.assertEqual(manifest["floorplan_def"], str(deff))
+
+
+class GenusFlowRootTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory(prefix="wolf-genus-flow-root-")
+        self.root = Path(self.temporary.name)
+        source_path = self.root / "top.v"
+        source_path.write_text("module top; endmodule\n", encoding="utf-8")
+        self.source = ResolvedSource(path=source_path, language="verilog", library="work", order=0)
+
+    def tearDown(self):
+        self.temporary.cleanup()
+
+    def test_default_run_uses_bundled_flow_scripts(self):
+        context = ResolvedContext(
+            state_root=self.root, environment_name="demo", environment_directory=self.root,
+            workspace_root=self.root, design_name="demo", process="generic", backend="cadence-flowtool",
+            run_tag="demo", run_directory=self.root / "run", values={},
+            format="declarative-v1", design_top="top",
+            sources=(self.source,), source_files=(self.source.path,),
+        )
+        inputs = prepare_genus_inputs(context, self.root / "backend" / "cadence-genus")
+        self.assertEqual(inputs.flow_root, builtin_flow_root("cadence-genus"))
+        self.assertTrue((inputs.flow_root / "flow.tcl").is_file())
+        self.assertTrue((inputs.flow_root / "presentation.tcl").is_file())
+
+    def test_installed_flow_package_overrides_the_bundled_default(self):
+        custom_flow_root = self.root / "my-project-flow"
+        custom_flow_root.mkdir()
+        (custom_flow_root / "flow.tcl").write_text("# custom\n", encoding="utf-8")
+        (custom_flow_root / "presentation.tcl").write_text("# custom\n", encoding="utf-8")
+        context = ResolvedContext(
+            state_root=self.root, environment_name="demo", environment_directory=self.root,
+            workspace_root=self.root, design_name="demo", process="generic", backend="cadence-flowtool",
+            run_tag="demo", run_directory=self.root / "run", values={},
+            format="declarative-v1", design_top="top",
+            sources=(self.source,), source_files=(self.source.path,),
+            package_paths={"flow": custom_flow_root},
+        )
+        inputs = prepare_genus_inputs(context, self.root / "backend" / "cadence-genus")
+        self.assertEqual(inputs.flow_root, custom_flow_root)
         run_text = inputs.run_script.read_text(encoding="utf-8")
-        self.assertNotIn("dont_use_cell", run_text)
+        self.assertIn(str(custom_flow_root / "flow.tcl"), run_text)
 
 
 class GenusInteractiveModeTests(unittest.TestCase):
@@ -295,21 +324,158 @@ class GenusInteractiveModeTests(unittest.TestCase):
             sources=(self.source,), source_files=(self.source.path,),
         )
 
-    def test_batch_mode_always_exits(self):
+    def test_batch_mode_is_the_default(self):
         inputs = prepare_genus_inputs(self._context(), self.root / "backend" / "cadence-genus")
-        run_text = inputs.run_script.read_text(encoding="utf-8")
-        self.assertIn("exit 1", run_text)
-        self.assertIn("exit 0", run_text)
+        flow_config = inputs.flow_config_script.read_text(encoding="utf-8")
+        self.assertIn("set wolf_interactive 0", flow_config)
 
-    def test_interactive_mode_never_exits(self):
+    def test_interactive_flag_is_recorded(self):
         inputs = prepare_genus_inputs(
             self._context(), self.root / "backend" / "cadence-genus", interactive=True
         )
-        run_text = inputs.run_script.read_text(encoding="utf-8")
-        self.assertNotIn("exit 1", run_text)
-        self.assertNotIn("exit 0", run_text)
-        # The error is still reported before Genus drops to its own prompt.
-        self.assertIn("WOLF Genus failure", run_text)
+        flow_config = inputs.flow_config_script.read_text(encoding="utf-8")
+        self.assertIn("set wolf_interactive 1", flow_config)
+        # Both exits are always present in the shared flow.tcl; wolf_interactive
+        # (read from flow-config.tcl) is what gates whether they actually run.
+        flow_script = (inputs.flow_root / "flow.tcl").read_text(encoding="utf-8")
+        self.assertIn("exit 1", flow_script)
+        self.assertIn("exit 0", flow_script)
+
+
+@unittest.skipUnless(TCLSH, "tclsh is not installed")
+class GenusFlowExecutionTests(unittest.TestCase):
+    """Runs the real, shipped flow.tcl end-to-end under a stubbed Genus."""
+
+    _STUB_COMMANDS = """
+proc set_db {args} { puts "STUB set_db $args" }
+proc elaborate {top} { puts "STUB elaborate $top" }
+proc read_sdc {f} { puts "STUB read_sdc $f" }
+proc check_design {args} { puts "STUB check_design $args" }
+proc report_hierarchy {args} { puts "STUB report_hierarchy $args" }
+proc report_messages {args} { puts "STUB report_messages $args" }
+proc report_area {args} { puts "STUB report_area $args" }
+proc write_hdl {args} { puts "STUB write_hdl $args" }
+proc get_db {args} { return {} }
+proc all_inputs {} { return {} }
+proc all_outputs {} { return {} }
+proc all_registers {} { return {r1} }
+proc sizeof_collection {c} { return [llength $c] }
+proc group_path {args} { puts "STUB group_path $args" }
+proc syn_generic {} { puts "STUB syn_generic" }
+proc syn_map {} { puts "STUB syn_map" }
+proc syn_opt {} { puts "STUB syn_opt" }
+proc read_physical {args} { puts "STUB read_physical $args" }
+proc init_design {} { puts "STUB init_design" }
+proc read_def {f} { puts "STUB read_def $f" }
+rename source source_orig
+proc source {f} {
+    if {[string match "*sources.tcl" $f]} {
+        puts "STUB source sources.tcl"
+    } else {
+        uplevel #0 [list source_orig $f]
+    }
+}
+"""
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory(prefix="wolf-genus-exec-")
+        self.root = Path(self.temporary.name)
+        source_path = self.root / "top.v"
+        source_path.write_text("module top; endmodule\n", encoding="utf-8")
+        self.source = ResolvedSource(path=source_path, language="verilog", library="work", order=0)
+
+    def tearDown(self):
+        self.temporary.cleanup()
+
+    def _run(self, context) -> str:
+        destination = self.root / "backend" / "cadence-genus"
+        inputs = prepare_genus_inputs(context, destination)
+        stub = self.root / "stub_run.tcl"
+        stub.write_text(
+            self._STUB_COMMANDS + f'source_orig {{{inputs.run_script}}}\n', encoding="utf-8"
+        )
+        result = subprocess.run(
+            [TCLSH, str(stub)], capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        return result.stdout
+
+    def test_elaboration_flow_runs_expected_commands_in_order(self):
+        context = ResolvedContext(
+            state_root=self.root, environment_name="demo", environment_directory=self.root,
+            workspace_root=self.root, design_name="demo", process="generic", backend="cadence-flowtool",
+            run_tag="demo", run_directory=self.root / "run", values={},
+            format="declarative-v1", design_top="top",
+            sources=(self.source,), source_files=(self.source.path,),
+        )
+        output = self._run(context)
+        for expected in ("STUB elaborate top", "STUB read_sdc", "STUB check_design -unresolved",
+                         "STUB report_hierarchy", "STUB report_messages"):
+            self.assertIn(expected, output)
+        self.assertNotIn("syn_generic", output)
+        self.assertNotIn("group_path", output)
+
+    def test_syn_opt_flow_runs_all_stages_dont_use_and_cost_groups(self):
+        technology = ResolvedTechnology(
+            package="pdk/demo", revision="1", name="demo", root=self.root,
+            dont_use_cells=("*_lvt",),
+        )
+        context = ResolvedContext(
+            state_root=self.root, environment_name="demo", environment_directory=self.root,
+            workspace_root=self.root, design_name="demo", process="generic", backend="cadence-flowtool",
+            run_tag="demo", run_directory=self.root / "run", values={},
+            format="declarative-v1", design_top="top", flow_name=FLOW_GENUS_SYN_OPT,
+            sources=(self.source,), source_files=(self.source.path,), technology=technology,
+        )
+        output = self._run(context)
+        ordered = (
+            "STUB elaborate top", "STUB read_sdc", "STUB set_db {} .dont_use true",
+            "STUB group_path -name in2out", "STUB syn_generic", "STUB syn_map", "STUB syn_opt",
+            "STUB check_design", "STUB write_hdl > outputs/demo.opt.v",
+        )
+        indices = [output.index(fragment) for fragment in ordered]
+        self.assertEqual(indices, sorted(indices))
+
+    def test_physical_aware_flow_reads_physical_and_inits_design(self):
+        lef = self.root / "tech.lef"
+        lef.write_text("lef\n", encoding="utf-8")
+        technology = ResolvedTechnology(
+            package="pdk/demo", revision="1", name="demo", root=self.root, technology_lefs=(lef,),
+        )
+        context = ResolvedContext(
+            state_root=self.root, environment_name="demo", environment_directory=self.root,
+            workspace_root=self.root, design_name="demo", process="generic", backend="cadence-flowtool",
+            run_tag="demo", run_directory=self.root / "run", values={},
+            format="declarative-v1", design_top="top",
+            sources=(self.source,), source_files=(self.source.path,), technology=technology,
+        )
+        output = self._run(context)
+        physical_index = output.index("STUB read_physical")
+        elaborate_index = output.index("STUB elaborate top")
+        init_index = output.index("STUB init_design")
+        self.assertLess(physical_index, elaborate_index)
+        self.assertLess(elaborate_index, init_index)
+
+    def test_interactive_mode_does_not_call_exit(self):
+        context = ResolvedContext(
+            state_root=self.root, environment_name="demo", environment_directory=self.root,
+            workspace_root=self.root, design_name="demo", process="generic", backend="cadence-flowtool",
+            run_tag="demo", run_directory=self.root / "run", values={},
+            format="declarative-v1", design_top="top",
+            sources=(self.source,), source_files=(self.source.path,),
+        )
+        destination = self.root / "backend" / "cadence-genus"
+        inputs = prepare_genus_inputs(context, destination, interactive=True)
+        stub = self.root / "stub_run.tcl"
+        stub.write_text(
+            self._STUB_COMMANDS
+            + f'source_orig {{{inputs.run_script}}}\n'
+            + 'puts "STUB reached end of script without exiting"\n',
+            encoding="utf-8",
+        )
+        result = subprocess.run([TCLSH, str(stub)], capture_output=True, text=True, check=False)
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertIn("STUB reached end of script without exiting", result.stdout)
 
 
 if __name__ == "__main__":

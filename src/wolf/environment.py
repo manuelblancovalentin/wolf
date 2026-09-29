@@ -53,6 +53,7 @@ class EnvironmentProfile:
     flow: Optional[ComponentReference] = None
     workspace_root: Optional[str] = None
     clocks: tuple[ClockConstraint, ...] = ()
+    floorplan_def: Optional[str] = None
     threads: Optional[int] = None
     backend_overrides: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
     env_vars: Mapping[str, str] = field(default_factory=dict)
@@ -123,7 +124,8 @@ def load_environment(path: Path, *, expected_name: Optional[str] = None) -> Envi
     workspace_root = _optional_string(workspace.get("root"), "workspace.root")
 
     constraints = _mapping(data.get("constraints"), "constraints", optional=True)
-    _known_fields(constraints, {"clocks"}, "constraints")
+    _known_fields(constraints, {"clocks", "floorplan_def"}, "constraints")
+    floorplan_def = _optional_string(constraints.get("floorplan_def"), "constraints.floorplan_def")
     raw_clocks = constraints.get("clocks", [])
     if not isinstance(raw_clocks, list):
         raise ValueError("constraints.clocks must be a sequence")
@@ -168,6 +170,7 @@ def load_environment(path: Path, *, expected_name: Optional[str] = None) -> Envi
         flow=_component(data.get("flow"), "flow", "flow"),
         workspace_root=workspace_root,
         clocks=tuple(clocks),
+        floorplan_def=floorplan_def,
         threads=threads,
         backend_overrides=backend,
         env_vars=env_vars,
@@ -544,6 +547,10 @@ def resolve_declarative_environment(
         vhdl_standard=vhdl_standard,
         package_checksums=package_checksums,
         clocks=profile.clocks,
+        floorplan_def=(
+            resolve_stored_path(profile.floorplan_def, profile.path.parent)
+            if profile.floorplan_def else None
+        ),
         threads=profile.threads,
         backend_overrides=profile.backend_overrides,
         env_vars=profile.env_vars,

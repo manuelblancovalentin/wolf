@@ -6,18 +6,53 @@ package metadata: ordered sources, language, compilation role, named library,
 include directories, defines, VHDL standard, constraints, revisions, and
 checksums. It does not invoke ESP, SocketGen, or FABulous generators.
 
-The generated collateral consists of:
+## The flow scripts are real files, not generated code
+
+Every step this run performs, and the order it performs them in, is defined
+in [`flows/cadence-genus/flow.tcl`](../flows/cadence-genus/flow.tcl) and
+[`flows/cadence-genus/presentation.tcl`](../flows/cadence-genus/presentation.tcl)
+— ordinary, version-controlled Tcl WOLF ships and never regenerates. Open
+them, read them, or clone them:
+
+```bash
+wolf flow init my-genus-flow \
+  --from flows/cadence-genus \
+  --to /path/to/my-project-repo/wolf/flows/my-genus-flow \
+  --manifest /path/to/my-project-repo/wolf/registry/flow/my-genus-flow.yaml \
+  --backend cadence-flowtool \
+  --revision "$(git -C /path/to/my-project-repo rev-parse HEAD)"
+```
+
+Point `flow.package` at the resulting manifest and WOLF resolves the clone
+instead of the bundled default (`wolf.backend.cadence_genus._flow_root`
+falls back to the bundled scripts only when no installed flow package
+provides its own `flow.tcl`). Edit the clone however the project needs —
+add a step, change an existing one, drop something WOLF's default doesn't
+need — same as any file in the project's own repo.
+
+Per run, WOLF prepares only small, resolved-*value* files next to a run of
+the flow scripts above, never flow logic:
 
 - `sources.tcl`, with VHDL packages before VHDL implementations and each
   Verilog/SystemVerilog source in resolved order;
-- `run.tcl`, which performs elaboration, unresolved-design checks, and basic
-  hierarchy/message reports inside one Tcl error boundary. Any failure while
-  sourcing HDL, elaborating, reading constraints, checking the design, or
-  writing reports prints the original Tcl error and error information, then
-  exits Genus nonzero. The script exits zero only after every operation
-  succeeds. WOLF uses this process status as the execution result rather than
-  treating log text as a success signal;
-- `genus-inputs.yaml`, a human-readable input/provenance record.
+- `technology.tcl`, `overrides.tcl`, `constraints.sdc`: package-resolved
+  technology, explicit Genus attribute overrides, and clock constraints;
+- `flow-config.tcl`: plain `set` statements for the run's resolved scalars
+  (design name/top, thread count, dont-use cell list, physical view paths,
+  interactive flag) that `flow.tcl`'s procs read — see that file's header
+  comment for the exact list;
+- `run.tcl`, a thin, almost-fixed driver: it sources `flow-config.tcl`, then
+  the flow root's `presentation.tcl` and `flow.tcl`, then calls
+  `wolf_run_flow`. It contains no step logic of its own;
+- `genus-inputs.yaml`, a human-readable input/provenance record, including
+  `flow_root` — exactly which flow.tcl this run used.
+
+`flow.tcl` wraps every step in one Tcl error boundary: on failure it prints
+the original Tcl error and error information, then (in batch mode) exits
+Genus nonzero; on success it exits zero once every step succeeds. WOLF uses
+this process status as the execution result rather than treating log text
+as a success signal. See [Interactive runs](#interactive-runs) for the
+non-batch case.
 
 For Genus Tcl, VHDL sources use `read_hdl -vhdl`. Both `verilog` and
 `systemverilog` package classifications deliberately use Genus's `read_hdl
@@ -48,22 +83,21 @@ runtime dependency of WOLF.
 
 ## Thread configuration and step presentation
 
-`prepare_genus_inputs` sets `max_cpus_per_server` when a thread count is
-resolved. WOLF's own canonical `resources.threads` wins when set; otherwise
-the backend honors `GENUS_NUM_CPUS` if the environment's `env:` map declares
-it — a long-standing Cadence-flow convention, recognized here as
+`flow.tcl`'s `wolf_flow_configure_resources` sets `max_cpus_per_server` when
+a thread count is resolved. WOLF's own canonical `resources.threads` wins
+when set; otherwise it honors `GENUS_NUM_CPUS` if the environment's `env:`
+map declares it — a long-standing Cadence-flow convention, recognized here as
 backend-native policy (read from the resolved, reproducible `env:` map, never
 the ambient process environment). Neither present means no attribute is
 emitted and Genus keeps its own default. The resolved value (or `null`) is
 recorded in `genus-inputs.yaml` as `max_cpus_per_server`.
 
-`run.tcl` also wraps each operation (technology load, overrides, source
-read, elaborate, constraints, design check, reports) in a small
-`wolf_step`/`wolf_sep` Tcl helper pair that prints an ANSI-colored title and
-divider — freshly written, inspired by the concept of bracketing each step
-with a colored banner rather than derived from any specific flow's script
-content. This only affects Genus's own subprocess stdout; it has no relation
-to `wolf.ui`/Rich, which governs the Python CLI's own terminal output.
+`presentation.tcl`'s `wolf_step`/`wolf_sep` procs print an ANSI-colored title
+and divider around each step `flow.tcl` runs — freshly written, inspired by
+the concept of bracketing each step with a colored banner rather than derived
+from any specific flow's script content. This only affects Genus's own
+subprocess stdout; it has no relation to `wolf.ui`/Rich, which governs the
+Python CLI's own terminal output.
 
 ## Synthesis flows
 
@@ -118,20 +152,43 @@ metadata:
         - "*_lvt"
 ```
 
+## Physical views, floorplan DEF, and MMMC
+
+When the technology package declares `physical.technology_lefs` and/or
+`physical.cell_lefs`, `flow.tcl` becomes physical-aware automatically:
+`wolf_flow_read_physical` loads those LEFs before HDL is read, and
+`wolf_flow_init_design` runs `init_design` right after elaboration. Declaring
+`constraints.floorplan_def` in `wolf.yaml` additionally reads a placed
+floorplan DEF (`wolf_flow_read_def`) once the physical design is
+initialized; it is rejected up front if no physical views are configured,
+since there would be no physical database for the DEF to load into.
+
+```yaml
+constraints:
+  floorplan_def: ./floorplans/demo.def
+```
+
+Full multi-mode multi-corner (MMMC) setup — separate setup/hold library
+sets, RC corners, delay corners, and analysis views — is a larger technology
+model expansion than today's single corner/single flat SDC, and is tracked
+as a follow-up rather than implemented here.
+
 ## Interactive runs
 
-By default (batch mode) the generated `run.tcl` always calls `exit` --
-`exit 0` once every operation succeeds, `exit 1` after printing the original
-Tcl error if one fails -- so the Genus process always terminates and its
+`flow.tcl`'s `wolf_run_flow` reads `wolf_interactive` from `flow-config.tcl`.
+By default (batch mode, `wolf_interactive 0`) it always calls `exit` --
+`exit 0` once every step succeeds, `exit 1` after printing the original Tcl
+error if one fails -- so the Genus process always terminates and its
 subprocess exit code is a reliable pass/fail signal for automation. Passing
-`--interactive` to `wolf run` (cadence-flowtool declarative runs only) omits
-both `exit` calls: Genus's own CLI is inherited from the caller's terminal
-throughout (WOLF never redirects Genus's stdio), so once the script finishes
--- or fails, after WOLF prints the Tcl error -- Genus simply falls through
-into its own interactive prompt instead of tearing the process down. Type
-`exit` at that prompt when done. Because the process no longer exits on its
-own, its exit code no longer reflects catch-block success/failure in
-interactive mode; use it for hands-on inspection, not automation.
+`--interactive` to `wolf run` (cadence-flowtool declarative runs only) sets
+`wolf_interactive 1`, so neither `exit` call runs: Genus's own CLI is
+inherited from the caller's terminal throughout (WOLF never redirects
+Genus's stdio), so once the script finishes -- or fails, after WOLF prints
+the Tcl error -- Genus simply falls through into its own interactive prompt
+instead of tearing the process down. Type `exit` at that prompt when done.
+Because the process no longer exits on its own, its exit code no longer
+reflects catch-block success/failure in interactive mode; use it for
+hands-on inspection, not automation.
 
 ## Genus attribute overrides
 
@@ -149,13 +206,13 @@ backend:
         hdl_max_memory_address_range: 65536
 ```
 
-When present, `prepare_genus_inputs` writes `overrides.tcl` and sources it
-before `sources.tcl` and `elaborate`, so overrides take effect before Genus
-touches the design. Override values must be scalars (string, number, or
-boolean); the resolved key/value pairs are also recorded in
-`genus-inputs.yaml` and frozen run provenance. Unknown keys under
-`backend.cadence-flowtool` or `backend.cadence-flowtool.genus` are rejected
-rather than silently ignored.
+When present, `prepare_genus_inputs` writes `overrides.tcl`; `flow.tcl`'s
+`wolf_flow_apply_overrides` sources it before HDL is read or the design is
+elaborated, so overrides take effect before Genus touches the design.
+Override values must be scalars (string, number, or boolean); the resolved
+key/value pairs are also recorded in `genus-inputs.yaml` and frozen run
+provenance. Unknown keys under `backend.cadence-flowtool` or
+`backend.cadence-flowtool.genus` are rejected rather than silently ignored.
 
 Preparation is exposed by `wolf.backend.cadence_genus.prepare_genus_inputs` and
 is intentionally separate from the legacy Flowtool shell runner. For

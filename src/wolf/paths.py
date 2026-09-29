@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import sys
 
 from wolf.config import ConfigStore, xdg_cache_root, xdg_data_root
 
@@ -44,3 +45,28 @@ def cache_dir() -> Path:
 
 def registries_dir() -> Path:
     return state_root() / "registries"
+
+
+def builtin_flow_root(name: str) -> Path:
+    """Locate a WOLF-shipped default flow's real, editable Tcl scripts.
+
+    These are ordinary files WOLF ships and never regenerates -- readable,
+    browsable, and the recommended `wolf flow init --from` source for a
+    project that wants its own editable clone. This only resolves the
+    bundled default; an environment whose flow package is installed uses
+    that package's own content path instead.
+    """
+    configured = os.environ.get("WOLF_LEGACY_ROOT")
+    candidates = []
+    if configured:
+        candidates.append(Path(configured).expanduser() / "flows" / name)
+    # Source and editable installs.
+    candidates.append(Path(__file__).resolve().parents[2] / "flows" / name)
+    # Conventional data-files location for a regular installation.
+    candidates.append(Path(sys.prefix) / "share" / "wolf" / "flows" / name)
+    for candidate in candidates:
+        if candidate.is_dir():
+            return candidate.resolve()
+    raise FileNotFoundError(
+        f"WOLF's built-in {name!r} flow scripts could not be located; reinstall WOLF"
+    )

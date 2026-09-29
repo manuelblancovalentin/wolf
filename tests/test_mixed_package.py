@@ -149,21 +149,17 @@ class MixedLanguagePackageTests(unittest.TestCase):
         self.assertIn("-library work", script)
         self.assertIn("set_db hdl_vhdl_read_version 1993", script)
         self.assertIn("FABULOUS_TEST", script)
+        # The actual step logic and its ordering live in the shared, static
+        # flow.tcl (exercised directly by test_cadence_genus.py); run.tcl
+        # here is just the thin per-run driver pointing at it.
         run_script = output.run_script.read_text(encoding="utf-8")
-        self.assertLess(run_script.index("source "), run_script.index("elaborate ESP_ASIC_TOP"))
-        self.assertLess(run_script.index("elaborate ESP_ASIC_TOP"), run_script.index("read_sdc "))
-        self.assertLess(run_script.index("read_sdc "), run_script.index("check_design"))
-        self.assertIn("if {[catch {", run_script)
-        self.assertIn('puts stderr "WOLF Genus failure: $error"', run_script)
-        self.assertIn("dict get $options -errorinfo", run_script)
-        self.assertIn("exit 1", run_script)
-        self.assertTrue(run_script.rstrip().endswith("exit 0"))
-        catch_body = run_script.split("if {[catch {", 1)[1].split("} error options]", 1)[0]
-        self.assertLess(catch_body.index("source "), catch_body.index("elaborate "))
-        self.assertLess(catch_body.index("elaborate "), catch_body.index("read_sdc "))
-        self.assertLess(catch_body.index("read_sdc "), catch_body.index("check_design"))
-        self.assertLess(catch_body.index("check_design"), catch_body.index("report_hierarchy"))
-        self.assertLess(catch_body.index("report_hierarchy"), catch_body.index("report_messages"))
+        self.assertIn(str(output.flow_config_script), run_script)
+        self.assertIn(str(output.flow_root / "presentation.tcl"), run_script)
+        self.assertIn(str(output.flow_root / "flow.tcl"), run_script)
+        self.assertIn("wolf_run_flow", run_script)
+        flow_config = output.flow_config_script.read_text(encoding="utf-8")
+        self.assertIn('set wolf_design_top "ESP_ASIC_TOP"', flow_config)
+        self.assertIn(str(output.source_script), flow_config)
         self.assertIn("-period 1.05", output.directory.joinpath("constraints.sdc").read_text(encoding="utf-8"))
         manifest = yaml.safe_load(output.manifest.read_text(encoding="utf-8"))
         self.assertEqual(manifest["sources"][0]["role"], "vhdl_package")
@@ -176,9 +172,9 @@ class MixedLanguagePackageTests(unittest.TestCase):
         output = prepare_genus_inputs(context, self.root / "technology")
         self.assertIsNotNone(output.technology_script)
         technology = output.technology_script.read_text(encoding="utf-8")
-        run_script = output.run_script.read_text(encoding="utf-8")
         self.assertIn("set_db library [list", technology)
-        self.assertLess(run_script.index("technology.tcl"), run_script.index("sources.tcl"))
+        flow_config = output.flow_config_script.read_text(encoding="utf-8")
+        self.assertIn(str(output.technology_script), flow_config)
         manifest = yaml.safe_load(output.manifest.read_text(encoding="utf-8"))
         self.assertEqual(manifest["technology"]["package"], "pdk/asap7")
         self.assertEqual(manifest["technology"]["timing_corner"], "typical")
@@ -358,9 +354,11 @@ class MixedLanguagePackageTests(unittest.TestCase):
     def test_genus_script_failure_path_is_fail_fast_and_success_is_explicit(self):
         context = self._context()
         output = prepare_genus_inputs(context, self.root / "fail-fast")
-        script = output.run_script.read_text(encoding="utf-8")
-        self.assertIn("exit 1", script)
-        self.assertIn("exit 0", script)
+        flow_script = (output.flow_root / "flow.tcl").read_text(encoding="utf-8")
+        self.assertIn("exit 1", flow_script)
+        self.assertIn("exit 0", flow_script)
+        flow_config = output.flow_config_script.read_text(encoding="utf-8")
+        self.assertIn("set wolf_interactive 0", flow_config)
 
         with patch("wolf.backend.cadence_genus.validate_genus", return_value=(
             GenusValidation("genus", True, "/opt/cadence/genus"),

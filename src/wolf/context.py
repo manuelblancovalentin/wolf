@@ -106,6 +106,7 @@ class ResolvedContext:
     vhdl_standard: Optional[str] = None
     package_checksums: Mapping[str, str] = field(default_factory=dict)
     clocks: tuple[Any, ...] = ()
+    floorplan_def: Optional[Path] = None
     threads: Optional[int] = None
     backend_overrides: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
     env_vars: Mapping[str, str] = field(default_factory=dict)

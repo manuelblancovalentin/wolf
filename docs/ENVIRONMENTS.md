@@ -49,6 +49,11 @@ Phase 1 accepts `name`, `design`, `technology`, `flow`, `workspace`,
 unsupported schema versions are errors. Design, technology, and flow package
 references must use the corresponding `rtl`, `pdk`, and `flow` package kinds.
 
+`constraints.clocks` and the optional `constraints.floorplan_def` (a
+physical-aware Cadence Genus flow's placed floorplan DEF; see
+[Physical views, floorplan DEF, and MMMC](CADENCE_GENUS.md#physical-views-floorplan-def-and-mmmc))
+are the only recognized `constraints` fields.
+
 `env` is a plain string-to-string map, unrelated to `resources` (which is
 about allocation, e.g. thread count). WOLF core has no opinion on what any
 key means: `wolf run` merges the map, untouched, into whatever subprocess the
