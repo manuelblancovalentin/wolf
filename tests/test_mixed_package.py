@@ -83,6 +83,20 @@ class MixedLanguagePackageTests(unittest.TestCase):
             "technology:\n  package: pdk/asap7\nflow:\n  package: flow/orfs\nworkspace:\n  root: ./work\n"
             "constraints:\n  clocks:\n    - name: core_clock\n      port: clk_i\n      period_ps: 1050\n", encoding="utf-8")
 
+    def _flowtool_overrides(self):
+        templates = self.root / "flowtool-templates"
+        templates.mkdir(exist_ok=True)
+        setup_template = templates / "setup.yaml.template"
+        flow_template = templates / "flow.yaml.template"
+        if not setup_template.is_file():
+            setup_template.write_text("design: ${WOLF_DESIGN_NAME}\n", encoding="utf-8")
+            flow_template.write_text(
+                "setup_yaml: ${WOLF_SETUP_YAML}\nscripts_dir: ${WOLF_SCRIPTS_DIR}\n", encoding="utf-8"
+            )
+        return {"cadence-flowtool": {"flowtool": {
+            "setup_template": str(setup_template), "flow_template": str(flow_template),
+        }}}
+
     def _context(self):
         profile = load_environment(self.env_dir / "wolf.yaml")
         context = resolve_declarative_environment(
@@ -91,7 +105,7 @@ class MixedLanguagePackageTests(unittest.TestCase):
         # This fixture's flow package (flow/orfs) exercises mixed-language
         # source ordering shared by both backends; it is not a Genus flow
         # selection, so Genus preparation tests default to elaboration.
-        return replace(context, flow_name=None)
+        return replace(context, flow_name=None, backend_overrides=self._flowtool_overrides())
 
     def _technology_context(self):
         package_root = self.state / "packages/pdk/asap7/pdk-rev/source"
@@ -149,14 +163,12 @@ class MixedLanguagePackageTests(unittest.TestCase):
         self.assertIn("-library work", script)
         self.assertIn("set_db hdl_vhdl_read_version 1993", script)
         self.assertIn("FABULOUS_TEST", script)
-        # The actual step logic and its ordering live in the shared, static
-        # flow.tcl (exercised directly by test_cadence_genus.py); run.tcl
-        # here is just the thin per-run driver pointing at it.
-        run_script = output.run_script.read_text(encoding="utf-8")
-        self.assertIn(str(output.flow_config_script), run_script)
-        self.assertIn(str(output.flow_root / "presentation.tcl"), run_script)
-        self.assertIn(str(output.flow_root / "flow.tcl"), run_script)
-        self.assertIn("wolf_run_flow", run_script)
+        # The actual step logic (create_flow_step definitions) lives in the
+        # shared, static flow.tcl (exercised directly by
+        # test_cadence_genus.py), snapshotted into scripts_directory.
+        self.assertTrue((output.scripts_directory / "flow.tcl").is_file())
+        self.assertTrue((output.scripts_directory / "presentation.tcl").is_file())
+        self.assertIn(str(output.scripts_directory), output.flow_yaml.read_text(encoding="utf-8"))
         flow_config = output.flow_config_script.read_text(encoding="utf-8")
         self.assertIn('set wolf_design_top "ESP_ASIC_TOP"', flow_config)
         self.assertIn(str(output.source_script), flow_config)
@@ -283,7 +295,7 @@ class MixedLanguagePackageTests(unittest.TestCase):
 
     def test_genus_validation_is_mockable_and_checks_configured_views(self):
         context = self._context()
-        checks = validate_genus(context, executable_lookup=lambda name: "/opt/cadence/genus" if name == "genus" else None)
+        checks = validate_genus(context, executable_lookup=lambda name: "/opt/cadence/flowtool" if name == "flowtool" else None)
         self.assertTrue(checks[0].available)
         context_values = dict(context.values)
         context_values["LEF_FILES"] = str(self.root / "missing.lef")
@@ -320,52 +332,49 @@ class MixedLanguagePackageTests(unittest.TestCase):
     def test_genus_run_allocates_exact_directory_freezes_provenance_and_executes_locally(self):
         context = self._context()
         completed = Mock(returncode=0)
-        with patch("wolf.backend.cadence_genus.validate_genus", return_value=(GenusValidation("genus", True, "/opt/cadence/genus"),)), \
+        with patch("wolf.backend.cadence_genus.validate_genus", return_value=(GenusValidation("flowtool", True, "/opt/cadence/flowtool"),)), \
              patch("wolf.backend.cadence_genus.subprocess.run", return_value=completed) as execute:
             status, run = run_genus(context, clean=True)
         self.assertEqual(status, 0)
         self.assertEqual(run.name, "ibex-fabulous-mvp.1")
         self.assertTrue((run / "wolf.resolved.yaml").is_file())
         self.assertTrue((run / "backend/cadence-genus/sources.tcl").is_file())
-        execute.assert_called_once_with(
-            ["/opt/cadence/genus", "-files", "run.tcl", "-log", "genus.log"],
-            cwd=run / "backend/cadence-genus", check=False,
-        )
+        command = execute.call_args.args[0]
+        self.assertEqual(command[0], "/opt/cadence/flowtool")
+        self.assertIn("-files", command)
+        self.assertIn("-from", command)
+        self.assertIn("-to", command)
+        self.assertEqual(execute.call_args.kwargs["cwd"], run / "backend/cadence-genus")
         frozen = yaml.safe_load((run / "wolf.resolved.yaml").read_text())
         self.assertEqual(frozen["workspace"]["run_directory"], str(run.resolve()))
         self.assertEqual(frozen["execution"]["working_directory"], str((run / "backend/cadence-genus").resolve()))
+        self.assertEqual(frozen["execution"]["tool"], "flowtool")
 
     def test_genus_validation_fails_before_allocating_run(self):
         context = self._context()
-        with patch("wolf.backend.cadence_genus.validate_genus", return_value=(GenusValidation("genus", False, "unavailable"),)), \
+        with patch("wolf.backend.cadence_genus.validate_genus", return_value=(GenusValidation("flowtool", False, "unavailable"),)), \
              self.assertRaisesRegex(ValueError, "validation failed"):
             run_genus(context, clean=True)
         self.assertFalse((context.workspace_root / context.design_name).exists())
 
     def test_genus_failure_preserves_run_and_status(self):
         context = self._context()
-        with patch("wolf.backend.cadence_genus.validate_genus", return_value=(GenusValidation("genus", True, "/opt/cadence/genus"),)), \
+        with patch("wolf.backend.cadence_genus.validate_genus", return_value=(GenusValidation("flowtool", True, "/opt/cadence/flowtool"),)), \
              patch("wolf.backend.cadence_genus.subprocess.run", return_value=Mock(returncode=17)):
             status, run = run_genus(context, clean=True)
         self.assertEqual(status, 17)
         self.assertTrue((run / "wolf.resolved.yaml").is_file())
         self.assertTrue((run / "backend/cadence-genus/genus-inputs.yaml").is_file())
 
-    def test_genus_script_failure_path_is_fail_fast_and_success_is_explicit(self):
+    def test_genus_interactive_flag_is_passed_to_flowtool(self):
         context = self._context()
-        output = prepare_genus_inputs(context, self.root / "fail-fast")
-        flow_script = (output.flow_root / "flow.tcl").read_text(encoding="utf-8")
-        self.assertIn("exit 1", flow_script)
-        self.assertIn("exit 0", flow_script)
-        flow_config = output.flow_config_script.read_text(encoding="utf-8")
-        self.assertIn("set wolf_interactive 0", flow_config)
-
         with patch("wolf.backend.cadence_genus.validate_genus", return_value=(
-            GenusValidation("genus", True, "/opt/cadence/genus"),
-        )), patch("wolf.backend.cadence_genus.subprocess.run", return_value=Mock(returncode=23)):
-            status, run = run_genus(context, clean=True)
+            GenusValidation("flowtool", True, "/opt/cadence/flowtool"),
+        )), patch("wolf.backend.cadence_genus.subprocess.run", return_value=Mock(returncode=23)) as execute:
+            status, run = run_genus(context, clean=True, interactive=True)
         self.assertEqual(status, 23)
         self.assertTrue((run / "wolf.resolved.yaml").is_file())
+        self.assertIn("-interactive", execute.call_args.args[0])
 
     def test_nested_bundle_resolves_all_347_sources_and_checksums(self):
         nested = self.state / "packages" / "rtl" / "nested" / "nested-rev" / "source" / "packages" / "demo"
