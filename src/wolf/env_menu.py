@@ -34,6 +34,7 @@ _RTL_SUFFIXES = (".v", ".sv", ".vhd", ".vhdl")
 
 from wolf.backend import backend_names
 from wolf.environment import ENVIRONMENT_FILENAME, ENVIRONMENT_SCHEMA, load_environment
+from wolf.package.installer import PackageInstaller
 from wolf.package.registry import PackageRegistry
 from wolf.package.store import PackageStore
 from wolf.paths import environments_dir
@@ -89,6 +90,34 @@ def _open_in_editor(app: App, path: Path) -> None:
             subprocess.run([editor, str(path)])
     except Exception as error:  # SuspendNotSupported, or the editor itself failing
         app.notify(f"could not open {path} in {editor!r}: {error}", severity="error")
+
+
+def _maybe_install(app: App, package_id: str, on_done) -> None:
+    """Offer to `wolf install` a picked-but-uninstalled package, then continue.
+
+    A local-path package (most PDKs on this host) installs instantly --
+    it only records a pin, nothing is copied. A git package may actually
+    fetch. Either way this never blocks picking the package: declining,
+    or a failed install, still calls on_done so the reference can be set
+    now and installed later with a plain `wolf install`.
+    """
+    manifest = PackageRegistry().get(package_id)
+    if PackageStore().read(manifest) is not None:
+        on_done()
+        return
+
+    def handle_confirm(choice: Optional[str]) -> None:
+        if choice == "yes":
+            try:
+                PackageInstaller().install(package_id)
+                app.notify(f"Installed {package_id}")
+            except Exception as error:
+                app.notify(f"Could not install {package_id}: {error}", severity="error")
+        on_done()
+    app.push_screen(
+        _PickScreen(f"{package_id} is not installed. Install now?", [("Yes", "yes"), ("No", "no")]),
+        handle_confirm,
+    )
 
 
 class _TextScreen(ModalScreen[Optional[str]]):
@@ -316,9 +345,13 @@ class _SourcesScreen(ModalScreen[Optional[list]]):
                     return
 
                 def handle_package(value: Optional[str]) -> None:
-                    if value:
+                    if not value:
+                        return
+
+                    def finish() -> None:
                         self._sources.append({"package": value})
                         self._refresh()
+                    _maybe_install(self.app, value, finish)
                 self.app.push_screen(_PickScreen("Pick an rtl package", choices), handle_package)
         self.app.push_screen(
             _PickScreen("Add a source", [
@@ -493,9 +526,13 @@ class EnvWizardApp(App[None]):
             return
 
         def handle(value: Optional[str]) -> None:
-            if value is not None:
+            if value is None:
+                return
+
+            def finish() -> None:
                 self.technology_package = value
                 self._refresh()
+            _maybe_install(self, value, finish)
         self.push_screen(_PickScreen("Pick a technology (PDK) package", choices), handle)
 
     def _edit_flow(self) -> None:
@@ -513,9 +550,11 @@ class EnvWizardApp(App[None]):
             if value is None:
                 return
             if value:
-                self.flow_package = value
-                self.backend = None
-                self._refresh()
+                def finish() -> None:
+                    self.flow_package = value
+                    self.backend = None
+                    self._refresh()
+                _maybe_install(self, value, finish)
                 return
             self.flow_package = None
 
