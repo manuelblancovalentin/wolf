@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 import sys
 
-from wolf.config import ConfigStore, xdg_cache_root, xdg_data_root
+from wolf.config import ConfigStore, wolf_cache_root, wolf_data_root
 
 
 def state_root() -> Path:
@@ -15,14 +15,14 @@ def state_root() -> Path:
     if configured:
         return Path(configured).expanduser().resolve()
     configured = ConfigStore().get("paths.data")
-    return Path(configured).expanduser().resolve() if configured else xdg_data_root()
+    return Path(configured).expanduser().resolve() if configured else wolf_data_root()
 
 
 def environments_dir() -> Path:
     if os.environ.get("WOLF_HOME"):
         return state_root() / "envs"
     configured = ConfigStore().get("paths.environments")
-    return Path(configured).expanduser().resolve() if configured else state_root() / "environments"
+    return Path(configured).expanduser().resolve() if configured else state_root() / "envs"
 
 
 def processes_dir() -> Path:
@@ -40,7 +40,7 @@ def cache_dir() -> Path:
     if os.environ.get("WOLF_HOME"):
         return state_root() / "cache"
     configured = ConfigStore().get("paths.cache")
-    return Path(configured).expanduser().resolve() if configured else xdg_cache_root()
+    return Path(configured).expanduser().resolve() if configured else wolf_cache_root()
 
 
 def registries_dir() -> Path:

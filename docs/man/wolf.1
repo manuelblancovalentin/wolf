@@ -209,9 +209,18 @@ global WOLF requirements and are not checked here.
 .SH ENVIRONMENT
 .TP
 .B WOLF_HOME
-Compatibility/testing override for WOLF-owned data stores. Persistent global
-configuration is found through XDG at
-.IR ~/.config/wolf/config.yaml .
+Compatibility/testing override that redirects all WOLF-owned data stores to
+one directory, bypassing configured
+.B paths.*
+overrides entirely. Persistent global configuration and all data default
+under one home,
+.IR ~/.wolf ,
+unless
+.BR XDG_CONFIG_HOME ,
+.BR XDG_DATA_HOME ,
+or
+.B XDG_CACHE_HOME
+is explicitly set, in which case that variable's own piece is honored.
 .TP
 .B WOLF_ACTIVE_ENV
 Set by
@@ -226,14 +235,20 @@ WOLF exits with status 0 on success and nonzero on invalid input, missing state,
 an unavailable operation, or command failure.
 .SH FILES
 .TP
-.I ~/.local/share/wolf/environments
-Default environment collection (legacy `WOLF_HOME/envs` remains supported).
+.I ~/.wolf/envs
+Default environment collection.
 .TP
-.I ~/.local/share/wolf/processes
+.I ~/.wolf/processes
 Default process definition collection (legacy `WOLF_HOME/config` remains supported).
 .TP
-.I ~/.local/share/wolf/packages
+.I ~/.wolf/packages
 Default versioned local package store.
+.TP
+.I ~/.wolf/registries
+Default configured local/git registry checkouts.
+.TP
+.I ~/.wolf/cache
+Default disposable cache (container image pulls, etc).
 .TP
 .I ~/.wolf/generated/environments
 Deterministic generated backend configuration and resolved planning manifests

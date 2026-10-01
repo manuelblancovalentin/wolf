@@ -25,34 +25,50 @@ CONFIG_KEYS = (
 _SECTIONS = {"paths", "workspace", "container", "shell", "registries"}
 
 
+def wolf_home_default() -> Path:
+    """WOLF's single default home: ~/.wolf, holding config and all data.
+
+    Chosen over a split XDG layout (~/.config, ~/.local/share, ~/.cache)
+    because it's the convention WOLF's own legacy environments already use
+    on real installations -- one tree is also simply easier to find, back
+    up, or point a fresh install at. XDG_* env vars, if a user explicitly
+    sets them, still override the pieces they name (see config_path and
+    wolf_cache_root) rather than being silently ignored.
+    """
+    return (Path.home() / ".wolf").resolve()
+
+
 def config_path() -> Path:
     root = os.environ.get("XDG_CONFIG_HOME")
-    base = Path(root).expanduser() if root else Path.home() / ".config"
-    return (base / "wolf" / "config.yaml").resolve()
+    if root:
+        return (Path(root).expanduser() / "wolf" / "config.yaml").resolve()
+    return wolf_home_default() / "config.yaml"
 
 
-def xdg_data_root() -> Path:
+def wolf_data_root() -> Path:
     root = os.environ.get("XDG_DATA_HOME")
-    base = Path(root).expanduser() if root else Path.home() / ".local" / "share"
-    return (base / "wolf").resolve()
+    if root:
+        return (Path(root).expanduser() / "wolf").resolve()
+    return wolf_home_default()
 
 
-def xdg_cache_root() -> Path:
+def wolf_cache_root() -> Path:
     root = os.environ.get("XDG_CACHE_HOME")
-    base = Path(root).expanduser() if root else Path.home() / ".cache"
-    return (base / "wolf").resolve()
+    if root:
+        return (Path(root).expanduser() / "wolf").resolve()
+    return wolf_home_default() / "cache"
 
 
 def default_document() -> dict[str, Any]:
-    data = xdg_data_root()
+    data = wolf_data_root()
     return {
         "schema": SCHEMA,
         "paths": {
             "data": str(data),
             "packages": str(data / "packages"),
-            "environments": str(data / "environments"),
+            "environments": str(data / "envs"),
             "registries": str(data / "registries"),
-            "cache": str(xdg_cache_root()),
+            "cache": str(wolf_cache_root()),
         },
         "workspace": {"default": None},
         "container": {"preferred_runtime": None},
