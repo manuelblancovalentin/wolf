@@ -49,6 +49,32 @@ Phase 1 accepts `name`, `design`, `technology`, `flow`, `project`, `workspace`,
 unsupported schema versions are errors. Design, technology, and flow package
 references must use the corresponding `rtl`, `pdk`, and `flow` package kinds.
 
+### Composing design sources from more than one place
+
+`design.package` names a single installed `rtl` package as the whole source
+list, as above. A design can instead be assembled from several places with
+`design.sources`, a list where each entry is either a portable package
+reference or a local path:
+
+```yaml
+design:
+  name: mixed
+  top: foo
+  sources:
+    - package: rtl/ibex
+    - path: extra/foo.sv
+```
+
+Each entry sets exactly one of `package` or `path`. A `package` entry is
+fully portable: installing that same package anywhere reproduces it. A
+`path` entry is not -- it names a file on this machine, outside any package,
+and is not carried along when the environment is cloned or shared. `path` is
+resolved the same way other stored paths are: relative to the profile's own
+directory, made absolute on import. When `design.sources` is present it
+replaces `design.package`'s source resolution entirely; `design.sources`
+carries no implicit name or top, so set `design.name` (and `design.top` if
+needed) explicitly alongside it.
+
 ## Project directory structure
 
 `project.root` names a project directory holding this environment's

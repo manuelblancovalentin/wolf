@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import hashlib
 from pathlib import Path
 import re
@@ -45,10 +45,24 @@ class ComponentReference:
 
 
 @dataclass(frozen=True)
+class SourceEntry:
+    """One design.sources entry: a portable package reference or a local path.
+
+    A package entry (e.g. rtl/ibex) is reproducible anywhere `wolf install`
+    can resolve it. A path entry is not portable -- cloning or sharing the
+    environment elsewhere does not carry that file along.
+    """
+
+    package: Optional[str] = None
+    path: Optional[str] = None
+
+
+@dataclass(frozen=True)
 class EnvironmentProfile:
     name: str
     path: Path
     design: Optional[ComponentReference] = None
+    design_sources: tuple[SourceEntry, ...] = ()
     technology: Optional[ComponentReference] = None
     flow: Optional[ComponentReference] = None
     project_root: Optional[str] = None
@@ -83,18 +97,40 @@ def _optional_string(value: Any, field: str) -> Optional[str]:
     return value
 
 
-def _component(data: Any, field: str, expected_kind: str) -> Optional[ComponentReference]:
+def _parse_source_entries(value: Any, field: str) -> tuple[SourceEntry, ...]:
+    if value is None:
+        return ()
+    if not isinstance(value, list):
+        raise ValueError(f"{field} must be a sequence")
+    entries = []
+    for index, item in enumerate(value):
+        item_field = f"{field}[{index}]"
+        mapping = _mapping(item, item_field)
+        _known_fields(mapping, {"package", "path"}, item_field)
+        package = _optional_string(mapping.get("package"), f"{item_field}.package")
+        path = _optional_string(mapping.get("path"), f"{item_field}.path")
+        if bool(package) == bool(path):
+            raise ValueError(f"{item_field} must set exactly one of package or path")
+        if package and PackageId.parse(package).kind != "rtl":
+            raise ValueError(f"{item_field}.package must identify an rtl package")
+        entries.append(SourceEntry(package=package, path=path))
+    return tuple(entries)
+
+
+def _component(
+    data: Any, field: str, expected_kind: str, *, extra_satisfied: bool = False
+) -> Optional[ComponentReference]:
     if data is None:
         return None
     mapping = _mapping(data, field)
-    allowed = {"package", "name"} | ({"top"} if field == "design" else set())
+    allowed = {"package", "name"} | ({"top", "sources"} if field == "design" else set())
     _known_fields(mapping, allowed, field)
     package = _optional_string(mapping.get("package"), f"{field}.package")
     if package and PackageId.parse(package).kind != expected_kind:
         raise ValueError(f"{field}.package must identify a {expected_kind} package")
     name = _optional_string(mapping.get("name"), f"{field}.name")
     top = _optional_string(mapping.get("top"), f"{field}.top") if field == "design" else None
-    if not any((package, name, top)):
+    if not any((package, name, top)) and not extra_satisfied:
         raise ValueError(f"{field} must define at least one value")
     return ComponentReference(package=package, name=name, top=top)
 
@@ -167,10 +203,16 @@ def load_environment(path: Path, *, expected_name: Optional[str] = None) -> Envi
         if not isinstance(env_value, str):
             raise ValueError(f"env.{env_key} must be a string")
 
+    design_mapping = _mapping(data.get("design"), "design", optional=True)
+    design_sources = _parse_source_entries(design_mapping.get("sources"), "design.sources")
+
     return EnvironmentProfile(
         name=name,
         path=path,
-        design=_component(data.get("design"), "design", "rtl"),
+        design=_component(
+            data.get("design"), "design", "rtl", extra_satisfied=bool(design_sources)
+        ),
+        design_sources=design_sources,
         technology=_component(data.get("technology"), "technology", "pdk"),
         flow=_component(data.get("flow"), "flow", "flow"),
         project_root=project_root,
@@ -196,6 +238,11 @@ def normalize_environment(source: Path, destination: Path, *, name: str) -> Envi
         data.setdefault("workspace", {})["root"] = str(
             resolve_stored_path(profile.workspace_root, profile.path.parent)
         )
+    design_sources = data.get("design", {}).get("sources") if isinstance(data.get("design"), dict) else None
+    if isinstance(design_sources, list):
+        for entry in design_sources:
+            if isinstance(entry, dict) and isinstance(entry.get("path"), str):
+                entry["path"] = str(resolve_stored_path(entry["path"], profile.path.parent))
     for overrides in data.get("backend", {}).values():
         if isinstance(overrides, dict) and isinstance(overrides.get("design_config"), str):
             overrides["design_config"] = str(
@@ -395,6 +442,65 @@ def _design_inputs(manifest: Any, installed: Any) -> tuple[
     return tuple(sources), include_directories, defines, standard, source_checksums
 
 
+def _source_language(path: Path) -> str:
+    suffix = path.suffix.lower()
+    if suffix == ".sv":
+        return "systemverilog"
+    if suffix in (".vhd", ".vhdl"):
+        return "vhdl"
+    return "verilog"
+
+
+def _resolve_source_entries(
+    entries: tuple[SourceEntry, ...],
+    profile: EnvironmentProfile,
+    registry: PackageRegistry,
+    store: PackageStore,
+    *,
+    require_installed: bool,
+) -> tuple[
+    tuple[ResolvedSource, ...], tuple[Path, ...], tuple[str, ...], Optional[str],
+    dict[str, str], list[tuple[Any, Any]],
+]:
+    """Resolve a design.sources list, mixing portable packages and local paths."""
+    sources: list[ResolvedSource] = []
+    include_directories: list[Path] = []
+    defines: list[str] = []
+    vhdl_standard: Optional[str] = None
+    checksums: dict[str, str] = {}
+    used: list[tuple[Any, Any]] = []
+    for entry in entries:
+        if entry.package:
+            manifest = registry.get(entry.package)
+            package = store.read(manifest)
+            if package is None:
+                if require_installed:
+                    raise ValueError(f"required package {entry.package} is not installed")
+                continue
+            used.append((manifest, package))
+            pkg_sources, pkg_includes, pkg_defines, pkg_standard, pkg_checksums = _design_inputs(
+                manifest, package
+            )
+            for source in pkg_sources:
+                sources.append(replace(source, order=len(sources)))
+            include_directories.extend(pkg_includes)
+            defines.extend(pkg_defines)
+            vhdl_standard = vhdl_standard or pkg_standard
+            checksums.update(pkg_checksums)
+        else:
+            path = resolve_stored_path(entry.path, profile.path.parent)
+            if not path.is_file():
+                raise ValueError(f"design.sources path does not exist: {path}")
+            sources.append(ResolvedSource(
+                path=path, language=_source_language(path), library="work",
+                order=len(sources), role="source",
+            ))
+    return (
+        tuple(sources), tuple(dict.fromkeys(include_directories)), tuple(dict.fromkeys(defines)),
+        vhdl_standard, checksums, used,
+    )
+
+
 def profile_semantics(profile: EnvironmentProfile) -> Mapping[str, Optional[str]]:
     """Return semantic package defaults without requiring package installation."""
     registry = PackageRegistry()
@@ -527,7 +633,24 @@ def resolve_declarative_environment(
     package_checksums: dict[str, str] = {}
     resolved_technology = _technology_inputs(manifests.get("technology"), installed.get("technology")) \
         if "technology" in manifests else None
-    if "design" in installed:
+    if profile.design_sources:
+        sources, include_directories, defines, vhdl_standard, package_checksums, used = (
+            _resolve_source_entries(
+                profile.design_sources, profile, registry, store,
+                require_installed=require_installed,
+            )
+        )
+        source_files = tuple(source.path for source in sources)
+        package_revisions = {**package_revisions, **{str(m.identifier): m.revision for m, _ in used}}
+        package_source_revisions = {
+            **package_source_revisions,
+            **{str(m.identifier): p.source_revision for m, p in used},
+        }
+        package_installation_paths = {
+            **package_installation_paths,
+            **{str(m.identifier): p.installation_path for m, p in used},
+        }
+    elif "design" in installed:
         sources, include_directories, defines, vhdl_standard, package_checksums = _design_inputs(
             manifests["design"], installed["design"]
         )

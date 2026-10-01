@@ -166,6 +166,56 @@ workspace:
         )
         self.assertEqual(context.design_name, "ibex")
 
+    def test_design_sources_list_mixes_package_and_local_path(self):
+        local_dir = self.environment / "extra"
+        local_dir.mkdir()
+        local_file = local_dir / "foo.sv"
+        local_file.write_text("module foo; endmodule\n", encoding="utf-8")
+        text = """schema: wolf.environment/v1
+name: demo
+design:
+  name: mixed
+  top: foo
+  sources:
+    - package: rtl/ibex
+    - path: extra/foo.sv
+technology:
+  package: pdk/asap7
+flow:
+  package: flow/orfs
+workspace:
+  root: ./work
+"""
+        context = resolve_declarative_environment(
+            load_environment(self._write(text, "mixed.yaml")),
+            state_root=self.state,
+            environment_directory=self.environment,
+        )
+        self.assertEqual((context.design_name, context.design_top), ("mixed", "foo"))
+        self.assertEqual(len(context.sources), 1)
+        self.assertEqual(context.sources[0].language, "systemverilog")
+        self.assertEqual(context.source_files, (local_file.resolve(),))
+        self.assertEqual(context.package_revisions["rtl/ibex"], "rtl-rev")
+
+    def test_design_sources_entry_requires_exactly_one_of_package_or_path(self):
+        cases = (
+            ("design:\n  name: mixed\n  sources:\n    - package: rtl/ibex\n      path: extra/foo.sv\n",
+             "exactly one"),
+            ("design:\n  name: mixed\n  sources:\n    - {}\n", "exactly one"),
+        )
+        for index, (design_block, message) in enumerate(cases):
+            text = f"""schema: wolf.environment/v1
+name: demo
+{design_block}technology:
+  package: pdk/asap7
+flow:
+  package: flow/orfs
+workspace:
+  root: ./work
+"""
+            with self.subTest(message=message), self.assertRaisesRegex(ValueError, message):
+                load_environment(self._write(text, f"bad-sources-{index}.yaml"))
+
     def test_resolution_is_independent_of_cwd(self):
         profile = load_environment(self._write(self._complete_yaml()))
         before = Path.cwd()
