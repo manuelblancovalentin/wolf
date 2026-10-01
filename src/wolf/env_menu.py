@@ -281,28 +281,47 @@ class _BrowseDirectoryScreen(ModalScreen[Optional[str]]):
 
     'a' uses the highlighted directory (or its parent, if a file is
     highlighted); 'n' creates a new folder inside the highlighted
-    directory and expands into it. Enter still just expands/collapses a
-    folder, same as the RTL browser. Escape cancels.
+    directory and expands into it; 'h' toggles hidden (dot) files and
+    directories, off by default, same as the RTL browser. Enter still
+    just expands/collapses a folder. Escape cancels.
     """
 
     BINDINGS = [
         ("a", "select", "Use this directory"),
         ("n", "new_folder", "New folder"),
+        ("h", "toggle_hidden", "Hidden files"),
         ("escape", "cancel", "Cancel"),
     ]
 
     def __init__(self, start: str):
         super().__init__()
         self._start = start
+        self._show_hidden = False
 
     def compose(self) -> ComposeResult:
         with Vertical(id="dialog"):
             yield Static("Browse for a directory", id="dialog-title")
-            yield DirectoryTree(self._start, id="browse-tree")
-            yield Static(
-                "enter: expand folder — a: use this directory — n: new folder here — esc: cancel",
-                id="dialog-hint",
-            )
+            tree = _FilterableDirectoryTree(self._start, id="browse-tree")
+            tree.show_hidden = self._show_hidden
+            yield tree
+            yield Static(self._hint(), id="dialog-hint")
+
+    def _hint(self) -> str:
+        hidden = "shown" if self._show_hidden else "hidden"
+        return (
+            f"enter: expand folder — a: use this directory — n: new folder here — "
+            f"h: toggle dotfiles (currently {hidden}) — esc: cancel"
+        )
+
+    def _refresh_hint(self) -> None:
+        self.query_one("#dialog-hint", Static).update(self._hint())
+
+    def action_toggle_hidden(self) -> None:
+        self._show_hidden = not self._show_hidden
+        tree = self.query_one(DirectoryTree)
+        tree.show_hidden = self._show_hidden
+        tree.reload()
+        self._refresh_hint()
 
     def _highlighted_directory(self) -> Optional[Path]:
         node = self.query_one(DirectoryTree).cursor_node
