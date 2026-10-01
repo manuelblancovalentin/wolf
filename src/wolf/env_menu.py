@@ -25,9 +25,9 @@ from typing import Optional
 
 import yaml
 from textual.app import App, ComposeResult
-from textual.containers import Vertical
+from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
-from textual.widgets import DirectoryTree, Footer, Header, Input, OptionList, Static
+from textual.widgets import Button, DirectoryTree, Footer, Header, Input, OptionList, Static
 from textual.widgets.option_list import Option
 
 _RTL_SUFFIXES = (".v", ".sv", ".vhd", ".vhdl")
@@ -109,10 +109,19 @@ def _package_location_hint(manifest) -> str:
     return f"not fetched yet, installing clones it from {source.url}"
 
 
-def _package_choice_label(manifest) -> str:
+def _package_choice(manifest) -> tuple[str, str, str]:
+    """Return (label, id, detail) for one package picker entry.
+
+    The label alone is always one short line -- "kind/name (installed)"
+    or "kind/name (not installed)" -- so entries never wrap into each
+    other; the longer explanation of what "not installed" costs here is
+    the detail, shown only for whichever entry is currently highlighted
+    (see _PickScreen).
+    """
+    identifier = str(manifest.identifier)
     if PackageStore().read(manifest) is not None:
-        return f"{manifest.identifier} (installed)"
-    return f"{manifest.identifier} (not installed — {_package_location_hint(manifest)})"
+        return f"{identifier} (installed)", identifier, ""
+    return f"{identifier} (not installed)", identifier, _package_location_hint(manifest)
 
 
 def _maybe_install(app: App, package_id: str, on_done) -> None:
@@ -267,19 +276,98 @@ class _BrowseScreen(ModalScreen[Optional[list]]):
         self.dismiss(self._selected)
 
 
-class _PickScreen(ModalScreen[Optional[str]]):
-    """Pick one id out of a list of (label, id) choices."""
+class _BrowseDirectoryScreen(ModalScreen[Optional[str]]):
+    """Browse the filesystem and pick one directory, e.g. a project root.
 
-    def __init__(self, title: str, choices: list[tuple[str, str]]):
+    'a' uses the highlighted directory (or its parent, if a file is
+    highlighted); 'n' creates a new folder inside the highlighted
+    directory and expands into it. Enter still just expands/collapses a
+    folder, same as the RTL browser. Escape cancels.
+    """
+
+    BINDINGS = [
+        ("a", "select", "Use this directory"),
+        ("n", "new_folder", "New folder"),
+        ("escape", "cancel", "Cancel"),
+    ]
+
+    def __init__(self, start: str):
+        super().__init__()
+        self._start = start
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="dialog"):
+            yield Static("Browse for a directory", id="dialog-title")
+            yield DirectoryTree(self._start, id="browse-tree")
+            yield Static(
+                "enter: expand folder — a: use this directory — n: new folder here — esc: cancel",
+                id="dialog-hint",
+            )
+
+    def _highlighted_directory(self) -> Optional[Path]:
+        node = self.query_one(DirectoryTree).cursor_node
+        if node is None:
+            return None
+        path = node.data.path
+        return path if path.is_dir() else path.parent
+
+    def action_select(self) -> None:
+        directory = self._highlighted_directory()
+        if directory is not None:
+            self.dismiss(str(directory.resolve()))
+
+    def action_new_folder(self) -> None:
+        directory = self._highlighted_directory()
+        if directory is None:
+            return
+
+        def handle_name(name: Optional[str]) -> None:
+            if not name:
+                return
+            new_directory = directory / name
+            try:
+                new_directory.mkdir()
+                self.app.notify(f"Created {new_directory}")
+                self.query_one(DirectoryTree).reload()
+            except OSError as error:
+                self.app.notify(f"Could not create folder: {error}", severity="error")
+        self.app.push_screen(_TextScreen(f"New folder name (inside {directory})"), handle_name)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
+class _PickScreen(ModalScreen[Optional[str]]):
+    """Pick one id out of a list of (label, id) choices.
+
+    Labels stay short so entries never wrap into each other -- the usual
+    cause of a list being hard to read. An optional `details` map (id ->
+    longer text) is shown for whichever entry is currently highlighted,
+    one line at a time, instead of being crammed into every option.
+    """
+
+    def __init__(
+        self, title: str, choices: list[tuple[str, str]], details: Optional[dict] = None,
+    ):
         super().__init__()
         self._title = title
         self._choices = choices
+        self._details = details or {}
 
     def compose(self) -> ComposeResult:
         with Vertical(id="dialog"):
             yield Static(self._title, id="dialog-title")
             yield OptionList(*(Option(label, id=key) for label, key in self._choices))
-            yield Static("enter to choose — esc to cancel", id="dialog-hint")
+            initial = self._choices[0][1] if self._choices else None
+            yield Static(self._hint(initial), id="dialog-hint")
+
+    def _hint(self, option_id: Optional[str]) -> str:
+        base = "enter to choose — esc to cancel"
+        detail = self._details.get(option_id) if option_id is not None else None
+        return f"{detail}\n{base}" if detail else base
+
+    def on_option_list_option_highlighted(self, event: OptionList.OptionHighlighted) -> None:
+        self.query_one("#dialog-hint", Static).update(self._hint(event.option_id))
 
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
         event.stop()
@@ -359,14 +447,15 @@ class _SourcesScreen(ModalScreen[Optional[list]]):
                         self._refresh()
                 self.app.push_screen(_TextScreen("Path to an RTL file"), handle_path)
             elif method == "package":
-                registry = PackageRegistry()
-                choices = [
-                    (_package_choice_label(manifest), str(manifest.identifier))
-                    for manifest in registry.manifests() if manifest.identifier.kind == "rtl"
+                entries = [
+                    _package_choice(manifest) for manifest in PackageRegistry().manifests()
+                    if manifest.identifier.kind == "rtl"
                 ]
-                if not choices:
+                if not entries:
                     self.app.notify("No rtl/* packages found in any configured registry.", severity="warning")
                     return
+                choices = [(label, identifier) for label, identifier, _ in entries]
+                details = {identifier: detail for _, identifier, detail in entries if detail}
 
                 def handle_package(value: Optional[str]) -> None:
                     if not value:
@@ -376,7 +465,7 @@ class _SourcesScreen(ModalScreen[Optional[list]]):
                         self._sources.append({"package": value})
                         self._refresh()
                     _maybe_install(self.app, value, finish)
-                self.app.push_screen(_PickScreen("Pick an rtl package", choices), handle_package)
+                self.app.push_screen(_PickScreen("Pick an rtl package", choices, details), handle_package)
         self.app.push_screen(
             _PickScreen("Add a source", [
                 ("Browse filesystem", "browse"),
@@ -416,14 +505,21 @@ class EnvWizardApp(App[None]):
     #dialog-hint { color: $text-muted; margin-top: 1; }
     Screen { align: center middle; }
     OptionList { border: round #ad4ce5; }
+    #actions { height: auto; align: center middle; margin-top: 1; }
+    #actions Button { margin: 0 2; }
     """
-    BINDINGS = [("q", "quit", "Quit"), ("escape", "quit", "Quit")]
+    BINDINGS = [
+        ("q", "quit", "Quit"),
+        ("escape", "quit", "Quit"),
+        ("s", "save_in_place", "Save"),
+    ]
     TITLE = "WOLF environment setup"
 
     def __init__(self, name: str):
         super().__init__()
         self._name = name
         self._path = environments_dir() / name
+        self._dirty = False
         self.sources: list[dict] = []
         self.design_name: Optional[str] = None
         self.design_top: Optional[str] = None
@@ -451,10 +547,14 @@ class EnvWizardApp(App[None]):
             # --backend` override, never persisted. Re-editing such an
             # environment starts flow/backend unset; pick it again if needed.
             self.project_root = profile.project_root
+        self.sub_title = self._name
 
     def compose(self) -> ComposeResult:
         yield Header()
         yield OptionList(*self._options())
+        with Horizontal(id="actions"):
+            yield Button("Save", id="save", variant="primary")
+            yield Button("Quit without saving", id="quit_")
         yield Footer()
 
     def _options(self) -> list[Option]:
@@ -470,15 +570,20 @@ class EnvWizardApp(App[None]):
             Option(f"Technology (PDK): {technology_label}", id="technology"),
             Option(f"Flow / backend: {flow_label}", id="flow"),
             Option(f"Project root: {project_label}", id="project"),
-            Option("Save", id="save"),
-            Option("Quit without saving", id="quit_"),
         ]
 
     def _refresh(self) -> None:
+        """Rebuild the main menu's option list after an edit, which always
+        means there is something unsaved -- see _save()'s own reset."""
+        self._dirty = True
+        self._update_subtitle()
         option_list = self.query_one(OptionList)
         option_list.clear_options()
         for option in self._options():
             option_list.add_option(option)
+
+    def _update_subtitle(self) -> None:
+        self.sub_title = f"{self._name} — unsaved changes" if self._dirty else self._name
 
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
         choice = event.option_id
@@ -495,15 +600,16 @@ class EnvWizardApp(App[None]):
         elif choice == "flow":
             self._edit_flow()
         elif choice == "project":
-            def handle(value: Optional[str]) -> None:
-                if value is not None:
-                    self.project_root = _absolute(value) if value else None
-                    self._refresh()
-            self.push_screen(_TextScreen("Project root", self.project_root or ""), handle)
-        elif choice == "save":
-            self._save()
-        elif choice == "quit_":
+            self._edit_project_root()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "save":
+            self._save(close=True)
+        elif event.button.id == "quit_":
             self.exit()
+
+    def action_save_in_place(self) -> None:
+        self._save(close=False)
 
     def _edit_design(self) -> None:
         detected = _scan_modules(self.sources)
@@ -536,15 +642,40 @@ class EnvWizardApp(App[None]):
         else:
             self.push_screen(_TextScreen("Top module name", self.design_top or ""), pick_name)
 
+    def _edit_project_root(self) -> None:
+        def handle_method(method: Optional[str]) -> None:
+            if method == "browse":
+                def handle_browse(path: Optional[str]) -> None:
+                    if path is not None:
+                        self.project_root = path
+                        self._refresh()
+                self.push_screen(
+                    _BrowseDirectoryScreen(self.project_root or str(Path.home())), handle_browse,
+                )
+            elif method == "manual":
+                def handle_path(value: Optional[str]) -> None:
+                    if value is not None:
+                        self.project_root = _absolute(value) if value else None
+                        self._refresh()
+                self.push_screen(_TextScreen("Project root", self.project_root or ""), handle_path)
+        self.push_screen(
+            _PickScreen("Set project root", [
+                ("Browse filesystem", "browse"),
+                ("Type a path manually", "manual"),
+            ]),
+            handle_method,
+        )
+
     def _edit_technology(self) -> None:
-        registry = PackageRegistry()
-        choices = [
-            (_package_choice_label(manifest), str(manifest.identifier))
-            for manifest in registry.manifests() if manifest.identifier.kind == "pdk"
+        entries = [
+            _package_choice(manifest) for manifest in PackageRegistry().manifests()
+            if manifest.identifier.kind == "pdk"
         ]
-        if not choices:
+        if not entries:
             self.notify("No pdk/* packages found in any configured registry.", severity="warning")
             return
+        choices = [(label, identifier) for label, identifier, _ in entries]
+        details = {identifier: detail for _, identifier, detail in entries if detail}
 
         def handle(value: Optional[str]) -> None:
             if value is None:
@@ -554,15 +685,20 @@ class EnvWizardApp(App[None]):
                 self.technology_package = value
                 self._refresh()
             _maybe_install(self, value, finish)
-        self.push_screen(_PickScreen("Pick a technology (PDK) package", choices), handle)
+        self.push_screen(_PickScreen("Pick a technology (PDK) package", choices, details), handle)
 
     def _edit_flow(self) -> None:
-        registry = PackageRegistry()
-        choices = [
-            (_package_choice_label(manifest), str(manifest.identifier))
-            for manifest in registry.manifests() if manifest.identifier.kind == "flow"
+        entries = [
+            _package_choice(manifest) for manifest in PackageRegistry().manifests()
+            if manifest.identifier.kind == "flow"
         ]
-        choices.append(("(none — use WOLF's bundled default flow)", ""))
+        choices = [(label, identifier) for label, identifier, _ in entries]
+        details = {identifier: detail for _, identifier, detail in entries if detail}
+        choices.append(("(none — WOLF's own built-in flow)", ""))
+        details[""] = (
+            "Not your institutional Stylus flow -- runs WOLF's bundled "
+            "elaborate -> syn_generic -> syn_map -> syn_opt Genus script instead."
+        )
 
         def handle(value: Optional[str]) -> None:
             if value is None:
@@ -580,13 +716,22 @@ class EnvWizardApp(App[None]):
                 if backend is not None:
                     self.backend = backend
                     self._refresh()
+            backend_details = {
+                "cadence-flowtool": (
+                    "Local Genus/Innovus execution, using WOLF's own bundled flow "
+                    "above -- not your institutional Stylus flow."
+                ),
+                "orfs": "OpenROAD Flow Scripts, run in a container.",
+            }
             self.push_screen(
-                _PickScreen("Pick a backend", [(name, name) for name in backend_names()]),
+                _PickScreen(
+                    "Pick a backend", [(name, name) for name in backend_names()], backend_details,
+                ),
                 handle_backend,
             )
-        self.push_screen(_PickScreen("Pick a flow package", choices), handle)
+        self.push_screen(_PickScreen("Pick a flow package", choices, details), handle)
 
-    def _save(self) -> None:
+    def _save(self, *, close: bool) -> None:
         document: dict = {"schema": ENVIRONMENT_SCHEMA, "name": self._name}
         design: dict = {}
         if self.design_name:
@@ -627,4 +772,7 @@ class EnvWizardApp(App[None]):
             temporary.unlink(missing_ok=True)
 
         self.notify(f"Saved WOLF environment {self._name!r} at {self._path}")
-        self.exit()
+        self._dirty = False
+        self._update_subtitle()
+        if close:
+            self.exit()
