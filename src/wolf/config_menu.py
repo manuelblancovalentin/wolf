@@ -120,26 +120,30 @@ class _ChoiceScreen(ModalScreen[Optional[str]]):
 
 
 class _RegistriesScreen(ModalScreen[None]):
-    """List, add, and remove configured package registries."""
+    """List, add, and remove configured package registries.
+
+    Consistent with every other list screen here: 'a' adds, 'd' deletes
+    the highlighted registry, enter shows its details (a registry has no
+    single file to open). Escape closes.
+    """
+
+    BINDINGS = [
+        ("a", "add", "Add"),
+        ("d", "delete", "Delete"),
+        ("escape", "done", "Done"),
+    ]
 
     def compose(self) -> ComposeResult:
         with Vertical(id="dialog"):
             yield Static("Package registries", id="dialog-title")
             yield OptionList(*self._options())
-            yield Static("select an entry to remove it - esc to close", id="dialog-hint")
+            yield Static("enter: view details — a: add — d: delete highlighted — esc: done", id="dialog-hint")
 
     def _options(self) -> list[Option]:
-        manager = RegistryManager()
-        options = []
-        for spec in manager.specs():
-            status = manager.status(spec)
-            options.append(Option(
-                f"− remove: {spec.name} ({spec.type}, priority {spec.priority}) [{status}]",
-                id=f"remove:{spec.name}",
-            ))
-        options.append(Option("+ add registry", id="add"))
-        options.append(Option("Done", id="done"))
-        return options
+        specs = RegistryManager().specs()
+        if not specs:
+            return [Option("(none yet — press 'a' to add)", id="__empty__", disabled=True)]
+        return [Option(f"{spec.name} ({spec.type}, priority {spec.priority})", id=spec.name) for spec in specs]
 
     def _refresh(self) -> None:
         option_list = self.query_one(OptionList)
@@ -149,19 +153,36 @@ class _RegistriesScreen(ModalScreen[None]):
 
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
         event.stop()
-        choice = event.option_id
-        assert choice is not None
-        if choice == "done":
-            self.dismiss(None)
-        elif choice == "add":
-            self._add_registry()
-        elif choice.startswith("remove:"):
-            name = choice.split(":", 1)[1]
-            try:
-                RegistryManager().remove(name)
-            except ValueError as error:
-                self.app.notify(str(error), severity="error")
-            self._refresh()
+        if event.option_id in (None, "__empty__"):
+            return
+        manager = RegistryManager()
+        spec = manager.get(event.option_id)
+        status = manager.status(spec)
+        self.app.notify(
+            f"{spec.name}: type={spec.type} source={spec.source} "
+            f"priority={spec.priority} status={status}",
+            timeout=8,
+        )
+
+    def action_add(self) -> None:
+        self._add_registry()
+
+    def action_delete(self) -> None:
+        option_list = self.query_one(OptionList)
+        index = option_list.highlighted
+        if index is None:
+            return
+        option = option_list.get_option_at_index(index)
+        if option.id is None or option.id == "__empty__":
+            return
+        try:
+            RegistryManager().remove(option.id)
+        except ValueError as error:
+            self.app.notify(str(error), severity="error")
+        self._refresh()
+
+    def action_done(self) -> None:
+        self.dismiss(None)
 
     def _add_registry(self) -> None:
         def got_name(name: Optional[str]) -> None:
@@ -188,10 +209,6 @@ class _RegistriesScreen(ModalScreen[None]):
                 )
             self.app.push_screen(_PromptScreen("Registry source (path or git URL)"), got_source)
         self.app.push_screen(_PromptScreen("Registry name"), got_name)
-
-    def on_key(self, event) -> None:
-        if event.key == "escape":
-            self.dismiss(None)
 
 
 class ConfigMenuApp(App[None]):

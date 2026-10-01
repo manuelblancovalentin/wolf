@@ -14,9 +14,11 @@ flow/backend, then the project root.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 import re
 import shutil
+import subprocess
 import tempfile
 from typing import Optional
 
@@ -78,6 +80,16 @@ def _source_label(entry: dict) -> str:
     return f"local path: {entry.get('path', '')}"
 
 
+def _open_in_editor(app: App, path: Path) -> None:
+    """Suspend the TUI and open a file in $EDITOR (vim by default)."""
+    editor = os.environ.get("EDITOR", "vim")
+    try:
+        with app.suspend():
+            subprocess.run([editor, str(path)])
+    except Exception as error:  # SuspendNotSupported, or the editor itself failing
+        app.notify(f"could not open {path} in {editor!r}: {error}", severity="error")
+
+
 class _TextScreen(ModalScreen[Optional[str]]):
     def __init__(self, title: str, initial: str = "", hint: str = "enter to submit — esc to cancel"):
         super().__init__()
@@ -116,19 +128,19 @@ class _FilterableDirectoryTree(DirectoryTree):
 class _BrowseScreen(ModalScreen[Optional[list]]):
     """Browse the filesystem and collect one or more RTL file paths.
 
-    Enter on a file adds it and keeps browsing (so several files from the
-    same directory can be picked in one pass); 'a' adds every RTL-looking
-    file directly inside the highlighted directory in one step; 'h' toggles
-    hidden (dot) files and directories, off by default so they don't
-    clutter the tree. 'd' finishes and returns what was picked so far;
-    escape cancels with nothing picked.
+    Consistent with every other list screen here: 'a' adds (the
+    highlighted file, or every RTL-looking file directly inside the
+    highlighted directory), 'h' toggles hidden (dot) files and
+    directories, off by default. Enter on a directory expands/collapses
+    it -- the tree's own default, left untouched. Enter on a file opens
+    it in $EDITOR to view it, rather than adding it -- adding is always
+    an explicit 'a'. Escape finishes, returning whatever was added.
     """
 
     BINDINGS = [
-        ("d", "finish", "Done"),
-        ("a", "add_directory", "Add all RTL files here"),
+        ("a", "add", "Add"),
         ("h", "toggle_hidden", "Hidden files"),
-        ("escape", "cancel", "Cancel"),
+        ("escape", "done", "Done"),
     ]
 
     def __init__(self, start: str):
@@ -149,9 +161,12 @@ class _BrowseScreen(ModalScreen[Optional[list]]):
         picked = f"{len(self._selected)} file(s) picked" if self._selected else "none picked yet"
         hidden = "shown" if self._show_hidden else "hidden"
         return (
-            f"{picked} — enter: add file — a: add all RTL files here — "
-            f"h: toggle dotfiles (currently {hidden}) — d: done — esc: cancel"
+            f"{picked} — enter: expand folder / edit file in $EDITOR — a: add — "
+            f"h: toggle dotfiles (currently {hidden}) — esc: done"
         )
+
+    def _refresh_hint(self) -> None:
+        self.query_one("#dialog-hint", Static).update(self._hint())
 
     def action_toggle_hidden(self) -> None:
         self._show_hidden = not self._show_hidden
@@ -160,38 +175,39 @@ class _BrowseScreen(ModalScreen[Optional[list]]):
         tree.reload()
         self._refresh_hint()
 
-    def _refresh_hint(self) -> None:
-        self.query_one("#dialog-hint", Static).update(self._hint())
-
     def on_directory_tree_file_selected(self, event: DirectoryTree.FileSelected) -> None:
         event.stop()
-        path = str(event.path.resolve())
-        if path not in self._selected:
-            self._selected.append(path)
-        self._refresh_hint()
+        _open_in_editor(self.app, event.path)
 
-    def action_add_directory(self) -> None:
+    def action_add(self) -> None:
         tree = self.query_one(DirectoryTree)
         node = tree.cursor_node
         if node is None:
             return
-        directory = node.data.path if node.data.path.is_dir() else node.data.path.parent
-        added = 0
-        for entry in sorted(directory.iterdir()):
-            if entry.is_file() and entry.suffix.lower() in _RTL_SUFFIXES:
-                path = str(entry.resolve())
-                if path not in self._selected:
-                    self._selected.append(path)
-                    added += 1
-        if added:
-            self.app.notify(f"Added {added} RTL file(s) from {directory}")
+        path = node.data.path
+        if path.is_dir():
+            added = 0
+            for entry in sorted(path.iterdir()):
+                if entry.is_file() and entry.suffix.lower() in _RTL_SUFFIXES:
+                    resolved = str(entry.resolve())
+                    if resolved not in self._selected:
+                        self._selected.append(resolved)
+                        added += 1
+            if added:
+                self.app.notify(f"Added {added} RTL file(s) from {path}")
+            else:
+                self.app.notify("No new RTL files in that directory.", severity="warning")
+        else:
+            resolved = str(path.resolve())
+            if resolved in self._selected:
+                self.app.notify(f"{path.name} is already picked.", severity="warning")
+            else:
+                self._selected.append(resolved)
+                self.app.notify(f"Added {path.name}")
         self._refresh_hint()
 
-    def action_finish(self) -> None:
+    def action_done(self) -> None:
         self.dismiss(self._selected)
-
-    def action_cancel(self) -> None:
-        self.dismiss(None)
 
 
 class _PickScreen(ModalScreen[Optional[str]]):
@@ -218,7 +234,19 @@ class _PickScreen(ModalScreen[Optional[str]]):
 
 
 class _SourcesScreen(ModalScreen[Optional[list]]):
-    """Add/remove design.sources entries: installed rtl packages or local paths."""
+    """Add/remove design.sources entries: installed rtl packages or local paths.
+
+    'a' adds (choosing browse / manual path / installed package), 'd'
+    deletes the highlighted entry, enter opens a local-path entry in
+    $EDITOR to view it (a package entry has no single file to open).
+    Escape finishes, keeping whatever was added or removed so far.
+    """
+
+    BINDINGS = [
+        ("a", "add", "Add"),
+        ("d", "delete", "Delete"),
+        ("escape", "done", "Done"),
+    ]
 
     def __init__(self, sources: list[dict]):
         super().__init__()
@@ -229,20 +257,14 @@ class _SourcesScreen(ModalScreen[Optional[list]]):
             yield Static("RTL sources", id="dialog-title")
             yield OptionList(*self._options())
             yield Static(
-                "select an entry to remove it — esc cancels, keeping earlier changes",
+                "enter: open path in $EDITOR — a: add — d: delete highlighted — esc: done",
                 id="dialog-hint",
             )
 
     def _options(self) -> list[Option]:
-        options = [
-            Option(f"− remove: {_source_label(entry)}", id=f"remove:{index}")
-            for index, entry in enumerate(self._sources)
-        ]
-        options.append(Option("+ browse for files", id="browse_path"))
-        options.append(Option("+ type a path manually", id="add_path"))
-        options.append(Option("+ add installed rtl package", id="add_package"))
-        options.append(Option("Done", id="done"))
-        return options
+        if not self._sources:
+            return [Option("(none yet — press 'a' to add)", id="__empty__", disabled=True)]
+        return [Option(_source_label(entry), id=str(index)) for index, entry in enumerate(self._sources)]
 
     def _refresh(self) -> None:
         option_list = self.query_one(OptionList)
@@ -252,53 +274,70 @@ class _SourcesScreen(ModalScreen[Optional[list]]):
 
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
         event.stop()
-        choice = event.option_id
-        assert choice is not None
-        if choice == "done":
-            self.dismiss(self._sources)
-        elif choice == "browse_path":
-            existing = next((Path(e["path"]).parent for e in reversed(self._sources) if e.get("path")), None)
-            start = str(existing or Path.home())
+        if event.option_id in (None, "__empty__"):
+            return
+        entry = self._sources[int(event.option_id)]
+        if entry.get("path"):
+            _open_in_editor(self.app, Path(entry["path"]))
+        else:
+            self.app.notify(f"{entry.get('package')} is an installed package, not a single file.")
 
-            def handle_browse(paths: Optional[list]) -> None:
-                if paths:
-                    for path in paths:
-                        if not any(e.get("path") == path for e in self._sources):
-                            self._sources.append({"path": path})
-                    self._refresh()
-            self.app.push_screen(_BrowseScreen(start), handle_browse)
-        elif choice == "add_path":
-            def handle_path(value: Optional[str]) -> None:
-                if value:
-                    self._sources.append({"path": _absolute(value)})
-                    self._refresh()
-            self.app.push_screen(_TextScreen("Path to an RTL file"), handle_path)
-        elif choice == "add_package":
-            registry = PackageRegistry()
-            store = PackageStore()
-            choices = []
-            for manifest in registry.manifests():
-                if manifest.identifier.kind != "rtl":
-                    continue
-                status = store.status(manifest)
-                choices.append((f"{manifest.identifier} ({status})", str(manifest.identifier)))
-            if not choices:
-                self.app.notify("No rtl/* packages found in any configured registry.", severity="warning")
-                return
+    def action_add(self) -> None:
+        def handle_method(method: Optional[str]) -> None:
+            if method == "browse":
+                existing = next((Path(e["path"]).parent for e in reversed(self._sources) if e.get("path")), None)
+                start = str(existing or Path.home())
 
-            def handle_package(value: Optional[str]) -> None:
-                if value:
-                    self._sources.append({"package": value})
-                    self._refresh()
-            self.app.push_screen(_PickScreen("Pick an rtl package", choices), handle_package)
-        elif choice.startswith("remove:"):
-            index = int(choice.split(":", 1)[1])
-            del self._sources[index]
-            self._refresh()
+                def handle_browse(paths: Optional[list]) -> None:
+                    if paths:
+                        for path in paths:
+                            if not any(e.get("path") == path for e in self._sources):
+                                self._sources.append({"path": path})
+                        self._refresh()
+                self.app.push_screen(_BrowseScreen(start), handle_browse)
+            elif method == "manual":
+                def handle_path(value: Optional[str]) -> None:
+                    if value:
+                        self._sources.append({"path": _absolute(value)})
+                        self._refresh()
+                self.app.push_screen(_TextScreen("Path to an RTL file"), handle_path)
+            elif method == "package":
+                registry = PackageRegistry()
+                store = PackageStore()
+                choices = []
+                for manifest in registry.manifests():
+                    if manifest.identifier.kind != "rtl":
+                        continue
+                    status = store.status(manifest)
+                    choices.append((f"{manifest.identifier} ({status})", str(manifest.identifier)))
+                if not choices:
+                    self.app.notify("No rtl/* packages found in any configured registry.", severity="warning")
+                    return
 
-    def on_key(self, event) -> None:
-        if event.key == "escape":
-            self.dismiss(self._sources)
+                def handle_package(value: Optional[str]) -> None:
+                    if value:
+                        self._sources.append({"package": value})
+                        self._refresh()
+                self.app.push_screen(_PickScreen("Pick an rtl package", choices), handle_package)
+        self.app.push_screen(
+            _PickScreen("Add a source", [
+                ("Browse filesystem", "browse"),
+                ("Type a path manually", "manual"),
+                ("Installed rtl package", "package"),
+            ]),
+            handle_method,
+        )
+
+    def action_delete(self) -> None:
+        option_list = self.query_one(OptionList)
+        index = option_list.highlighted
+        if index is None or index >= len(self._sources):
+            return
+        del self._sources[index]
+        self._refresh()
+
+    def action_done(self) -> None:
+        self.dismiss(self._sources)
 
 
 class EnvWizardApp(App[None]):
