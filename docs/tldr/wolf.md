@@ -23,7 +23,10 @@
 
 `wolf env clone {{environment}} {{new_environment}}`
 
-- Build a new declarative environment interactively instead of hand-writing YAML:
+- Create or edit a declarative environment interactively instead of hand-writing YAML
+  (defaults to the active environment, so the usual flow is create, activate, menu, deactivate):
+
+`wolf env menu`
 
 `wolf env menu {{environment}}`
 

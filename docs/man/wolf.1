@@ -34,11 +34,18 @@ Create a legacy-compatible environment and its current metadata files.
 Validate and import a versioned declarative environment. Relative stored paths
 resolve from the input file's directory.
 .TP
-.BI "wolf env menu " name
-Interactively build a new declarative environment: RTL sources (installed
-packages or local paths), design name/top (offered from module names found
-in those sources), technology (PDK) and flow/backend, and project root.
-Only creates new environments; it does not yet edit an existing one.
+.BI "wolf env menu " "[name]"
+Interactively create or edit a declarative environment: RTL sources
+(installed packages or local paths), design name/top (offered from module
+names found in those sources), technology (PDK) and flow/backend, and
+project root.
+.I name
+defaults to the active environment when omitted, so the normal flow is
+.BR "wolf env create" ", " "wolf activate" ", " "wolf env menu" " (no argument), "
+.BR "wolf deactivate" .
+An existing environment is reloaded and edited in place; a legacy
+environment with no declarative manifest yet starts empty and gets one
+written alongside its existing files on save.
 .TP
 .BI "wolf env clone " "[source] destination"
 Clone a declarative-v1 profile without duplicating installed packages.

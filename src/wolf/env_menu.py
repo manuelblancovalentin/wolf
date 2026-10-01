@@ -4,12 +4,15 @@ Kept separate from `wolf.commands.env` so Textual is only imported when this
 specific subcommand actually runs, not on every WOLF invocation (same reason
 `wolf.config_menu` is its own module).
 
-This first slice only creates a new declarative-v1 environment -- it does
-not yet edit an existing one. The order of steps mirrors the dependency
-order discussed for environment setup: RTL sources first (nothing else can
-be meaningfully picked before there is RTL), then design name/top (offered
-from module names found in those sources), then the technology (PDK) and
-flow/backend, then the project root.
+Creates a new declarative-v1 environment, or edits an existing one in
+place (reloading its current wolf.yaml to prefill the wizard, if it has
+one -- an existing legacy environment with no wolf.yaml yet starts empty
+and gets one written into its same directory on save). The order of
+steps mirrors the dependency order discussed for environment setup: RTL
+sources first (nothing else can be meaningfully picked before there is
+RTL), then design name/top (offered from module names found in those
+sources), then the technology (PDK) and flow/backend, then the project
+root.
 """
 
 from __future__ import annotations
@@ -17,9 +20,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import re
-import shutil
 import subprocess
-import tempfile
 from typing import Optional
 
 import yaml
@@ -32,7 +33,7 @@ from textual.widgets.option_list import Option
 _RTL_SUFFIXES = (".v", ".sv", ".vhd", ".vhdl")
 
 from wolf.backend import backend_names
-from wolf.environment import ENVIRONMENT_FILENAME, ENVIRONMENT_SCHEMA, load_environment, normalize_environment
+from wolf.environment import ENVIRONMENT_FILENAME, ENVIRONMENT_SCHEMA, load_environment
 from wolf.package.registry import PackageRegistry
 from wolf.package.store import PackageStore
 from wolf.paths import environments_dir
@@ -341,7 +342,13 @@ class _SourcesScreen(ModalScreen[Optional[list]]):
 
 
 class EnvWizardApp(App[None]):
-    """`wolf env menu NAME` -- builds a new declarative-v1 environment."""
+    """`wolf env menu [NAME]` -- creates or edits a declarative-v1 environment.
+
+    NAME defaults to the active environment (same fallback `wolf env
+    remove`/`set` use), so the normal flow is `wolf env create` (empty),
+    `wolf activate`, `wolf env menu` with no argument, `wolf deactivate` --
+    never naming the environment a second time while it's already active.
+    """
 
     CSS = """
     #dialog {
@@ -359,6 +366,7 @@ class EnvWizardApp(App[None]):
     def __init__(self, name: str):
         super().__init__()
         self._name = name
+        self._path = environments_dir() / name
         self.sources: list[dict] = []
         self.design_name: Optional[str] = None
         self.design_top: Optional[str] = None
@@ -366,6 +374,26 @@ class EnvWizardApp(App[None]):
         self.flow_package: Optional[str] = None
         self.backend: Optional[str] = None
         self.project_root: Optional[str] = None
+
+        manifest = self._path / ENVIRONMENT_FILENAME
+        if manifest.is_file():
+            profile = load_environment(manifest, expected_name=name)
+            if profile.design:
+                self.design_name = profile.design.name
+                self.design_top = profile.design.top
+            self.sources = [
+                {"package": entry.package} if entry.package else {"path": entry.path}
+                for entry in profile.design_sources
+            ]
+            if profile.technology and profile.technology.package:
+                self.technology_package = profile.technology.package
+            if profile.flow and profile.flow.package:
+                self.flow_package = profile.flow.package
+            # A flow with no package (bundled default) also has no recorded
+            # backend -- that choice is only ever used as a `wolf run
+            # --backend` override, never persisted. Re-editing such an
+            # environment starts flow/backend unset; pick it again if needed.
+            self.project_root = profile.project_root
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -385,7 +413,7 @@ class EnvWizardApp(App[None]):
             Option(f"Technology (PDK): {technology_label}", id="technology"),
             Option(f"Flow / backend: {flow_label}", id="flow"),
             Option(f"Project root: {project_label}", id="project"),
-            Option("Save and create environment", id="save"),
+            Option("Save", id="save"),
             Option("Quit without saving", id="quit_"),
         ]
 
@@ -521,28 +549,25 @@ class EnvWizardApp(App[None]):
         if self.project_root:
             document["project"] = {"root": self.project_root}
 
-        destination = environments_dir() / self._name
-        if destination.exists() or destination.is_symlink():
-            self.notify(f"WOLF environment {self._name!r} already exists.", severity="error")
-            return
-
-        temporary_file = Path(tempfile.mkstemp(prefix=f".{self._name}-", suffix=".yaml")[1])
+        # Every path this wizard collects was already made absolute at pick
+        # time (see _absolute()), so there is nothing left for
+        # normalize_environment's relative-to-source-file resolution to do --
+        # this writes the validated document directly, the same atomic
+        # sibling-temp-file-then-replace pattern `wolf env set` uses, so it
+        # works whether self._path is new or an existing environment (legacy
+        # or declarative) being edited in place.
+        self._path.mkdir(parents=True, exist_ok=True)
+        target = self._path / ENVIRONMENT_FILENAME
+        temporary = target.with_suffix(".yaml.tmp")
         try:
-            temporary_file.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
-            load_environment(temporary_file, expected_name=self._name)
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            staging = Path(tempfile.mkdtemp(prefix=f".{self._name}-", dir=destination.parent))
-            try:
-                normalize_environment(temporary_file, staging / ENVIRONMENT_FILENAME, name=self._name)
-                staging.replace(destination)
-            except Exception:
-                shutil.rmtree(staging, ignore_errors=True)
-                raise
+            temporary.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+            load_environment(temporary, expected_name=self._name)
+            temporary.replace(target)
         except Exception as error:
-            self.notify(f"Could not create environment: {error}", severity="error")
+            self.notify(f"Could not save environment: {error}", severity="error")
             return
         finally:
-            temporary_file.unlink(missing_ok=True)
+            temporary.unlink(missing_ok=True)
 
-        self.notify(f"Created WOLF environment {self._name!r} at {destination}")
+        self.notify(f"Saved WOLF environment {self._name!r} at {self._path}")
         self.exit()
