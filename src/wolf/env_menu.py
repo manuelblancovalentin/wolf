@@ -517,7 +517,13 @@ class EnvWizardApp(App[None]):
     Screen { align: center middle; }
     OptionList { border: round #ad4ce5; }
     #actions { height: auto; align: center middle; margin-top: 1; }
-    #actions Button { margin: 0 2; }
+    #actions Button {
+        margin: 0 2; min-width: 20; background: #3a3a3a; color: $text;
+        border: tall #5a5a5a; text-style: bold;
+    }
+    #actions Button:focus {
+        background: #ad4ce5 !important; color: white; border: tall #ad4ce5;
+    }
     """
     BINDINGS = [
         ("q", "quit", "Quit"),
@@ -564,7 +570,7 @@ class EnvWizardApp(App[None]):
         yield Header()
         yield _MainMenuOptionList(*self._options())
         with Horizontal(id="actions"):
-            yield Button("Save", id="save", variant="primary")
+            yield Button("Save", id="save")
             yield Button("Quit without saving", id="quit_")
         yield Footer()
 
