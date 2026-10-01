@@ -115,6 +115,7 @@ class _PickScreen(ModalScreen[Optional[str]]):
             yield Static("enter to choose — esc to cancel", id="dialog-hint")
 
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        event.stop()
         self.dismiss(event.option_id)
 
     def on_key(self, event) -> None:
@@ -155,6 +156,7 @@ class _SourcesScreen(ModalScreen[Optional[list]]):
             option_list.add_option(option)
 
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        event.stop()
         choice = event.option_id
         assert choice is not None
         if choice == "done":

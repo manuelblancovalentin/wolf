@@ -26,7 +26,9 @@ paths.{data,packages,environments,registries,cache} PATH`; `paths.data` is
 overridden). It does not contain experiment design or timing values.
 
 Use `wolf config list`, `get`, `set`, `unset`, `path`, `edit`, and `menu`
-(a full-screen, arrow-key picker over the same keys, via `textual`). Path
+(a full-screen, arrow-key picker over the same keys, via `textual`). `menu`
+also has a "Registries" row -- list, add, and remove the registries `wolf
+registry add/list/remove` manage, from inside the same screen. Path
 values typed to `config set` are made absolute immediately, so they are
 independent of caller cwd. Writes are validated and atomic. `wolf init` is a
 line-oriented first-use wizard with the same settings and optional,

@@ -16,6 +16,9 @@ from textual.widgets.option_list import Option
 
 from wolf.commands.config import _ENUM_CHOICES, _UNSET, _display, _parse_value
 from wolf.config import CONFIG_KEYS, ConfigStore
+from wolf.registry import RegistryManager
+
+_REGISTRIES_OPTION = "__registries__"
 
 
 class _EditEnumScreen(ModalScreen[Optional[str]]):
@@ -68,6 +71,129 @@ class _EditTextScreen(ModalScreen[Optional[str]]):
             self.dismiss(None)
 
 
+class _PromptScreen(ModalScreen[Optional[str]]):
+    """Free-text prompt, used for a registry's name or source path."""
+
+    def __init__(self, title: str, initial: str = ""):
+        super().__init__()
+        self._title = title
+        self._initial = initial
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="dialog"):
+            yield Static(self._title, id="dialog-title")
+            yield Input(value=self._initial, id="value")
+            yield Static("enter to submit - esc to cancel", id="dialog-hint")
+
+    def on_mount(self) -> None:
+        self.query_one(Input).focus()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        self.dismiss(event.value)
+
+    def on_key(self, event) -> None:
+        if event.key == "escape":
+            self.dismiss(None)
+
+
+class _ChoiceScreen(ModalScreen[Optional[str]]):
+    """Pick one id out of a list of (label, id) choices."""
+
+    def __init__(self, title: str, choices: list[tuple[str, str]]):
+        super().__init__()
+        self._title = title
+        self._choices = choices
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="dialog"):
+            yield Static(self._title, id="dialog-title")
+            yield OptionList(*(Option(label, id=key) for label, key in self._choices))
+            yield Static("enter to choose - esc to cancel", id="dialog-hint")
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        event.stop()
+        self.dismiss(event.option_id)
+
+    def on_key(self, event) -> None:
+        if event.key == "escape":
+            self.dismiss(None)
+
+
+class _RegistriesScreen(ModalScreen[None]):
+    """List, add, and remove configured package registries."""
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="dialog"):
+            yield Static("Package registries", id="dialog-title")
+            yield OptionList(*self._options())
+            yield Static("select an entry to remove it - esc to close", id="dialog-hint")
+
+    def _options(self) -> list[Option]:
+        manager = RegistryManager()
+        options = []
+        for spec in manager.specs():
+            status = manager.status(spec)
+            options.append(Option(
+                f"− remove: {spec.name} ({spec.type}, priority {spec.priority}) [{status}]",
+                id=f"remove:{spec.name}",
+            ))
+        options.append(Option("+ add registry", id="add"))
+        options.append(Option("Done", id="done"))
+        return options
+
+    def _refresh(self) -> None:
+        option_list = self.query_one(OptionList)
+        option_list.clear_options()
+        for option in self._options():
+            option_list.add_option(option)
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        event.stop()
+        choice = event.option_id
+        assert choice is not None
+        if choice == "done":
+            self.dismiss(None)
+        elif choice == "add":
+            self._add_registry()
+        elif choice.startswith("remove:"):
+            name = choice.split(":", 1)[1]
+            try:
+                RegistryManager().remove(name)
+            except ValueError as error:
+                self.app.notify(str(error), severity="error")
+            self._refresh()
+
+    def _add_registry(self) -> None:
+        def got_name(name: Optional[str]) -> None:
+            if not name:
+                return
+
+            def got_source(source: Optional[str]) -> None:
+                if not source:
+                    return
+
+                def got_type(kind: Optional[str]) -> None:
+                    if kind is None:
+                        return
+                    try:
+                        RegistryManager().add(name, source, kind or None)
+                    except ValueError as error:
+                        self.app.notify(str(error), severity="error")
+                    self._refresh()
+                self.app.push_screen(
+                    _ChoiceScreen("Registry type", [
+                        ("(auto-detect)", ""), ("git", "git"), ("local", "local"),
+                    ]),
+                    got_type,
+                )
+            self.app.push_screen(_PromptScreen("Registry source (path or git URL)"), got_source)
+        self.app.push_screen(_PromptScreen("Registry name"), got_name)
+
+    def on_key(self, event) -> None:
+        if event.key == "escape":
+            self.dismiss(None)
+
+
 class ConfigMenuApp(App[None]):
     """`wolf config menu` -- an arrow-key picker over every CONFIG_KEYS entry."""
 
@@ -100,6 +226,8 @@ class ConfigMenuApp(App[None]):
             section, field = key.split(".", 1)
             value = document[section].get(field)
             options.append(Option(f"{key} = {_display(value)}", id=key))
+        registries = len(RegistryManager().specs())
+        options.append(Option(f"Registries: {registries} configured", id=_REGISTRIES_OPTION))
         return options
 
     def _refresh(self) -> None:
@@ -111,6 +239,9 @@ class ConfigMenuApp(App[None]):
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
         key = event.option_id
         assert key is not None
+        if key == _REGISTRIES_OPTION:
+            self.push_screen(_RegistriesScreen(), lambda _: self._refresh())
+            return
         document = self._store.load(effective=True)
         section, field = key.split(".", 1)
         current = document[section].get(field)
