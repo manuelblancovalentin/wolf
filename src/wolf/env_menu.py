@@ -92,14 +92,38 @@ def _open_in_editor(app: App, path: Path) -> None:
         app.notify(f"could not open {path} in {editor!r}: {error}", severity="error")
 
 
+def _package_location_hint(manifest) -> str:
+    """Say what "not installed" actually costs for this package's source type.
+
+    `wolf install` always means "validate and record a revision", but what
+    that takes differs a lot: a local-path or package-path package's real
+    files are already sitting on disk (most PDKs here), so installing it
+    is instant and copies nothing; a git package is actually cloned. "not
+    installed" alone reads like "not available, go find it in a catalog"
+    -- WOLF has no such catalog to browse or auto-provision from, so the
+    picker and the confirm prompt both spell out which case this is.
+    """
+    source = manifest.source
+    if source.type in ("local-path", "package-path"):
+        return "already on disk, installing just records this revision"
+    return f"not fetched yet, installing clones it from {source.url}"
+
+
+def _package_choice_label(manifest) -> str:
+    if PackageStore().read(manifest) is not None:
+        return f"{manifest.identifier} (installed)"
+    return f"{manifest.identifier} (not installed — {_package_location_hint(manifest)})"
+
+
 def _maybe_install(app: App, package_id: str, on_done) -> None:
     """Offer to `wolf install` a picked-but-uninstalled package, then continue.
 
     A local-path package (most PDKs on this host) installs instantly --
-    it only records a pin, nothing is copied. A git package may actually
-    fetch. Either way this never blocks picking the package: declining,
-    or a failed install, still calls on_done so the reference can be set
-    now and installed later with a plain `wolf install`.
+    it only records a validated revision, nothing is copied. A git
+    package is actually cloned. Either way this never blocks picking the
+    package: declining, or a failed install, still calls on_done so the
+    reference can be set now and installed later with a plain
+    `wolf install`.
     """
     manifest = PackageRegistry().get(package_id)
     if PackageStore().read(manifest) is not None:
@@ -115,7 +139,10 @@ def _maybe_install(app: App, package_id: str, on_done) -> None:
                 app.notify(f"Could not install {package_id}: {error}", severity="error")
         on_done()
     app.push_screen(
-        _PickScreen(f"{package_id} is not installed. Install now?", [("Yes", "yes"), ("No", "no")]),
+        _PickScreen(
+            f"{package_id} is not installed ({_package_location_hint(manifest)}). Install it now?",
+            [("Yes", "yes"), ("No", "no")],
+        ),
         handle_confirm,
     )
 
@@ -333,13 +360,10 @@ class _SourcesScreen(ModalScreen[Optional[list]]):
                 self.app.push_screen(_TextScreen("Path to an RTL file"), handle_path)
             elif method == "package":
                 registry = PackageRegistry()
-                store = PackageStore()
-                choices = []
-                for manifest in registry.manifests():
-                    if manifest.identifier.kind != "rtl":
-                        continue
-                    status = store.status(manifest)
-                    choices.append((f"{manifest.identifier} ({status})", str(manifest.identifier)))
+                choices = [
+                    (_package_choice_label(manifest), str(manifest.identifier))
+                    for manifest in registry.manifests() if manifest.identifier.kind == "rtl"
+                ]
                 if not choices:
                     self.app.notify("No rtl/* packages found in any configured registry.", severity="warning")
                     return
@@ -514,13 +538,10 @@ class EnvWizardApp(App[None]):
 
     def _edit_technology(self) -> None:
         registry = PackageRegistry()
-        store = PackageStore()
-        choices = []
-        for manifest in registry.manifests():
-            if manifest.identifier.kind != "pdk":
-                continue
-            status = store.status(manifest)
-            choices.append((f"{manifest.identifier} ({status})", str(manifest.identifier)))
+        choices = [
+            (_package_choice_label(manifest), str(manifest.identifier))
+            for manifest in registry.manifests() if manifest.identifier.kind == "pdk"
+        ]
         if not choices:
             self.notify("No pdk/* packages found in any configured registry.", severity="warning")
             return
@@ -537,13 +558,10 @@ class EnvWizardApp(App[None]):
 
     def _edit_flow(self) -> None:
         registry = PackageRegistry()
-        store = PackageStore()
-        choices = []
-        for manifest in registry.manifests():
-            if manifest.identifier.kind != "flow":
-                continue
-            status = store.status(manifest)
-            choices.append((f"{manifest.identifier} ({status})", str(manifest.identifier)))
+        choices = [
+            (_package_choice_label(manifest), str(manifest.identifier))
+            for manifest in registry.manifests() if manifest.identifier.kind == "flow"
+        ]
         choices.append(("(none — use WOLF's bundled default flow)", ""))
 
         def handle(value: Optional[str]) -> None:
