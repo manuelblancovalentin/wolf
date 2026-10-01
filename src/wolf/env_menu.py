@@ -102,18 +102,32 @@ class _TextScreen(ModalScreen[Optional[str]]):
             self.dismiss(None)
 
 
+class _FilterableDirectoryTree(DirectoryTree):
+    """A DirectoryTree that can hide dotfiles/dotdirs, toggled at runtime."""
+
+    show_hidden = False
+
+    def filter_paths(self, paths):
+        if self.show_hidden:
+            return paths
+        return [path for path in paths if not path.name.startswith(".")]
+
+
 class _BrowseScreen(ModalScreen[Optional[list]]):
     """Browse the filesystem and collect one or more RTL file paths.
 
     Enter on a file adds it and keeps browsing (so several files from the
     same directory can be picked in one pass); 'a' adds every RTL-looking
-    file directly inside the highlighted directory in one step. 'd' finishes
-    and returns what was picked so far; escape cancels with nothing picked.
+    file directly inside the highlighted directory in one step; 'h' toggles
+    hidden (dot) files and directories, off by default so they don't
+    clutter the tree. 'd' finishes and returns what was picked so far;
+    escape cancels with nothing picked.
     """
 
     BINDINGS = [
         ("d", "finish", "Done"),
         ("a", "add_directory", "Add all RTL files here"),
+        ("h", "toggle_hidden", "Hidden files"),
         ("escape", "cancel", "Cancel"),
     ]
 
@@ -121,16 +135,30 @@ class _BrowseScreen(ModalScreen[Optional[list]]):
         super().__init__()
         self._start = start
         self._selected: list[str] = []
+        self._show_hidden = False
 
     def compose(self) -> ComposeResult:
         with Vertical(id="dialog"):
             yield Static("Browse for RTL files", id="dialog-title")
-            yield DirectoryTree(self._start, id="browse-tree")
+            tree = _FilterableDirectoryTree(self._start, id="browse-tree")
+            tree.show_hidden = self._show_hidden
+            yield tree
             yield Static(self._hint(), id="dialog-hint")
 
     def _hint(self) -> str:
         picked = f"{len(self._selected)} file(s) picked" if self._selected else "none picked yet"
-        return f"{picked} — enter: add file — a: add all RTL files here — d: done — esc: cancel"
+        hidden = "shown" if self._show_hidden else "hidden"
+        return (
+            f"{picked} — enter: add file — a: add all RTL files here — "
+            f"h: toggle dotfiles (currently {hidden}) — d: done — esc: cancel"
+        )
+
+    def action_toggle_hidden(self) -> None:
+        self._show_hidden = not self._show_hidden
+        tree = self.query_one(DirectoryTree)
+        tree.show_hidden = self._show_hidden
+        tree.reload()
+        self._refresh_hint()
 
     def _refresh_hint(self) -> None:
         self.query_one("#dialog-hint", Static).update(self._hint())
