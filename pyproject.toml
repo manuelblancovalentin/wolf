@@ -15,6 +15,7 @@ authors = [
 dependencies = [
   "PyYAML>=6.0",
   "rich>=13.0",
+  "questionary>=2.0",
   "tomli>=2.0; python_version < '3.11'",
 ]
 

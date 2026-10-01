@@ -127,6 +127,8 @@
 
 `wolf config set paths.packages {{/tools/wolf/packages}}`
 
+`wolf config menu`
+
 - Manage package-manifest registries:
 
 `wolf registry list`

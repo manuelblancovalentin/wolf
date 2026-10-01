@@ -7,7 +7,9 @@ cache paths, default workspace, preferred container runtime, shell prompt
 preference, and registry definitions. It does not contain experiment design
 or timing values.
 
-Use `wolf config list`, `get`, `set`, `unset`, `path`, and `edit`. Path values
+Use `wolf config list`, `get`, `set`, `unset`, `path`, `edit`, and `menu`
+(an interactive, arrow-key picker over the same keys, via `questionary`).
+Path values
 typed to `config set` are made absolute immediately, so they are independent
 of caller cwd. Writes are validated and atomic. `wolf init` is a line-oriented
 first-use wizard with the same settings and optional, confirmed Bash rc-file

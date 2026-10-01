@@ -70,6 +70,59 @@ def command_edit(_args: argparse.Namespace) -> int:
     return subprocess.run([*shlex.split(editor), str(store.path)], check=False).returncode
 
 
+_UNSET = "(leave unset)"
+
+# Keys with a fixed, known set of valid values get a select prompt instead of
+# free text -- the same constraints _parse_value already enforces, just
+# surfaced as choices instead of a validation error after the fact.
+_ENUM_CHOICES = {
+    "shell.prompt": ("true", "false"),
+    "container.preferred_runtime": ("podman", "docker"),
+}
+
+
+def command_menu(_args: argparse.Namespace) -> int:
+    import questionary
+
+    store = ConfigStore()
+    while True:
+        document = store.load(effective=True)
+        key_choices = []
+        for key in CONFIG_KEYS:
+            section, field = key.split(".", 1)
+            key_choices.append(questionary.Choice(
+                title=f"{key} = {_display(document[section].get(field))}", value=key,
+            ))
+        key_choices.append(questionary.Separator())
+        key_choices.append(questionary.Choice(title="Done", value=None))
+        key = questionary.select("WOLF configuration", choices=key_choices).ask()
+        if key is None:
+            return 0
+
+        section, field = key.split(".", 1)
+        current = document[section].get(field)
+        if key in _ENUM_CHOICES:
+            choices = [*_ENUM_CHOICES[key], _UNSET]
+            answer = questionary.select(
+                key, choices=choices, default=_display(current) if current is not None else _UNSET,
+            ).ask()
+        else:
+            answer = questionary.text(
+                f"{key} (blank to unset)", default=str(current) if current is not None else "",
+            ).ask()
+            if answer == "":
+                answer = _UNSET
+        if answer is None:
+            continue  # Ctrl-C/Esc out of this prompt: back to the key list.
+
+        if answer == _UNSET:
+            store.unset(key)
+            ui.success(f"Unset {key}")
+        else:
+            value = store.set(key, _parse_value(key, answer))
+            ui.success(f"Set {key} = {_display(value)}")
+
+
 def register(subparsers: argparse._SubParsersAction) -> None:
     parser = subparsers.add_parser("config", help="manage global WOLF configuration")
     commands = parser.add_subparsers(dest="config_command", required=True)
@@ -89,3 +142,5 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     path_parser.set_defaults(handler=command_path, suppress_ui=True)
     edit_parser = commands.add_parser("edit", help="open configuration in VISUAL or EDITOR")
     edit_parser.set_defaults(handler=command_edit, suppress_ui=True)
+    menu_parser = commands.add_parser("menu", help="interactively view and edit configuration")
+    menu_parser.set_defaults(handler=command_menu, suppress_ui=True)
