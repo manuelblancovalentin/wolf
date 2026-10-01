@@ -44,7 +44,7 @@ class CompletionProtocolTests(unittest.TestCase):
 
     def test_nested_commands_and_options_are_contextual(self):
         self.assertEqual(candidates(self.parser, ["env", ""]),
-                         ["clone", "create", "list", "remove", "set"])
+                         ["auto-setup", "clone", "create", "list", "remove", "set"])
         self.assertEqual(candidates(self.parser, ["env", "remove", "--"]),
                          ["--help", "--yes"])
         self.assertIn("--environment", candidates(self.parser, ["run", "--e"]))

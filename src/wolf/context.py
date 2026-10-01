@@ -107,6 +107,7 @@ class ResolvedContext:
     package_checksums: Mapping[str, str] = field(default_factory=dict)
     clocks: tuple[Any, ...] = ()
     floorplan_def: Optional[Path] = None
+    project_root: Optional[Path] = None
     threads: Optional[int] = None
     backend_overrides: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
     env_vars: Mapping[str, str] = field(default_factory=dict)

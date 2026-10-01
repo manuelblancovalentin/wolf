@@ -13,7 +13,10 @@ import tempfile
 import yaml
 
 from wolf.commands.common import resolve_environment_name
-from wolf.environment import ENVIRONMENT_FILENAME, load_environment, normalize_environment
+from wolf.environment import (
+    ENVIRONMENT_FILENAME, environment_manifest, load_environment, normalize_environment,
+    profile_semantics, resolve_stored_path,
+)
 from wolf.legacy import LegacyCommandError, run_env
 from wolf.paths import environments_dir
 from wolf import ui
@@ -213,6 +216,61 @@ def command_clone(args: argparse.Namespace) -> int:
     return 0
 
 
+# Per-design input categories, scaffolded as <project_root>/inputs/<category>/<design_name>.
+# Mirrors the legacy `wolf env auto-setup` directory spec (bin/wolf.env), backend-agnostic:
+# no files are created, only the directories every design's inputs are expected to live under.
+_PER_DESIGN_INPUT_CATEGORIES = ("calibre", "constraints", "env", "floorplans", "hdl", "scripts", "tb")
+# Shared across all designs in a project, not nested under a design name.
+_SHARED_INPUT_SUBDIRS = ("lib/gds", "lib/lef", "lib/spice", "lib/timing", "lib/verilog")
+
+
+def command_auto_setup(args: argparse.Namespace) -> int:
+    name = resolve_environment_name(args.name)
+    environment_directory = _existing_environment(name)
+    manifest = environment_manifest(environment_directory)
+    if manifest is None:
+        raise ValueError(
+            "wolf env auto-setup supports declarative-v1 environments only; "
+            "the legacy vars.env format has its own scaffold via the Bash wolf env"
+        )
+    profile = load_environment(manifest, expected_name=name)
+    if not profile.project_root:
+        raise ValueError(
+            f"environment {name!r} has no project.root configured; "
+            "add `project: {root: /path/to/project}` to its wolf.yaml first"
+        )
+    project_root = resolve_stored_path(profile.project_root, profile.path.parent)
+    design_name = profile_semantics(profile)["design"]
+    if not design_name:
+        raise ValueError(
+            f"environment {name!r} has no resolvable design name yet; "
+            "set `design: {name: ...}` or `design: {package: rtl/...}` first"
+        )
+
+    planned: list[Path] = [
+        project_root,
+        project_root / "inputs",
+        project_root / "outputs",
+        project_root / "outputs" / design_name,
+        project_root / "workspace",
+    ]
+    for category in _PER_DESIGN_INPUT_CATEGORIES:
+        planned.append(project_root / "inputs" / category / design_name)
+    for shared in _SHARED_INPUT_SUBDIRS:
+        planned.append(project_root / "inputs" / shared)
+
+    created = [path for path in planned if not path.is_dir()]
+    for path in planned:
+        path.mkdir(parents=True, exist_ok=True)
+
+    for path in planned:
+        relative = path.relative_to(project_root) if path != project_root else Path(".")
+        ui.key_value(str(relative), "created" if path in created else "already present")
+    ui.success(f"Project directory structure ready at {project_root}")
+    return 0
+    return 0
+
+
 def register(subparsers: argparse._SubParsersAction) -> None:
     parser = subparsers.add_parser("env", help="manage WOLF environments")
     commands = parser.add_subparsers(dest="env_command", required=True)
@@ -260,4 +318,14 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         handler=command_clone,
         ui_kind="env",
         ui_section="Environment clone",
+    )
+
+    auto_setup_parser = commands.add_parser(
+        "auto-setup", help="scaffold a project's inputs/outputs/workspace directories"
+    )
+    auto_setup_parser.add_argument("name", nargs="?", help="defaults to the active environment")
+    auto_setup_parser.set_defaults(
+        handler=command_auto_setup,
+        ui_kind="env",
+        ui_section="Project directory structure",
     )

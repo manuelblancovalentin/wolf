@@ -23,6 +23,10 @@
 
 `wolf env clone {{environment}} {{new_environment}}`
 
+- Scaffold a project's inputs/outputs/workspace directories:
+
+`wolf env auto-setup {{environment}}`
+
 - Persist a variable in an environment:
 
 `wolf env set {{environment}} {{KEY}} {{value}}`

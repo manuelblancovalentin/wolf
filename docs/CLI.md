@@ -31,6 +31,10 @@ Declarative environments are imported with `wolf env create NAME --from FILE`.
 structured setter. `wolf info` labels profiles as `declarative-v1` or `legacy`
 and presents canonical semantic values rather than dumping raw YAML.
 
+`wolf env auto-setup [NAME]` scaffolds a `project.root`-configured
+environment's `inputs/`, `outputs/`, and `workspace/` directories -- the same
+shape regardless of backend. See [Environments](ENVIRONMENTS.md#project-directory-structure).
+
 `wolf info` describes environment configuration. `wolf status` describes run
 execution and results, selecting the active environment's `run.latest.d`
 without using cwd. Use `wolf status --run PATH` for an explicit run and

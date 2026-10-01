@@ -60,6 +60,16 @@ or
 in a declarative profile.
 .I name
 defaults to the active environment when omitted.
+.TP
+.BI "wolf env auto-setup " "[name]"
+Scaffold a declarative-v1 environment's
+.B project.root
+with its
+.IR inputs/ ", " outputs/ ", and " workspace/
+directories (backend-agnostic; directories only, no PDK or flow content).
+Safe to run repeatedly.
+.I name
+defaults to the active environment when omitted.
 .SH PROCESS COMMANDS
 .TP
 .B wolf process list

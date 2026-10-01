@@ -182,6 +182,41 @@ workspace:
             os.chdir(before)
         self.assertEqual(first, second)
 
+    def test_project_root_is_resolved_and_recorded(self):
+        extra = "project:\n  root: ./project\n"
+        profile = load_environment(self._write(self._complete_yaml(extra)), expected_name="demo")
+        self.assertEqual(profile.project_root, "./project")
+        context = resolve_declarative_environment(
+            profile, state_root=self.state, environment_directory=self.environment
+        )
+        self.assertEqual(context.project_root, self.environment / "project")
+
+    def test_workspace_root_defaults_under_project_root_when_omitted(self):
+        text = self._complete_yaml().replace("workspace:\n  root: ./work\n", "project:\n  root: ./project\n")
+        self.assertNotIn("workspace:", text)
+        profile = load_environment(self._write(text), expected_name="demo")
+        context = resolve_declarative_environment(
+            profile, state_root=self.state, environment_directory=self.environment
+        )
+        self.assertEqual(context.project_root, self.environment / "project")
+        self.assertEqual(context.workspace_root, self.environment / "project" / "workspace")
+
+    def test_explicit_workspace_root_wins_over_project_default(self):
+        extra = "project:\n  root: ./project\n"
+        profile = load_environment(self._write(self._complete_yaml(extra)), expected_name="demo")
+        context = resolve_declarative_environment(
+            profile, state_root=self.state, environment_directory=self.environment
+        )
+        # The complete yaml already sets workspace.root to ./work explicitly.
+        self.assertEqual(context.workspace_root, self.environment / "work")
+
+    def test_no_project_root_leaves_it_unset(self):
+        profile = load_environment(self._write(self._complete_yaml()), expected_name="demo")
+        context = resolve_declarative_environment(
+            profile, state_root=self.state, environment_directory=self.environment
+        )
+        self.assertIsNone(context.project_root)
+
 
 if __name__ == "__main__":
     unittest.main()

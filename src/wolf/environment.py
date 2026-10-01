@@ -25,7 +25,7 @@ _ENV_VAR_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 ENVIRONMENT_SCHEMA = "wolf.environment/v1"
 ENVIRONMENT_FILENAME = "wolf.yaml"
 _TOP_LEVEL_FIELDS = {
-    "schema", "name", "design", "technology", "flow", "workspace",
+    "schema", "name", "design", "technology", "flow", "project", "workspace",
     "constraints", "resources", "backend", "env",
 }
 
@@ -51,6 +51,7 @@ class EnvironmentProfile:
     design: Optional[ComponentReference] = None
     technology: Optional[ComponentReference] = None
     flow: Optional[ComponentReference] = None
+    project_root: Optional[str] = None
     workspace_root: Optional[str] = None
     clocks: tuple[ClockConstraint, ...] = ()
     floorplan_def: Optional[str] = None
@@ -119,6 +120,10 @@ def load_environment(path: Path, *, expected_name: Optional[str] = None) -> Envi
     if not name:
         raise ValueError("environment name is required")
 
+    project = _mapping(data.get("project"), "project", optional=True)
+    _known_fields(project, {"root"}, "project")
+    project_root = _optional_string(project.get("root"), "project.root")
+
     workspace = _mapping(data.get("workspace"), "workspace", optional=True)
     _known_fields(workspace, {"root"}, "workspace")
     workspace_root = _optional_string(workspace.get("root"), "workspace.root")
@@ -168,6 +173,7 @@ def load_environment(path: Path, *, expected_name: Optional[str] = None) -> Envi
         design=_component(data.get("design"), "design", "rtl"),
         technology=_component(data.get("technology"), "technology", "pdk"),
         flow=_component(data.get("flow"), "flow", "flow"),
+        project_root=project_root,
         workspace_root=workspace_root,
         clocks=tuple(clocks),
         floorplan_def=floorplan_def,
@@ -182,6 +188,10 @@ def normalize_environment(source: Path, destination: Path, *, name: str) -> Envi
     profile = load_environment(source, expected_name=name)
     data = yaml.safe_load(profile.path.read_text(encoding="utf-8"))
     data["name"] = name
+    if profile.project_root:
+        data.setdefault("project", {})["root"] = str(
+            resolve_stored_path(profile.project_root, profile.path.parent)
+        )
     if profile.workspace_root:
         data.setdefault("workspace", {})["root"] = str(
             resolve_stored_path(profile.workspace_root, profile.path.parent)
@@ -469,9 +479,13 @@ def resolve_declarative_environment(
         _semantic(manifests["flow"], "flow", "backend") if "flow" in manifests else None
     )
     backend = backend_override or flow_backend
+    project_root = (
+        resolve_stored_path(profile.project_root, profile.path.parent)
+        if profile.project_root else None
+    )
     workspace_root = workspace_override or (
         resolve_stored_path(profile.workspace_root, profile.path.parent)
-        if profile.workspace_root else None
+        if profile.workspace_root else (project_root / "workspace" if project_root else None)
     )
     missing = [
         field for field, value in (
@@ -522,6 +536,7 @@ def resolve_declarative_environment(
         state_root=state_root.resolve(),
         environment_name=profile.name,
         environment_directory=environment_directory.resolve(),
+        project_root=project_root.resolve() if project_root else None,
         workspace_root=Path(workspace_root).resolve(),
         design_name=design_name,
         process=technology_name,

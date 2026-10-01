@@ -44,10 +44,44 @@ env:
   GENUS_NUM_CPUS: "64"
 ```
 
-Phase 1 accepts `name`, `design`, `technology`, `flow`, `workspace`,
+Phase 1 accepts `name`, `design`, `technology`, `flow`, `project`, `workspace`,
 `constraints`, `resources`, `backend`, and `env`. Unknown fields and
 unsupported schema versions are errors. Design, technology, and flow package
 references must use the corresponding `rtl`, `pdk`, and `flow` package kinds.
+
+## Project directory structure
+
+`project.root` names a project directory holding this environment's
+`inputs/`, `outputs/`, and `workspace/` -- the same three-directory shape
+regardless of backend (Cadence Flowtool or ORFS), so a project doesn't
+reorganize when it switches tools:
+
+```yaml
+project:
+  root: /home/you/my-project
+```
+
+When set, `workspace.root` defaults to `<project.root>/workspace` and need
+not be given explicitly; an explicit `workspace.root` always wins if both are
+present. `wolf env auto-setup [NAME]` scaffolds the directories a design's
+inputs are conventionally expected under:
+
+```text
+<project.root>/
+  inputs/
+    calibre/<design>/      constraints/<design>/   env/<design>/
+    floorplans/<design>/   hdl/<design>/           scripts/<design>/
+    tb/<design>/
+    lib/{gds,lef,spice,timing,verilog}/   (shared across designs)
+  outputs/<design>/
+  workspace/
+```
+
+It only creates directories -- no PDK- or flow-specific files -- is safe to
+run repeatedly (existing directories are left untouched and reported as
+"already present"), and requires `project.root` plus a resolvable design name
+(`design.name` or an installed `design.package`) but nothing else, so it can
+run before any technology or flow package is chosen.
 
 `constraints.clocks` and the optional `constraints.floorplan_def` (a
 physical-aware Cadence Genus flow's placed floorplan DEF; see
