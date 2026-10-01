@@ -487,6 +487,17 @@ class _SourcesScreen(ModalScreen[Optional[list]]):
         self.dismiss(self._sources)
 
 
+class _MainMenuOptionList(OptionList):
+    """The main menu's own list: arrow-down off the last row moves focus
+    into the Save/Quit buttons below, instead of just stopping there."""
+
+    def action_cursor_down(self) -> None:
+        if self.highlighted is not None and self.highlighted == self.option_count - 1:
+            self.screen.query_one("#save", Button).focus()
+            return
+        super().action_cursor_down()
+
+
 class EnvWizardApp(App[None]):
     """`wolf env menu [NAME]` -- creates or edits a declarative-v1 environment.
 
@@ -551,11 +562,27 @@ class EnvWizardApp(App[None]):
 
     def compose(self) -> ComposeResult:
         yield Header()
-        yield OptionList(*self._options())
+        yield _MainMenuOptionList(*self._options())
         with Horizontal(id="actions"):
             yield Button("Save", id="save", variant="primary")
             yield Button("Quit without saving", id="quit_")
         yield Footer()
+
+    def on_key(self, event) -> None:
+        """Arrow-key navigation between the option list and the buttons
+        below it (Tab/Shift+Tab still work too, Textual's own default)."""
+        focused = self.focused
+        if not isinstance(focused, Button):
+            return
+        if event.key == "up":
+            event.stop()
+            self.query_one(OptionList).focus()
+        elif event.key == "left":
+            event.stop()
+            self.query_one("#save", Button).focus()
+        elif event.key == "right":
+            event.stop()
+            self.query_one("#quit_", Button).focus()
 
     def _options(self) -> list[Option]:
         sources_label = f"{len(self.sources)} entr{'y' if len(self.sources) == 1 else 'ies'}" \
