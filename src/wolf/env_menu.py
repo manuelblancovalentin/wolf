@@ -24,8 +24,10 @@ import yaml
 from textual.app import App, ComposeResult
 from textual.containers import Vertical
 from textual.screen import ModalScreen
-from textual.widgets import Footer, Header, Input, OptionList, Static
+from textual.widgets import DirectoryTree, Footer, Header, Input, OptionList, Static
 from textual.widgets.option_list import Option
+
+_RTL_SUFFIXES = (".v", ".sv", ".vhd", ".vhdl")
 
 from wolf.backend import backend_names
 from wolf.environment import ENVIRONMENT_FILENAME, ENVIRONMENT_SCHEMA, load_environment, normalize_environment
@@ -100,6 +102,70 @@ class _TextScreen(ModalScreen[Optional[str]]):
             self.dismiss(None)
 
 
+class _BrowseScreen(ModalScreen[Optional[list]]):
+    """Browse the filesystem and collect one or more RTL file paths.
+
+    Enter on a file adds it and keeps browsing (so several files from the
+    same directory can be picked in one pass); 'a' adds every RTL-looking
+    file directly inside the highlighted directory in one step. 'd' finishes
+    and returns what was picked so far; escape cancels with nothing picked.
+    """
+
+    BINDINGS = [
+        ("d", "finish", "Done"),
+        ("a", "add_directory", "Add all RTL files here"),
+        ("escape", "cancel", "Cancel"),
+    ]
+
+    def __init__(self, start: str):
+        super().__init__()
+        self._start = start
+        self._selected: list[str] = []
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="dialog"):
+            yield Static("Browse for RTL files", id="dialog-title")
+            yield DirectoryTree(self._start, id="browse-tree")
+            yield Static(self._hint(), id="dialog-hint")
+
+    def _hint(self) -> str:
+        picked = f"{len(self._selected)} file(s) picked" if self._selected else "none picked yet"
+        return f"{picked} — enter: add file — a: add all RTL files here — d: done — esc: cancel"
+
+    def _refresh_hint(self) -> None:
+        self.query_one("#dialog-hint", Static).update(self._hint())
+
+    def on_directory_tree_file_selected(self, event: DirectoryTree.FileSelected) -> None:
+        event.stop()
+        path = str(event.path.resolve())
+        if path not in self._selected:
+            self._selected.append(path)
+        self._refresh_hint()
+
+    def action_add_directory(self) -> None:
+        tree = self.query_one(DirectoryTree)
+        node = tree.cursor_node
+        if node is None:
+            return
+        directory = node.data.path if node.data.path.is_dir() else node.data.path.parent
+        added = 0
+        for entry in sorted(directory.iterdir()):
+            if entry.is_file() and entry.suffix.lower() in _RTL_SUFFIXES:
+                path = str(entry.resolve())
+                if path not in self._selected:
+                    self._selected.append(path)
+                    added += 1
+        if added:
+            self.app.notify(f"Added {added} RTL file(s) from {directory}")
+        self._refresh_hint()
+
+    def action_finish(self) -> None:
+        self.dismiss(self._selected)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
 class _PickScreen(ModalScreen[Optional[str]]):
     """Pick one id out of a list of (label, id) choices."""
 
@@ -144,7 +210,8 @@ class _SourcesScreen(ModalScreen[Optional[list]]):
             Option(f"− remove: {_source_label(entry)}", id=f"remove:{index}")
             for index, entry in enumerate(self._sources)
         ]
-        options.append(Option("+ add local file path", id="add_path"))
+        options.append(Option("+ browse for files", id="browse_path"))
+        options.append(Option("+ type a path manually", id="add_path"))
         options.append(Option("+ add installed rtl package", id="add_package"))
         options.append(Option("Done", id="done"))
         return options
@@ -161,6 +228,17 @@ class _SourcesScreen(ModalScreen[Optional[list]]):
         assert choice is not None
         if choice == "done":
             self.dismiss(self._sources)
+        elif choice == "browse_path":
+            existing = next((Path(e["path"]).parent for e in reversed(self._sources) if e.get("path")), None)
+            start = str(existing or Path.home())
+
+            def handle_browse(paths: Optional[list]) -> None:
+                if paths:
+                    for path in paths:
+                        if not any(e.get("path") == path for e in self._sources):
+                            self._sources.append({"path": path})
+                    self._refresh()
+            self.app.push_screen(_BrowseScreen(start), handle_browse)
         elif choice == "add_path":
             def handle_path(value: Optional[str]) -> None:
                 if value:
