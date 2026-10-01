@@ -44,7 +44,10 @@ def cache_dir() -> Path:
 
 
 def registries_dir() -> Path:
-    return state_root() / "registries"
+    if os.environ.get("WOLF_HOME"):
+        return state_root() / "registries"
+    configured = ConfigStore().get("paths.registries")
+    return Path(configured).expanduser().resolve() if configured else state_root() / "registries"
 
 
 def builtin_flow_root(name: str) -> Path:

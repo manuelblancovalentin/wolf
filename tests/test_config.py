@@ -7,7 +7,7 @@ from unittest import mock
 import yaml
 
 from wolf.config import ConfigStore, config_path
-from wolf.paths import environments_dir, packages_dir, state_root
+from wolf.paths import environments_dir, packages_dir, registries_dir, state_root
 from wolf.commands.init import command_init
 from wolf.shell import BEGIN, install_bash_integration
 
@@ -56,6 +56,16 @@ class ConfigStoreTests(unittest.TestCase):
         self.assertFalse(any(store.path.parent.glob(".config-*.yaml")))
         store.unset("paths.packages")
         self.assertEqual(store.get("paths.packages"), str(self.root / "data" / "wolf" / "packages"))
+
+    def test_registries_path_is_configurable_and_defaults_under_data_root(self):
+        store = ConfigStore()
+        self.assertEqual(store.get("paths.registries"), str(self.root / "data" / "wolf" / "registries"))
+        self.assertEqual(registries_dir(), self.root / "data" / "wolf" / "registries")
+        value = store.set("paths.registries", "relative-registries", invocation_cwd=self.root)
+        self.assertEqual(value, str(self.root / "relative-registries"))
+        self.assertEqual(registries_dir(), self.root / "relative-registries")
+        store.unset("paths.registries")
+        self.assertEqual(registries_dir(), self.root / "data" / "wolf" / "registries")
 
     def test_invalid_value_does_not_corrupt_existing_config(self):
         store = ConfigStore()

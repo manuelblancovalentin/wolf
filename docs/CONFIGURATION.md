@@ -2,9 +2,10 @@
 
 WOLF's persistent installation configuration is `wolf.config/v1` at
 `$XDG_CONFIG_HOME/wolf/config.yaml` (normally `~/.config/wolf/config.yaml`).
-It contains only installation behavior: data/package/environment/cache paths,
-default workspace, preferred container runtime, shell prompt preference, and
-registry definitions. It does not contain experiment design or timing values.
+It contains only installation behavior: data/package/environment/registry/
+cache paths, default workspace, preferred container runtime, shell prompt
+preference, and registry definitions. It does not contain experiment design
+or timing values.
 
 Use `wolf config list`, `get`, `set`, `unset`, `path`, and `edit`. Path values
 typed to `config set` are made absolute immediately, so they are independent

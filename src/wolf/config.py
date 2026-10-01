@@ -16,6 +16,7 @@ CONFIG_KEYS = (
     "paths.data",
     "paths.packages",
     "paths.environments",
+    "paths.registries",
     "paths.cache",
     "workspace.default",
     "container.preferred_runtime",
@@ -50,6 +51,7 @@ def default_document() -> dict[str, Any]:
             "data": str(data),
             "packages": str(data / "packages"),
             "environments": str(data / "environments"),
+            "registries": str(data / "registries"),
             "cache": str(xdg_cache_root()),
         },
         "workspace": {"default": None},
@@ -78,7 +80,7 @@ def validate_document(document: Any) -> dict[str, Any]:
         if not isinstance(value, dict):
             raise ValueError(f"configuration section {section} must be a mapping")
     allowed = {
-        "paths": {"data", "packages", "environments", "cache"},
+        "paths": {"data", "packages", "environments", "registries", "cache"},
         "workspace": {"default"},
         "container": {"preferred_runtime"},
         "shell": {"prompt"},
@@ -87,7 +89,7 @@ def validate_document(document: Any) -> dict[str, Any]:
         extra = set(result[section]) - keys
         if extra:
             raise ValueError(f"unknown WOLF configuration key: {section}.{sorted(extra)[0]}")
-    for key in ("data", "packages", "environments", "cache"):
+    for key in ("data", "packages", "environments", "registries", "cache"):
         _validate_path(result["paths"].get(key), f"paths.{key}")
     _validate_path(result["workspace"].get("default"), "workspace.default")
     runtime = result["container"].get("preferred_runtime")
