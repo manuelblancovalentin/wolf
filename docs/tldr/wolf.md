@@ -23,6 +23,10 @@
 
 `wolf env clone {{environment}} {{new_environment}}`
 
+- Build a new declarative environment interactively instead of hand-writing YAML:
+
+`wolf env menu {{environment}}`
+
 - Scaffold a project's inputs/outputs/workspace directories:
 
 `wolf env auto-setup {{environment}}`

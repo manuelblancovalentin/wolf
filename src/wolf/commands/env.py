@@ -102,6 +102,19 @@ def command_create(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_menu(args: argparse.Namespace) -> int:
+    from wolf.env_menu import EnvWizardApp
+
+    path = _environment_path(args.name)
+    if path.exists() or path.is_symlink():
+        raise ValueError(
+            f"WOLF environment {args.name!r} already exists; "
+            "`wolf env menu` currently only creates new environments"
+        )
+    EnvWizardApp(args.name).run()
+    return 0
+
+
 def command_remove(args: argparse.Namespace) -> int:
     name = resolve_environment_name(args.name)
     path = _existing_environment(name)
@@ -291,6 +304,10 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         ui_kind="env",
         ui_section="Environment creation",
     )
+
+    menu_parser = commands.add_parser("menu", help="interactively build a new environment")
+    menu_parser.add_argument("name")
+    menu_parser.set_defaults(handler=command_menu, suppress_ui=True)
 
     remove_parser = commands.add_parser("remove", help="remove an environment")
     remove_parser.add_argument("name", nargs="?", help="defaults to the active environment")
