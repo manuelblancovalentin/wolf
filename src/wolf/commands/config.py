@@ -82,45 +82,10 @@ _ENUM_CHOICES = {
 
 
 def command_menu(_args: argparse.Namespace) -> int:
-    import questionary
+    from wolf.config_menu import ConfigMenuApp
 
-    store = ConfigStore()
-    while True:
-        document = store.load(effective=True)
-        key_choices = []
-        for key in CONFIG_KEYS:
-            section, field = key.split(".", 1)
-            key_choices.append(questionary.Choice(
-                title=f"{key} = {_display(document[section].get(field))}", value=key,
-            ))
-        key_choices.append(questionary.Separator())
-        key_choices.append(questionary.Choice(title="Done", value=None))
-        key = questionary.select("WOLF configuration", choices=key_choices).ask()
-        if key is None:
-            return 0
-
-        section, field = key.split(".", 1)
-        current = document[section].get(field)
-        if key in _ENUM_CHOICES:
-            choices = [*_ENUM_CHOICES[key], _UNSET]
-            answer = questionary.select(
-                key, choices=choices, default=_display(current) if current is not None else _UNSET,
-            ).ask()
-        else:
-            answer = questionary.text(
-                f"{key} (blank to unset)", default=str(current) if current is not None else "",
-            ).ask()
-            if answer == "":
-                answer = _UNSET
-        if answer is None:
-            continue  # Ctrl-C/Esc out of this prompt: back to the key list.
-
-        if answer == _UNSET:
-            store.unset(key)
-            ui.success(f"Unset {key}")
-        else:
-            value = store.set(key, _parse_value(key, answer))
-            ui.success(f"Set {key} = {_display(value)}")
+    ConfigMenuApp().run()
+    return 0
 
 
 def register(subparsers: argparse._SubParsersAction) -> None:
