@@ -373,6 +373,7 @@ class _StepDetailScreen(ModalScreen[None]):
     #step-title { color: #ad4ce5; text-style: bold; }
     #step-meta { color: $text-muted; margin-bottom: 1; }
     #step-body { height: 1fr; border: round #ad4ce5; }
+    #step-location { color: $text-muted; margin-top: 1; }
     """
 
     def __init__(self, name: str, step):
@@ -390,14 +391,12 @@ class _StepDetailScreen(ModalScreen[None]):
                     id="step-meta",
                 )
             else:
-                meta = (
-                    f"owner={self._step.owner or '-'}  write_db={'yes' if self._step.write_db else 'no'}"
-                    f"  {self._step.file.name}:{self._step.line}"
-                )
+                meta = f"owner={self._step.owner or '-'}  write_db={'yes' if self._step.write_db else 'no'}"
                 yield Static(meta, id="step-meta")
                 yield TextArea(
                     self._step.body, read_only=True, show_line_numbers=True, id="step-body",
                 )
+                yield Static(f"{self._step.file} : line {self._step.line}", id="step-location")
             yield Static("esc: close", id="dialog-hint")
 
     def action_close(self) -> None:
@@ -407,12 +406,16 @@ class _StepDetailScreen(ModalScreen[None]):
 class _FlowInspectScreen(ModalScreen[None]):
     """Tree view of a flow's real create_flow/create_flow_step structure.
 
-    Top-level nodes are each discovered `create_flow` sequence, in the
-    order its own step list defines; selecting a leaf step opens
-    _StepDetailScreen with that step's actual Tcl body. A step a sequence
-    references but that isn't defined anywhere in this flow's own files
-    (e.g. init_dft, left to a Cadence-template generator) still shows up
-    and is selectable -- it just says so instead of showing a body.
+    Shows the actual nesting, not a flat list of every `create_flow`: a
+    flow that's itself a member of another flow (syn_generic inside
+    synthesis, synthesis inside block) appears as that parent's child, the
+    same containment the real Tcl defines. Top-level nodes are whichever
+    flows aren't a member of any other flow (flow_top, usually just one --
+    "block" here). Selecting a leaf step opens _StepDetailScreen with that
+    step's actual Tcl body. A step a sequence references but that isn't
+    defined anywhere in this flow's own files (e.g. init_dft, left to a
+    Cadence-template generator) still shows up and is selectable -- it
+    just says so instead of showing a body.
     """
 
     BINDINGS = [("escape", "close", "Close"), ("q", "close", "Close")]
@@ -427,27 +430,47 @@ class _FlowInspectScreen(ModalScreen[None]):
             yield Static(f"Flow structure: {self._root}", id="dialog-title")
             tree: Tree = Tree(self._root.name)
             tree.root.expand()
-            referenced: set[str] = set()
-            for sequence in self._structure.sequences:
-                label = f"{sequence.name} (flow)"
-                sequence_node = tree.root.add(label, expand=True)
-                for step_name in sequence.steps:
-                    referenced.add(step_name)
-                    defined = step_name in self._structure.steps
-                    sequence_node.add_leaf(
-                        step_name if defined else f"{step_name} (not defined locally)",
-                        data=step_name,
-                    )
-            orphans = sorted(set(self._structure.steps) - referenced)
+
+            sequences_by_name = {sequence.name: sequence for sequence in self._structure.sequences}
+            members = {name for sequence in self._structure.sequences for name in sequence.steps}
+            roots = [sequence.name for sequence in self._structure.sequences if sequence.name not in members]
+            if not roots:
+                # No single top-level flow found (e.g. no create_flow at all,
+                # or a reference cycle) -- fall back to listing every
+                # sequence at the top level rather than showing nothing.
+                roots = [sequence.name for sequence in self._structure.sequences]
+
+            reached: set[str] = set()
+            for root_name in roots:
+                self._add_node(tree.root, root_name, sequences_by_name, reached, set())
+
+            orphans = sorted(set(self._structure.steps) - reached)
             if orphans:
-                other_node = tree.root.add("(steps not referenced by any flow)", expand=False)
+                other_node = tree.root.add("(steps not reachable from any top-level flow)", expand=False)
                 for name in orphans:
                     other_node.add_leaf(name, data=name)
             if not self._structure.sequences:
                 for name in sorted(self._structure.steps):
                     tree.root.add_leaf(name, data=name)
+
             yield tree
             yield Static("enter: view step — esc: close", id="dialog-hint")
+
+    def _add_node(
+        self, parent: TreeNode, name: str, sequences_by_name: dict, reached: set[str], ancestors: set[str],
+    ) -> None:
+        reached.add(name)
+        sequence = sequences_by_name.get(name)
+        if sequence is None:
+            defined = name in self._structure.steps
+            parent.add_leaf(name if defined else f"{name} (not defined locally)", data=name)
+            return
+        node = parent.add(f"{name} (flow)", expand=True)
+        if name in ancestors:
+            node.add_leaf("(already shown above — recursive reference)")
+            return
+        for member in sequence.steps:
+            self._add_node(node, member, sequences_by_name, reached, ancestors | {name})
 
     def on_tree_node_selected(self, event: Tree.NodeSelected) -> None:
         event.stop()
