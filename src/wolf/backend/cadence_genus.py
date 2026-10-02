@@ -37,7 +37,7 @@ class GenusInputs:
     source_script: Path
     flow_config_script: Path
     flow_root: Path
-    setup_yaml: Path
+    setup_yaml: Path | None
     flow_yaml: Path
     manifest: Path
 
@@ -260,18 +260,24 @@ def _inject_snippets(context: ResolvedContext) -> tuple[tuple[str, str, tuple[st
     return tuple(result)
 
 
-def _flowtool_templates(context: ResolvedContext) -> tuple[Path, Path]:
-    """Return the institution-supplied (setup_template, flow_template) paths.
+def _flowtool_templates(context: ResolvedContext, flow_root: Path) -> tuple[Optional[Path], Path]:
+    """Return the (setup_template, flow_template) paths Flowtool should render.
 
-    WOLF ships no Cadence Flowtool YAML schema of its own -- these are the
-    institution's own real Flowtool project descriptors (the same role
-    PROCESS_SETUP_COMMON_TEMPLATE/PROCESS_FLOW_TEMPLATE play for the legacy
-    Bash runner), referenced only by path via the same
-    backend.cadence-flowtool escape hatch used for set_db overrides.
+    WOLF ships its own generic flow_template (flow_root/flow.template.yaml)
+    that only lists this flow's real Tcl scripts -- no setup_template is
+    needed alongside it, since this flow reads its resolved values directly
+    out of flow-config.tcl rather than via get_flow_config/design_yaml (see
+    flow.template.yaml's header). A project can still override either or
+    both via backend.cadence-flowtool.flowtool.{setup_template,flow_template}
+    -- e.g. to supply a get_flow_config-style setup_template its own
+    extension Tcl relies on, or an institution's existing Flowtool project
+    descriptors -- the same escape hatch used for set_db overrides.
     """
     flowtool = _cadence_flowtool_overrides(context).get("flowtool", {})
     if not isinstance(flowtool, Mapping):
         raise ValueError("backend.cadence-flowtool.flowtool must be a mapping")
+    if not flowtool:
+        return None, flow_root / "flow.template.yaml"
     unknown = set(flowtool) - _ALLOWED_FLOWTOOL_OVERRIDES
     if unknown:
         raise ValueError(f"unsupported backend.cadence-flowtool.flowtool override: {sorted(unknown)[0]}")
@@ -279,7 +285,7 @@ def _flowtool_templates(context: ResolvedContext) -> tuple[Path, Path]:
     if missing:
         raise ValueError(
             "backend.cadence-flowtool.flowtool requires " + " and ".join(missing)
-            + " (institution-supplied Flowtool project descriptors; WOLF does not ship one)"
+            + " when overriding either -- omit both to use WOLF's bundled flow_template"
         )
     paths = []
     for key in ("setup_template", "flow_template"):
@@ -398,10 +404,9 @@ def validate_genus(
     flowtool = executable_lookup("flowtool")
     checks.append(GenusValidation("flowtool", flowtool is not None, flowtool or "unavailable"))
     try:
-        setup_template, flow_template = _flowtool_templates(context)
-        checks.append(GenusValidation(
-            "flowtool templates", True, f"{setup_template}, {flow_template}",
-        ))
+        setup_template, flow_template = _flowtool_templates(context, _flow_root(context))
+        detail = f"{setup_template}, {flow_template}" if setup_template else str(flow_template)
+        checks.append(GenusValidation("flowtool templates", True, detail))
     except ValueError as error:
         checks.append(GenusValidation("flowtool templates", False, str(error)))
     technology = context.technology
@@ -460,16 +465,18 @@ def prepare_genus_inputs(
     Two distinct kinds of file live under `destination`:
 
     - the flow *scripts* (presentation.tcl, common_flows.tcl,
-      common_steps.tcl, synthesis.tcl) -- the real,
-      version-controlled step definitions that decide what each stage does.
-      These land in a deduplicated, numbered scripts.<N> snapshot (with a
-      scripts.latest symlink), mirroring the legacy Bash runner's own
-      PROCESS_SCRIPTS snapshot mechanism, so history of exactly which flow
-      logic a run used is preserved and unchanged runs don't re-snapshot;
+      common_steps.tcl, synthesis.tcl, floorplanning.tcl, cts.tcl, route.tcl,
+      postroute.tcl) -- the real, version-controlled step definitions that
+      decide what each stage does. These land in a deduplicated, numbered
+      scripts.<N> snapshot (with a scripts.latest symlink), mirroring the
+      legacy Bash runner's own PROCESS_SCRIPTS snapshot mechanism, so
+      history of exactly which flow logic a run used is preserved and
+      unchanged runs don't re-snapshot;
     - the resolved *values* this run supplies to them (sources.tcl,
       technology.tcl, overrides.tcl, constraints.sdc, flow-config.tcl, and
-      the institution's own setup.yaml/flow.yaml Flowtool project
-      descriptors rendered with those values) -- written directly, fresh
+      the flow.yaml Flowtool project descriptor -- WOLF's own bundled
+      flow.template.yaml by default, or an institution-/project-supplied
+      override, rendered with those values) -- written directly, fresh
       every call, same as before.
     """
     if not context.sources:
@@ -497,7 +504,8 @@ def prepare_genus_inputs(
     package_defines = tuple(str(value) for value in context.defines)
     backend_defines = tuple(GENUS_REQUIRED_DEFINES)
     effective_defines = _effective_genus_defines(context)
-    setup_template, flow_template = _flowtool_templates(context)
+    flow_root = _flow_root(context)
+    setup_template, flow_template = _flowtool_templates(context, flow_root)
 
     if technology_script is not None:
         libraries = " ".join(_tcl_quote(str(path)) for path in context.technology.timing_libraries)
@@ -555,7 +563,10 @@ def prepare_genus_inputs(
     # unrelated per-run values never force a new snapshot.
     scripts_directory = _snapshot_scripts(destination, {
         name: (flow_root / name).read_text(encoding="utf-8")
-        for name in ("presentation.tcl", "common_flows.tcl", "common_steps.tcl", "synthesis.tcl")
+        for name in (
+            "presentation.tcl", "common_flows.tcl", "common_steps.tcl", "synthesis.tcl",
+            "floorplanning.tcl", "cts.tcl", "route.tcl", "postroute.tcl",
+        )
     })
 
     # Resolved, run-specific *values* only -- every step this run performs
@@ -593,27 +604,29 @@ def prepare_genus_inputs(
         encoding="utf-8",
     )
 
-    # Render the institution's own Flowtool project descriptors. WOLF knows
-    # nothing about their internal structure beyond the placeholder tokens
-    # below; the institution's template decides how (or whether) to use
-    # each one, exactly as it already does for the legacy Bash runner.
+    # Render the Flowtool project descriptor(s). WOLF's own bundled
+    # flow_template only ever uses WOLF_SCRIPTS_DIR/WOLF_FLOW_CONFIG_SCRIPT
+    # below; an institution- or project-supplied override may reference any
+    # of the others, exactly as it already does for the legacy Bash runner.
     placeholders = {
         "WOLF_DESIGN_NAME": context.design_name,
         "WOLF_DESIGN_TOP": context.design_top,
         "WOLF_SCRIPTS_DIR": str(scripts_directory),
+        "WOLF_FLOW_CONFIG_SCRIPT": str(flow_config_script),
         "WOLF_WORKSPACE_DIR": str(context.workspace_root),
         "WOLF_RUN_DIRECTORY": str(destination),
         "WOLF_RUN_TAG": context.run_tag,
         "WOLF_REPORTS_DIR": str(reports_directory),
         "WOLF_OUTPUTS_DIR": str(outputs_directory),
     }
-    setup_yaml = destination / f"setup.{context.design_name}.yaml"
     flow_yaml = destination / f"flow.{context.design_name}.yaml"
-    setup_yaml.write_text(_render_template(setup_template, placeholders), encoding="utf-8")
-    flow_yaml.write_text(
-        _render_template(flow_template, {**placeholders, "WOLF_SETUP_YAML": str(setup_yaml)}),
-        encoding="utf-8",
-    )
+    if setup_template is not None:
+        setup_yaml = destination / f"setup.{context.design_name}.yaml"
+        setup_yaml.write_text(_render_template(setup_template, placeholders), encoding="utf-8")
+        placeholders = {**placeholders, "WOLF_SETUP_YAML": str(setup_yaml)}
+    else:
+        setup_yaml = None
+    flow_yaml.write_text(_render_template(flow_template, placeholders), encoding="utf-8")
 
     netlist_relative: str | None = None
     if synthesis_stages:
@@ -654,7 +667,7 @@ def prepare_genus_inputs(
         "flow": context.flow_name or FLOW_GENUS_SYN_OPT,
         "flow_root": str(flow_root),
         "scripts_directory": str(scripts_directory),
-        "setup_yaml": str(setup_yaml),
+        "setup_yaml": str(setup_yaml) if setup_yaml else None,
         "flow_yaml": str(flow_yaml),
         "from_stage": resolved_from_stage,
         "to_stage": resolved_to_stage,
@@ -749,7 +762,7 @@ def run_genus(
             "genus_sources": str(inputs.source_script),
             "genus_constraints": str(inputs.directory / "constraints.sdc"),
             "genus_flow_config": str(inputs.flow_config_script),
-            "flowtool_setup_yaml": str(inputs.setup_yaml),
+            **({"flowtool_setup_yaml": str(inputs.setup_yaml)} if inputs.setup_yaml else {}),
             "flowtool_flow_yaml": str(inputs.flow_yaml),
             "flowtool_scripts_directory": str(inputs.scripts_directory),
         },

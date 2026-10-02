@@ -1,0 +1,39 @@
+%TAG ! tag:flow.stylus.cadence.com,0.1:
+---
+# WOLF's default Cadence Flowtool project descriptor -- the generic,
+# technology-independent half of what Flowtool needs to run WOLF's bundled
+# Genus/Innovus flow (common_flows.tcl and friends in this same directory).
+# The real flow sequencing lives in Tcl's own create_flow/create_flow_step
+# calls, not in a yaml step tree, so this file only tells Flowtool which
+# scripts define this run's steps and which resolved-value script to load --
+# nothing technology-, library-, or institution-specific belongs here, and
+# none is needed: unlike the yaml-step-tree style of Flowtool project (where
+# per-run values are read back via get_flow_config out of a companion
+# design/setup yaml), this flow reads its resolved values directly out of
+# flow-config.tcl as plain Tcl variables (see synthesis.tcl's header).
+#
+# A project with its own extension Tcl that does rely on get_flow_config
+# (or on Cadence's other yaml-step-tree features) can still override this
+# file entirely via backend.cadence-flowtool.flowtool.flow_template (paired
+# with its own setup_template) -- that escape hatch is unchanged.
+
+remarks: WOLF generic Cadence Genus/Innovus flow descriptor
+
+init_flow_directory: ${WOLF_SCRIPTS_DIR}
+
+include_procs:
+  - presentation.tcl
+
+default_flow_steps:
+  - common_flows.tcl
+  - common_steps.tcl
+  - synthesis.tcl
+  - floorplanning.tcl
+  - cts.tcl
+  - route.tcl
+  - postroute.tcl
+
+user_flow_steps:
+  - ${WOLF_FLOW_CONFIG_SCRIPT}
+
+flow_current: block

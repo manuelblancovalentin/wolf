@@ -99,14 +99,24 @@ automatically on the technology package declaring LEF views) and
 field) -- see
 [Physical views, floorplan DEF, and MMMC](#physical-views-floorplan-def-and-mmmc).
 
-## Institution-supplied Flowtool project descriptors
+## The Flowtool project descriptor (flow.yaml)
 
-WOLF ships no Cadence Flowtool YAML schema of its own -- real Flowtool
-project descriptors (`setup.yaml`/`flow.yaml`) are the institution's own
-files, exactly as they already are for the legacy Bash runner's
-`PROCESS_SETUP_COMMON_TEMPLATE`/`PROCESS_FLOW_TEMPLATE`. Point the backend
-at a template pair via the same `backend.cadence-flowtool` escape hatch
-used for `set_db` overrides:
+WOLF ships its own generic `flow.yaml` Flowtool project descriptor
+(`flows/cadence-genus/flow.template.yaml`) and uses it by default -- no
+institution-supplied file is required. It only lists this flow's real Tcl
+scripts (`default_flow_steps`) and points Flowtool at the per-run
+`flow-config.tcl` (`user_flow_steps`); the actual flow sequencing is
+Tcl's own `create_flow`/`create_flow_step` in `common_flows.tcl` and
+friends, not a yaml step tree, so this file never needs anything
+technology-, library-, or institution-specific. No companion `setup.yaml`
+is written either: this flow reads its resolved values directly out of
+`flow-config.tcl` as plain Tcl variables rather than via
+`get_flow_config`/`design_yaml`.
+
+A project with its own extension Tcl that does rely on `get_flow_config`
+(or wants an institution's existing Flowtool project descriptors instead)
+can still override the template pair via the same `backend.cadence-flowtool`
+escape hatch used for `set_db` overrides:
 
 ```yaml
 backend:
@@ -116,47 +126,51 @@ backend:
       flow_template: /asic/flows/wolf-registry/flowtool/tsmc65.flow.yaml.template
 ```
 
-Both keys are required; each path must exist. WOLF substitutes plain
-`${TOKEN}` placeholders into copies of these two files (the same mechanism
-the legacy Bash runner already uses via `sed`) -- it does not parse or
-otherwise understand their YAML structure. The institution's own template
-decides which of these tokens to use and how:
+Both keys are required when overriding at all (omit the whole `flowtool`
+key to use WOLF's bundled default); each path must exist. WOLF substitutes
+plain `${TOKEN}` placeholders into copies of these files (the same
+mechanism the legacy Bash runner already uses via `sed`) -- it does not
+parse or otherwise understand their YAML structure. The template decides
+which of these tokens to use and how:
 
 | Token | Value |
 |---|---|
 | `${WOLF_DESIGN_NAME}` | resolved design name |
 | `${WOLF_DESIGN_TOP}` | resolved top-level module/entity |
-| `${WOLF_SCRIPTS_DIR}` | the scripts.\<N\> snapshot directory (see below) -- point `flow_source_directory` (or equivalent) here so Flowtool auto-sources `flow.tcl`/`presentation.tcl` |
-| `${WOLF_SETUP_YAML}` | the rendered setup.yaml's own path (available inside the flow template only) |
+| `${WOLF_SCRIPTS_DIR}` | the scripts.\<N\> snapshot directory (see below) -- WOLF's own `flow_template` sets `init_flow_directory` here |
+| `${WOLF_FLOW_CONFIG_SCRIPT}` | this run's `flow-config.tcl` path -- WOLF's own `flow_template` lists it under `user_flow_steps` |
+| `${WOLF_SETUP_YAML}` | the rendered setup.yaml's own path (available inside the flow template only, and only when a `setup_template` override is given) |
 | `${WOLF_WORKSPACE_DIR}` | resolved workspace root |
 | `${WOLF_RUN_DIRECTORY}` | this run's `backend/cadence-genus` directory |
 | `${WOLF_RUN_TAG}` | resolved run tag |
-| `${WOLF_REPORTS_DIR}` | absolute directory `flow.tcl` writes reports under |
-| `${WOLF_OUTPUTS_DIR}` | absolute directory `flow.tcl` writes netlists under |
+| `${WOLF_REPORTS_DIR}` | absolute directory the flow writes reports under |
+| `${WOLF_OUTPUTS_DIR}` | absolute directory the flow writes netlists under |
 
-`prepare_genus_inputs` rejects a missing or nonexistent template path, or an
-unknown key under `backend.cadence-flowtool.flowtool`, before writing
-anything.
+`prepare_genus_inputs` rejects a missing or nonexistent template path, a
+partial override (only one of the two keys given), or an unknown key under
+`backend.cadence-flowtool.flowtool`, before writing anything.
 
 ## scripts.\<N\>/scripts.latest
 
-The flow *scripts* (`flow.tcl`, `presentation.tcl` -- the real step
-definitions) are snapshotted into a deduplicated, numbered
-`scripts.<N>` directory under `<run>/backend/cadence-genus`, with a
-`scripts.latest` symlink always pointing at the current one -- mirroring
-the legacy Bash runner's own `PROCESS_SCRIPTS` snapshot mechanism
-(`bin/wolf.run`). The dedup digest covers only these two files: unrelated
-per-run resolved values (thread count, design name, ...) never force a new
-snapshot, and an unchanged flow reuses its existing `scripts.<N>` across
-runs. Everything else this run needs (`sources.tcl`, `technology.tcl`,
-`overrides.tcl`, `constraints.sdc`, `flow-config.tcl`, and the rendered
-`setup.<design>.yaml`/`flow.<design>.yaml`) is written directly under
-`backend/cadence-genus`, fresh on every call.
+The flow *scripts* (`presentation.tcl`, `common_flows.tcl`,
+`common_steps.tcl`, `synthesis.tcl`, `floorplanning.tcl`, `cts.tcl`,
+`route.tcl`, `postroute.tcl` -- the real step definitions) are snapshotted
+into a deduplicated, numbered `scripts.<N>` directory under
+`<run>/backend/cadence-genus`, with a `scripts.latest` symlink always
+pointing at the current one -- mirroring the legacy Bash runner's own
+`PROCESS_SCRIPTS` snapshot mechanism (`bin/wolf.run`). The dedup digest
+covers only these files: unrelated per-run resolved values (thread count,
+design name, ...) never force a new snapshot, and an unchanged flow reuses
+its existing `scripts.<N>` across runs. Everything else this run needs
+(`sources.tcl`, `technology.tcl`, `overrides.tcl`, `constraints.sdc`,
+`flow-config.tcl`, and the rendered `flow.<design>.yaml`, plus
+`setup.<design>.yaml` when a `setup_template` override is given) is
+written directly under `backend/cadence-genus`, fresh on every call.
 
-`flow-config.tcl` holds the plain `set` statements `flow.tcl`'s step bodies
+`flow-config.tcl` holds the plain `set` statements the flow's step bodies
 read (design name/top, thread count, dont-use cell list, physical view
-paths, reports/outputs directories); see that file's own header comment for
-the exact list.
+paths, reports/outputs directories); see `synthesis.tcl`'s own header
+comment for the exact list.
 
 For Genus Tcl, VHDL sources use `read_hdl -vhdl`. Both `verilog` and
 `systemverilog` package classifications deliberately use Genus's `read_hdl

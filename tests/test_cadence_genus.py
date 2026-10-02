@@ -15,15 +15,25 @@ from wolf.paths import builtin_flow_root
 
 TCLSH = shutil.which("tclsh")
 
-_FLOW_SCRIPT_NAMES = ("presentation.tcl", "common_flows.tcl", "common_steps.tcl", "synthesis.tcl")
+_FLOW_SCRIPT_NAMES = (
+    "presentation.tcl", "common_flows.tcl", "common_steps.tcl", "synthesis.tcl",
+    "floorplanning.tcl", "cts.tcl", "route.tcl", "postroute.tcl",
+)
 
 
 def _write_fake_flow_root(directory: Path, *, tag: str = "custom") -> None:
-    """A minimal but complete fake flow package: all four files prepare_genus_inputs
+    """A minimal but complete fake flow package: all eight files prepare_genus_inputs
     expects to find (and snapshot) in any flow_root, real or custom."""
     directory.mkdir(parents=True, exist_ok=True)
     for name in _FLOW_SCRIPT_NAMES:
         (directory / name).write_text(f"# {tag} {name}\n", encoding="utf-8")
+    (directory / "flow.template.yaml").write_text(
+        "remarks: fake flow template\n"
+        "init_flow_directory: ${WOLF_SCRIPTS_DIR}\n"
+        "user_flow_steps:\n  - ${WOLF_FLOW_CONFIG_SCRIPT}\n"
+        "flow_current: block\n",
+        encoding="utf-8",
+    )
 
 
 def _flowtool_overrides(root: Path) -> dict:
@@ -81,12 +91,18 @@ class GenusFixtureTestCase(unittest.TestCase):
 
 
 class GenusFlowtoolTemplateTests(GenusFixtureTestCase):
-    def test_missing_flowtool_override_is_rejected(self):
-        with self.assertRaisesRegex(ValueError, "requires flow_template and setup_template"):
-            prepare_genus_inputs(
-                self._context(backend_overrides={"cadence-flowtool": {}}),
-                self.root / "backend" / "cadence-genus",
-            )
+    def test_missing_flowtool_override_uses_bundled_default(self):
+        """Omitting backend.cadence-flowtool.flowtool entirely is the normal
+        case: WOLF's own flow_template is used and no setup.yaml is written."""
+        inputs = prepare_genus_inputs(
+            self._context(backend_overrides={"cadence-flowtool": {}}),
+            self.root / "backend" / "cadence-genus",
+        )
+        self.assertIsNone(inputs.setup_yaml)
+        flow_text = inputs.flow_yaml.read_text(encoding="utf-8")
+        self.assertIn("flow_current: block", flow_text)
+        self.assertIn(str(inputs.scripts_directory), flow_text)
+        self.assertNotIn("${", flow_text)
 
     def test_missing_one_template_key_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "requires .*flow_template|requires .*setup_template"):
