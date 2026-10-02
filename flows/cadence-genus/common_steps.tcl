@@ -22,7 +22,7 @@ create_flow_step -name block_start -owner wolf {
     wolf_inject_for_step block pre
 }
 
-create_flow_step -name block_finish -owner wolf -write_db -categories flow {
+create_flow_step -name block_finish -owner wolf -categories flow {
     apply {{} {
         #- Reset flow_report_name from any reports executed during the step
         set_db flow_report_name [get_db [lindex [get_db flow_hier_path] end] .name]
@@ -42,7 +42,7 @@ create_flow_step -name block_finish -owner wolf -write_db -categories flow {
         set_metric -name flow.root_config -value $flow_root_config
     }}
     wolf_inject_for_step block post
-}
+} -write_db
 
 create_flow_step -name genus_to_innovus -owner wolf {
     wolf_step "genus_to_innovus: writing Innovus handoff"
