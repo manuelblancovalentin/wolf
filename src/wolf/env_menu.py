@@ -27,17 +27,21 @@ import yaml
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
-from textual.widgets import Button, DirectoryTree, Footer, Header, Input, OptionList, Static
+from textual.widgets import (
+    Button, DirectoryTree, Footer, Header, Input, OptionList, Static, TextArea, Tree,
+)
 from textual.widgets.option_list import Option
+from textual.widgets.tree import TreeNode
 
 _RTL_SUFFIXES = (".v", ".sv", ".vhd", ".vhdl")
 
 from wolf.backend import backend_names
 from wolf.environment import ENVIRONMENT_FILENAME, ENVIRONMENT_SCHEMA, load_environment
+from wolf.flow_inspect import FlowStructure, parse_flow_directory
 from wolf.package.installer import PackageInstaller
 from wolf.package.registry import PackageRegistry
 from wolf.package.store import PackageStore
-from wolf.paths import environments_dir
+from wolf.paths import builtin_flow_root, environments_dir
 
 
 _MODULE_RE = re.compile(r"^\s*module\s+([A-Za-z_][A-Za-z0-9_$]*)", re.MULTILINE)
@@ -353,6 +357,106 @@ class _BrowseDirectoryScreen(ModalScreen[Optional[str]]):
         self.app.push_screen(_TextScreen(f"New folder name (inside {directory})"), handle_name)
 
     def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
+class _StepDetailScreen(ModalScreen[None]):
+    """Read-only view of one flow step's real Tcl body, plus provenance."""
+
+    BINDINGS = [("escape", "close", "Close"), ("q", "close", "Close")]
+
+    CSS = """
+    #step-dialog {
+        width: 110; height: 36; border: round #ad4ce5; padding: 1 2;
+        background: $surface;
+    }
+    #step-title { color: #ad4ce5; text-style: bold; }
+    #step-meta { color: $text-muted; margin-bottom: 1; }
+    #step-body { height: 1fr; border: round #ad4ce5; }
+    """
+
+    def __init__(self, name: str, step):
+        super().__init__()
+        self._name = name
+        self._step = step
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="step-dialog"):
+            yield Static(self._name, id="step-title")
+            if self._step is None:
+                yield Static(
+                    "Not defined in this flow's local Tcl files -- provided elsewhere "
+                    "(e.g. Cadence's own template generator, as init_dft/add_dft would be).",
+                    id="step-meta",
+                )
+            else:
+                meta = (
+                    f"owner={self._step.owner or '-'}  write_db={'yes' if self._step.write_db else 'no'}"
+                    f"  {self._step.file.name}:{self._step.line}"
+                )
+                yield Static(meta, id="step-meta")
+                yield TextArea(
+                    self._step.body, read_only=True, show_line_numbers=True, id="step-body",
+                )
+            yield Static("esc: close", id="dialog-hint")
+
+    def action_close(self) -> None:
+        self.dismiss(None)
+
+
+class _FlowInspectScreen(ModalScreen[None]):
+    """Tree view of a flow's real create_flow/create_flow_step structure.
+
+    Top-level nodes are each discovered `create_flow` sequence, in the
+    order its own step list defines; selecting a leaf step opens
+    _StepDetailScreen with that step's actual Tcl body. A step a sequence
+    references but that isn't defined anywhere in this flow's own files
+    (e.g. init_dft, left to a Cadence-template generator) still shows up
+    and is selectable -- it just says so instead of showing a body.
+    """
+
+    BINDINGS = [("escape", "close", "Close"), ("q", "close", "Close")]
+
+    def __init__(self, root: Path, structure: FlowStructure):
+        super().__init__()
+        self._root = root
+        self._structure = structure
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="dialog"):
+            yield Static(f"Flow structure: {self._root}", id="dialog-title")
+            tree: Tree = Tree(self._root.name)
+            tree.root.expand()
+            referenced: set[str] = set()
+            for sequence in self._structure.sequences:
+                label = f"{sequence.name} (flow)"
+                sequence_node = tree.root.add(label, expand=True)
+                for step_name in sequence.steps:
+                    referenced.add(step_name)
+                    defined = step_name in self._structure.steps
+                    sequence_node.add_leaf(
+                        step_name if defined else f"{step_name} (not defined locally)",
+                        data=step_name,
+                    )
+            orphans = sorted(set(self._structure.steps) - referenced)
+            if orphans:
+                other_node = tree.root.add("(steps not referenced by any flow)", expand=False)
+                for name in orphans:
+                    other_node.add_leaf(name, data=name)
+            if not self._structure.sequences:
+                for name in sorted(self._structure.steps):
+                    tree.root.add_leaf(name, data=name)
+            yield tree
+            yield Static("enter: view step — esc: close", id="dialog-hint")
+
+    def on_tree_node_selected(self, event: Tree.NodeSelected) -> None:
+        event.stop()
+        name = event.node.data
+        if not name:
+            return
+        self.app.push_screen(_StepDetailScreen(name, self._structure.steps.get(name)))
+
+    def action_close(self) -> None:
         self.dismiss(None)
 
 
@@ -740,6 +844,44 @@ class EnvWizardApp(App[None]):
         self.push_screen(_PickScreen("Pick a technology (PDK) package", choices, details), handle)
 
     def _edit_flow(self) -> None:
+        def handle_action(action: Optional[str]) -> None:
+            if action == "inspect":
+                self._inspect_flow()
+            elif action == "change":
+                self._change_flow()
+        self.push_screen(
+            _PickScreen("Flow", [
+                ("Inspect flow structure", "inspect"),
+                ("Change flow package / backend", "change"),
+            ]),
+            handle_action,
+        )
+
+    def _flow_root_path(self) -> Path:
+        if self.flow_package:
+            manifest = PackageRegistry().get(self.flow_package)
+            package = PackageStore().read(manifest)
+            if package is None:
+                raise ValueError(
+                    f"{self.flow_package} is not installed yet "
+                    "-- install it to inspect its flow structure."
+                )
+            return package.content_path
+        return builtin_flow_root("cadence-genus")
+
+    def _inspect_flow(self) -> None:
+        try:
+            root = self._flow_root_path()
+        except ValueError as error:
+            self.notify(str(error), severity="error")
+            return
+        structure = parse_flow_directory(root)
+        if not structure.sequences and not structure.steps:
+            self.notify(f"No create_flow/create_flow_step definitions found under {root}.", severity="warning")
+            return
+        self.push_screen(_FlowInspectScreen(root, structure))
+
+    def _change_flow(self) -> None:
         entries = [
             _package_choice(manifest) for manifest in PackageRegistry().manifests()
             if manifest.identifier.kind == "flow"
