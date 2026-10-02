@@ -8,12 +8,29 @@ import yaml
 
 from wolf.backend.cadence_genus import (
     FLOW_GENUS_SYN_GENERIC, FLOW_GENUS_SYN_MAP, FLOW_GENUS_SYN_OPT,
-    prepare_genus_inputs,
+    _period_ns, prepare_genus_inputs,
 )
 from wolf.context import ResolvedContext, ResolvedSource, ResolvedTechnology
 from wolf.paths import builtin_flow_root
 
 TCLSH = shutil.which("tclsh")
+
+
+class GenusPeriodNsTests(unittest.TestCase):
+    """create_clock -period takes ns; period_ps/1000 must not lose magnitude.
+
+    rstrip("0") on an integer-valued result (no decimal point) strips
+    significant digits, not just padding -- 10000ps became "10" then "1".
+    """
+
+    def test_whole_nanosecond_periods_keep_their_magnitude(self):
+        self.assertEqual(_period_ns(10000), "10")
+        self.assertEqual(_period_ns(1000), "1")
+        self.assertEqual(_period_ns(20000), "20")
+
+    def test_fractional_periods_still_trim_padding_zeros(self):
+        self.assertEqual(_period_ns(2500), "2.5")
+        self.assertEqual(_period_ns(100), "0.1")
 
 _FLOW_SCRIPT_NAMES = (
     "presentation.tcl", "common_flows.tcl", "common_steps.tcl", "synthesis.tcl",

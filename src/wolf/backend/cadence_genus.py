@@ -386,7 +386,10 @@ def allocate_genus_run(context: ResolvedContext, *, clean: bool = False) -> Path
 
 def _period_ns(period_ps: Any) -> str:
     value = Decimal(str(period_ps)) / Decimal("1000")
-    return format(value.normalize(), "f").rstrip("0").rstrip(".") or "0"
+    text = format(value.normalize(), "f")
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    return text or "0"
 
 
 def validate_genus(
