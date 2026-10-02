@@ -163,11 +163,11 @@ class MixedLanguagePackageTests(unittest.TestCase):
         self.assertIn("-library work", script)
         self.assertIn("set_db hdl_vhdl_read_version 1993", script)
         self.assertIn("FABULOUS_TEST", script)
-        # The actual step logic (create_flow_step definitions) lives in the
-        # shared, static flow.tcl (exercised directly by
+        # The actual step logic (create_flow/create_flow_step definitions)
+        # lives in the shared, static *.tcl files (exercised directly by
         # test_cadence_genus.py), snapshotted into scripts_directory.
-        self.assertTrue((output.scripts_directory / "flow.tcl").is_file())
-        self.assertTrue((output.scripts_directory / "presentation.tcl").is_file())
+        for name in ("presentation.tcl", "common_flows.tcl", "common_steps.tcl", "synthesis.tcl"):
+            self.assertTrue((output.scripts_directory / name).is_file(), name)
         self.assertIn(str(output.scripts_directory), output.flow_yaml.read_text(encoding="utf-8"))
         flow_config = output.flow_config_script.read_text(encoding="utf-8")
         self.assertIn('set wolf_design_top "ESP_ASIC_TOP"', flow_config)

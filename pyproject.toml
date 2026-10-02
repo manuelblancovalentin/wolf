@@ -50,7 +50,9 @@ where = ["src"]
 ]
 "share/wolf/flows/cadence-genus" = [
   "flows/cadence-genus/presentation.tcl",
-  "flows/cadence-genus/flow.tcl",
+  "flows/cadence-genus/common_flows.tcl",
+  "flows/cadence-genus/common_steps.tcl",
+  "flows/cadence-genus/synthesis.tcl",
 ]
 "share/wolf/shell" = ["shell/wolf.bash", "shell/wolf.zsh"]
 "share/wolf/registry/rtl" = ["registry/rtl/ibex.yaml", "registry/rtl/aes.yaml", "registry/rtl/ibex-fabulous-mvp.yaml"]

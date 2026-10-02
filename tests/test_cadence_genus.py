@@ -7,13 +7,23 @@ import unittest
 import yaml
 
 from wolf.backend.cadence_genus import (
-    FLOW_GENUS_ELABORATION, FLOW_GENUS_SYN_GENERIC, FLOW_GENUS_SYN_MAP, FLOW_GENUS_SYN_OPT,
+    FLOW_GENUS_SYN_GENERIC, FLOW_GENUS_SYN_MAP, FLOW_GENUS_SYN_OPT,
     prepare_genus_inputs,
 )
 from wolf.context import ResolvedContext, ResolvedSource, ResolvedTechnology
 from wolf.paths import builtin_flow_root
 
 TCLSH = shutil.which("tclsh")
+
+_FLOW_SCRIPT_NAMES = ("presentation.tcl", "common_flows.tcl", "common_steps.tcl", "synthesis.tcl")
+
+
+def _write_fake_flow_root(directory: Path, *, tag: str = "custom") -> None:
+    """A minimal but complete fake flow package: all four files prepare_genus_inputs
+    expects to find (and snapshot) in any flow_root, real or custom."""
+    directory.mkdir(parents=True, exist_ok=True)
+    for name in _FLOW_SCRIPT_NAMES:
+        (directory / name).write_text(f"# {tag} {name}\n", encoding="utf-8")
 
 
 def _flowtool_overrides(root: Path) -> dict:
@@ -126,8 +136,8 @@ class GenusScriptsSnapshotTests(GenusFixtureTestCase):
     def test_first_run_creates_scripts_1(self):
         inputs = prepare_genus_inputs(self._context(), self.root / "backend" / "cadence-genus")
         self.assertEqual(inputs.scripts_directory.name, "scripts.1")
-        self.assertTrue((inputs.scripts_directory / "flow.tcl").is_file())
-        self.assertTrue((inputs.scripts_directory / "presentation.tcl").is_file())
+        for name in _FLOW_SCRIPT_NAMES:
+            self.assertTrue((inputs.scripts_directory / name).is_file(), name)
         latest = self.root / "backend" / "cadence-genus" / "scripts.latest"
         self.assertTrue(latest.is_symlink())
         self.assertEqual(latest.resolve(), inputs.scripts_directory.resolve())
@@ -145,14 +155,12 @@ class GenusScriptsSnapshotTests(GenusFixtureTestCase):
     def test_changed_flow_scripts_create_a_new_snapshot(self):
         destination = self.root / "backend" / "cadence-genus"
         custom_flow_root = self.root / "custom-flow"
-        custom_flow_root.mkdir()
-        (custom_flow_root / "flow.tcl").write_text("# v1\n", encoding="utf-8")
-        (custom_flow_root / "presentation.tcl").write_text("# presentation\n", encoding="utf-8")
+        _write_fake_flow_root(custom_flow_root, tag="v1")
         context = self._context(package_paths={"flow": custom_flow_root})
         first = prepare_genus_inputs(context, destination)
         self.assertEqual(first.scripts_directory.name, "scripts.1")
 
-        (custom_flow_root / "flow.tcl").write_text("# v2 -- changed\n", encoding="utf-8")
+        (custom_flow_root / "synthesis.tcl").write_text("# v2 -- changed\n", encoding="utf-8")
         second = prepare_genus_inputs(context, destination)
         self.assertEqual(second.scripts_directory.name, "scripts.2")
         latest = destination / "scripts.latest"
@@ -174,16 +182,15 @@ class GenusFlowRootTests(GenusFixtureTestCase):
 
     def test_installed_flow_package_overrides_the_bundled_default(self):
         custom_flow_root = self.root / "my-project-flow"
-        custom_flow_root.mkdir()
-        (custom_flow_root / "flow.tcl").write_text("# custom\n", encoding="utf-8")
-        (custom_flow_root / "presentation.tcl").write_text("# custom\n", encoding="utf-8")
+        _write_fake_flow_root(custom_flow_root)
         inputs = prepare_genus_inputs(
             self._context(package_paths={"flow": custom_flow_root}),
             self.root / "backend" / "cadence-genus",
         )
         self.assertEqual(inputs.flow_root, custom_flow_root)
         self.assertEqual(
-            (inputs.scripts_directory / "flow.tcl").read_text(encoding="utf-8"), "# custom\n",
+            (inputs.scripts_directory / "synthesis.tcl").read_text(encoding="utf-8"),
+            "# custom synthesis.tcl\n",
         )
 
 
@@ -254,6 +261,88 @@ class GenusSetDbOverrideTests(GenusFixtureTestCase):
             )
 
 
+class GenusPostsynNetlistAndInjectOverrideTests(GenusFixtureTestCase):
+    def test_no_postsyn_netlists_leaves_empty_config(self):
+        inputs = prepare_genus_inputs(self._context(), self.root / "backend" / "cadence-genus")
+        flow_config = inputs.flow_config_script.read_text(encoding="utf-8")
+        self.assertIn("set wolf_postsyn_netlists {}", flow_config)
+
+    def test_postsyn_netlists_are_resolved_into_flow_config(self):
+        inputs = prepare_genus_inputs(
+            self._context(backend_overrides={"cadence-flowtool": {
+                **self.flowtool_overrides["cadence-flowtool"],
+                "postsyn_netlists": ["/tiles/lut4ab.v"],
+            }}),
+            self.root / "backend" / "cadence-genus",
+        )
+        flow_config = inputs.flow_config_script.read_text(encoding="utf-8")
+        self.assertIn('set wolf_postsyn_netlists {"/tiles/lut4ab.v"}', flow_config)
+
+    def test_non_list_postsyn_netlists_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "postsyn_netlists must be a list"):
+            prepare_genus_inputs(
+                self._context(backend_overrides={"cadence-flowtool": {
+                    **self.flowtool_overrides["cadence-flowtool"], "postsyn_netlists": "not-a-list",
+                }}),
+                self.root / "backend" / "cadence-genus",
+            )
+
+    def test_no_inject_leaves_no_wolf_inject_entries(self):
+        inputs = prepare_genus_inputs(self._context(), self.root / "backend" / "cadence-genus")
+        flow_config = inputs.flow_config_script.read_text(encoding="utf-8")
+        self.assertNotIn("set wolf_inject(", flow_config)
+
+    def test_inject_snippets_are_resolved_into_flow_config(self):
+        inputs = prepare_genus_inputs(
+            self._context(backend_overrides={"cadence-flowtool": {
+                **self.flowtool_overrides["cadence-flowtool"],
+                "inject": {"init_elaborate": {"post": ["/tmp/after.tcl", "puts {hi}"]}},
+            }}),
+            self.root / "backend" / "cadence-genus",
+        )
+        flow_config = inputs.flow_config_script.read_text(encoding="utf-8")
+        self.assertIn("set wolf_inject(init_elaborate,post)", flow_config)
+        self.assertIn("/tmp/after.tcl", flow_config)
+        # The raw file brace-escapes "puts {hi}" to keep it one safe list
+        # element (see _tcl_brace_list) -- round-trip through real tclsh to
+        # prove it decodes back to the exact original strings, not just
+        # check the (deliberately escaped) file text.
+        if TCLSH:
+            script = (
+                flow_config
+                + 'foreach s $wolf_inject(init_elaborate,post) { puts "ELEMENT:$s" }\n'
+            )
+            path = self.root / "roundtrip.tcl"
+            path.write_text(script, encoding="utf-8")
+            result = subprocess.run([TCLSH, str(path)], capture_output=True, text=True, check=False)
+            self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+            self.assertIn("ELEMENT:/tmp/after.tcl", result.stdout)
+            self.assertIn("ELEMENT:puts {hi}", result.stdout)
+            # And prove the snippet's own braces survive as real Tcl
+            # grouping (not literal backslash-brace text) once evaluated --
+            # the actual way wolf_inject consumes it.
+            eval_script = (
+                flow_config + 'uplevel #0 [lindex $wolf_inject(init_elaborate,post) 1]\n'
+            )
+            eval_path = self.root / "roundtrip_eval.tcl"
+            eval_path.write_text(eval_script, encoding="utf-8")
+            eval_result = subprocess.run(
+                [TCLSH, str(eval_path)], capture_output=True, text=True, check=False,
+            )
+            self.assertEqual(eval_result.returncode, 0, msg=eval_result.stdout + eval_result.stderr)
+            self.assertEqual(eval_result.stdout.strip(), "hi")
+
+    def test_inject_with_unknown_phase_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "must only set pre/post"):
+            prepare_genus_inputs(
+                self._context(backend_overrides={"cadence-flowtool": {
+                    **self.flowtool_overrides["cadence-flowtool"],
+                    "inject": {"init_elaborate": {"mid": ["x"]}},
+                }}),
+                self.root / "backend" / "cadence-genus",
+            )
+
+
 class GenusThreadsTests(GenusFixtureTestCase):
     def test_no_thread_source_leaves_empty_config(self):
         inputs = prepare_genus_inputs(self._context(), self.root / "backend" / "cadence-genus")
@@ -297,13 +386,16 @@ class GenusThreadsTests(GenusFixtureTestCase):
 class GenusSynthesisFlowTests(GenusFixtureTestCase):
     """Resolved-value plumbing for the selectable Genus flows.
 
-    The actual step logic lives in the shared, static
-    flows/cadence-genus/flow.tcl (exercised end-to-end for real by
-    GenusFlowTclSyntaxTests below via a crude stand-in for Flowtool's own
-    create_flow_step, which proves Tcl syntax validity and step-body
-    behavior but cannot verify real Flowtool checkpoint/-write_db/-owner
-    semantics -- only real Flowtool can). These tests only check that
-    prepare_genus_inputs resolves and records the right values.
+    elaborate is no longer independently selectable -- it is a step inside
+    the syn_generic flow now, matching real Flowtool -from/-to semantics
+    (selects by flow name, not by step name within one). The actual step
+    logic lives in the shared, static flows/cadence-genus/*.tcl (exercised
+    end-to-end for real by GenusFlowTclSyntaxTests below via a crude
+    stand-in for Flowtool's own create_flow/create_flow_step, which proves
+    Tcl syntax validity and step-body behavior but cannot verify real
+    Flowtool checkpoint/-write_db/-owner semantics -- only real Flowtool
+    can). These tests only check that prepare_genus_inputs resolves and
+    records the right values.
     """
 
     def _technology(self, *, dont_use_cells=(), technology_lefs=()):
@@ -314,12 +406,12 @@ class GenusSynthesisFlowTests(GenusFixtureTestCase):
             dont_use_cells=dont_use_cells, technology_lefs=technology_lefs,
         )
 
-    def test_default_flow_is_elaboration_only(self):
+    def test_default_flow_is_the_complete_synthesis_flow(self):
         inputs = prepare_genus_inputs(self._context(), self.root / "backend" / "cadence-genus")
         manifest = yaml.safe_load(inputs.manifest.read_text(encoding="utf-8"))
-        self.assertEqual(manifest["flow"], FLOW_GENUS_ELABORATION)
-        self.assertEqual(manifest["synthesis_stages"], [])
-        self.assertIsNone(manifest["outputs"]["netlist"])
+        self.assertEqual(manifest["flow"], FLOW_GENUS_SYN_OPT)
+        self.assertEqual(manifest["synthesis_stages"], ["syn_generic", "syn_map", "syn_opt"])
+        self.assertTrue(manifest["outputs"]["netlist"].endswith("demo.opt.v"))
 
     def test_unsupported_flow_name_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "unsupported cadence-flowtool flow"):
@@ -363,12 +455,12 @@ class GenusSynthesisFlowTests(GenusFixtureTestCase):
         # cumulative range flow_name would otherwise imply.
         self.assertEqual(manifest["synthesis_stages"], ["syn_map"])
 
-    def test_from_stage_defaults_to_elaborate_when_only_to_stage_given(self):
+    def test_from_stage_defaults_to_first_stage_when_only_to_stage_given(self):
         inputs = prepare_genus_inputs(
             self._context(), self.root / "backend" / "cadence-genus", to_stage="syn_generic",
         )
         manifest = yaml.safe_load(inputs.manifest.read_text(encoding="utf-8"))
-        self.assertEqual(manifest["from_stage"], "elaborate")
+        self.assertEqual(manifest["from_stage"], "syn_generic")
         self.assertEqual(manifest["to_stage"], "syn_generic")
 
     def test_unsupported_stage_name_is_rejected(self):
@@ -427,26 +519,37 @@ class GenusSynthesisFlowTests(GenusFixtureTestCase):
 
 @unittest.skipUnless(TCLSH, "tclsh is not installed")
 class GenusFlowTclSyntaxTests(GenusFixtureTestCase):
-    """Proves flow.tcl is syntactically valid and each step body behaves as
-    expected under a crude stand-in for create_flow_step.
+    """Proves the bundled flow scripts are syntactically valid and the real
+    create_flow/create_flow_step structure resolves and runs as expected,
+    under a crude recursive stand-in for Flowtool's own engine.
 
     This is NOT a substitute for real Flowtool validation: it does not
     (and cannot) verify real -write_db/-owner/checkpoint-resume semantics,
-    which only Flowtool's own runtime provides. See docs/CADENCE_GENUS.md
-    for the actual stub-design validation procedure to run on Kona before
-    trusting this against a real design.
+    or real attribute plumbing (flow_report_directory etc), which only
+    Flowtool's own runtime provides. See docs/CADENCE_GENUS.md for the
+    actual stub-design validation procedure to run on Kona before trusting
+    this against a real design.
     """
 
     _STUB_COMMANDS = """
+proc is_attribute {args} { return 0 }
+proc define_attribute {args} {}
 proc set_db {args} { puts "STUB set_db $args" }
+proc get_db {args} { return {} }
 proc elaborate {top} { puts "STUB elaborate $top" }
 proc read_sdc {f} { puts "STUB read_sdc $f" }
 proc check_design {args} { puts "STUB check_design $args" }
 proc report_hierarchy {args} { puts "STUB report_hierarchy $args" }
 proc report_messages {args} { puts "STUB report_messages $args" }
 proc report_area {args} { puts "STUB report_area $args" }
+proc report_timing_summary {args} { puts "STUB report_timing_summary $args" }
+proc report_power {args} { puts "STUB report_power $args" }
+proc report_obj {args} { return {} }
+proc set_metric {args} { puts "STUB set_metric $args" }
 proc write_hdl {args} { puts "STUB write_hdl $args" }
-proc get_db {args} { return {} }
+proc update_names {args} { puts "STUB update_names $args" }
+proc write_design {args} { puts "STUB write_design $args" }
+proc delete_obj {args} {}
 proc all_inputs {} { return {} }
 proc all_outputs {} { return {} }
 proc all_registers {} { return {r1} }
@@ -455,43 +558,77 @@ proc group_path {args} { puts "STUB group_path $args" }
 proc syn_generic {} { puts "STUB syn_generic" }
 proc syn_map {} { puts "STUB syn_map" }
 proc syn_opt {} { puts "STUB syn_opt" }
+proc read_hdl {args} { puts "STUB read_hdl $args" }
 proc read_physical {args} { puts "STUB read_physical $args" }
 proc init_design {} { puts "STUB init_design" }
 proc read_def {f} { puts "STUB read_def $f" }
 
-# Crude stand-in for Flowtool's own create_flow_step: registers and
-# immediately runs each step's body, ignoring -owner/-write_db (Flowtool's
-# own job). Good enough to prove Tcl syntax validity and step behavior.
+# Crude, recursive stand-in for Flowtool's own engine: create_flow and
+# create_flow_step both only REGISTER (name -> ordered member list, or
+# name -> body); nothing runs until wolf_test_run_flow expands a flow name
+# into steps (recursively, since a flow's members may themselves be other
+# flows -- e.g. "synthesis" is {syn_generic syn_map syn_opt}, each of
+# which is itself a flow) and runs each step's body in order. Good enough
+# to prove Tcl syntax validity and real step/flow nesting behavior, not
+# real Flowtool checkpointing.
+array set FLOW_MEMBERS {}
+array set STEP_BODIES {}
+
+proc create_flow {args} {
+    global FLOW_MEMBERS
+    set name ""
+    foreach {a b} $args { if {$a eq "-name"} { set name $b } }
+    set FLOW_MEMBERS($name) [lindex $args end]
+}
+
 proc create_flow_step {args} {
+    global STEP_BODIES
     set name [lindex $args 1]
     set body ""
     foreach a $args { if {[string length $a] > 20} { set body $a } }
-    puts "REGISTER STEP $name"
-    uplevel #0 $body
+    set STEP_BODIES($name) $body
+}
+
+proc wolf_test_run_flow {name} {
+    global FLOW_MEMBERS STEP_BODIES
+    if {[info exists FLOW_MEMBERS($name)]} {
+        foreach member $FLOW_MEMBERS($name) { wolf_test_run_flow $member }
+    } elseif {[info exists STEP_BODIES($name)]} {
+        puts "REGISTER STEP $name"
+        uplevel #0 $STEP_BODIES($name)
+    } else {
+        puts "UNKNOWN STEP OR FLOW: $name"
+    }
 }
 """
 
-    def _run_flow_tcl(self, flow_config_text: str) -> str:
+    def _run_flow_tcl(self, flow_config_text: str, *, run: str = "synthesis") -> str:
+        root = builtin_flow_root("cadence-genus")
         stub = self.root / "stub_run.tcl"
         stub.write_text(
             self._STUB_COMMANDS + flow_config_text
-            + f'source {{{builtin_flow_root("cadence-genus") / "presentation.tcl"}}}\n'
-            + f'source {{{builtin_flow_root("cadence-genus") / "flow.tcl"}}}\n',
+            + f'source {{{root / "presentation.tcl"}}}\n'
+            + f'source {{{root / "common_flows.tcl"}}}\n'
+            + f'source {{{root / "common_steps.tcl"}}}\n'
+            + f'source {{{root / "synthesis.tcl"}}}\n'
+            + f'wolf_test_run_flow {run}\n',
             encoding="utf-8",
         )
         result = subprocess.run([TCLSH, str(stub)], capture_output=True, text=True, check=False)
         self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertNotIn("UNKNOWN STEP OR FLOW", result.stdout)
         return result.stdout
 
     def _base_config(self, **extra) -> str:
         values = {
             "wolf_design_name": "demo", "wolf_design_top": "top",
             "wolf_reports_dir": str(self.root / "reports"), "wolf_outputs_dir": str(self.root / "outputs"),
+            "wolf_handoff_dir": str(self.root / "handoff"),
             "wolf_max_cpus_per_server": '""', "wolf_technology_script": '""',
             "wolf_overrides_script": '""', "wolf_sources_script": str(self.root / "sources.tcl"),
             "wolf_constraints_file": str(self.root / "constraints.sdc"),
             "wolf_dont_use_cells": "{}", "wolf_technology_lefs": "{}", "wolf_cell_lefs": "{}",
-            "wolf_floorplan_def": '""',
+            "wolf_floorplan_def": '""', "wolf_postsyn_netlists": "{}",
         }
         values.update(extra)
         (self.root / "reports").mkdir(exist_ok=True)
@@ -502,16 +639,19 @@ proc create_flow_step {args} {
         for key, value in values.items():
             literal = value if str(value).startswith(("{", '"')) else f'"{value}"'
             lines.append(f"set {key} {literal}")
+        lines.append("array set wolf_inject {}")
         return "\n".join(lines) + "\n"
 
-    def test_all_four_steps_register_and_run_in_order(self):
+    def test_full_synthesis_flow_registers_and_runs_steps_in_order(self):
         output = self._run_flow_tcl(self._base_config(wolf_dont_use_cells='{"*_lvt"}'))
         ordered = (
-            "REGISTER STEP elaborate", "STUB elaborate top", "STUB read_sdc",
-            "REGISTER STEP syn_generic", "STUB set_db {} .dont_use true",
-            "STUB group_path -name in2out", "STUB syn_generic",
-            "REGISTER STEP syn_map", "STUB syn_map",
-            "REGISTER STEP syn_opt", "STUB syn_opt",
+            "REGISTER STEP block_start", "REGISTER STEP init_elaborate", "STUB elaborate top",
+            "STUB read_sdc", "REGISTER STEP set_dont_use", "STUB set_db {} .dont_use true",
+            "REGISTER STEP create_cost_group", "STUB group_path -name in2out",
+            "REGISTER STEP run_syn_generic", "STUB syn_generic", "REGISTER STEP block_finish",
+            "REGISTER STEP run_syn_map", "STUB syn_map",
+            "REGISTER STEP run_syn_opt", "STUB syn_opt",
+            "REGISTER STEP genus_to_innovus", "STUB update_names", "STUB write_design",
         )
         indices = [output.index(fragment) for fragment in ordered]
         self.assertEqual(indices, sorted(indices))
@@ -519,9 +659,14 @@ proc create_flow_step {args} {
         self.assertIn(f"STUB write_hdl > {self.root / 'outputs'}/demo.mapped.v", output)
         self.assertIn(f"STUB write_hdl > {self.root / 'outputs'}/demo.opt.v", output)
 
+    def test_single_stage_flows_also_resolve_and_run(self):
+        self._run_flow_tcl(self._base_config(), run="syn_generic")
+        self._run_flow_tcl(self._base_config(), run="syn_map")
+        self._run_flow_tcl(self._base_config(), run="syn_opt")
+
     def test_physical_views_add_read_physical_and_init_design(self):
         lef = self.root / "tech.lef"
-        output = self._run_flow_tcl(self._base_config(wolf_technology_lefs=f'{{"{lef}"}}'))
+        output = self._run_flow_tcl(self._base_config(wolf_technology_lefs=f'{{"{lef}"}}'), run="syn_generic")
         physical_index = output.index("STUB read_physical")
         elaborate_index = output.index("STUB elaborate top")
         init_index = output.index("STUB init_design")
@@ -529,9 +674,34 @@ proc create_flow_step {args} {
         self.assertLess(elaborate_index, init_index)
 
     def test_no_physical_views_skips_read_physical_and_init_design(self):
-        output = self._run_flow_tcl(self._base_config())
+        output = self._run_flow_tcl(self._base_config(), run="syn_generic")
         self.assertNotIn("read_physical", output)
         self.assertNotIn("init_design", output)
+
+    def test_postsyn_netlists_are_read_before_handoff(self):
+        output = self._run_flow_tcl(
+            self._base_config(wolf_postsyn_netlists='{"/tiles/lut4ab.v"}'), run="syn_opt",
+        )
+        self.assertIn("STUB read_hdl -sv -library work /tiles/lut4ab.v", output)
+        read_index = output.index("STUB read_hdl -sv -library work /tiles/lut4ab.v")
+        write_index = output.index("STUB write_design")
+        self.assertLess(read_index, write_index)
+
+    def test_inject_hook_runs_at_the_right_point(self):
+        marker = self.root / "injected-marker"
+        snippet = self.root / "snippet.tcl"
+        snippet.write_text(f'puts "INJECTED"\nclose [open {{{marker}}} w]\n', encoding="utf-8")
+        config = self._base_config() + (
+            f'set wolf_inject(init_elaborate,post) {{{{{snippet}}}}}\n'
+        )
+        output = self._run_flow_tcl(config, run="syn_generic")
+        self.assertIn("INJECTED", output)
+        self.assertTrue(marker.is_file())
+        elaborate_index = output.index("STUB elaborate top")
+        inject_index = output.index("INJECTED")
+        dont_use_index = output.index("REGISTER STEP set_dont_use")
+        self.assertLess(elaborate_index, inject_index)
+        self.assertLess(inject_index, dont_use_index)
 
 
 if __name__ == "__main__":
