@@ -5,21 +5,25 @@
 # syn_generic/syn_map/syn_opt -- each flow's own steps, like
 # init_elaborate inside syn_generic, are not independently selectable).
 #
-# Adapted from Cadence's own vendor-neutral Genus Stylus flow template
-# (`write_flow_template -type stylus -tools genus`): the attribute
-# definitions and flow_header_tcl below are its generic bookkeeping,
-# unchanged. Its init_design flow (read_mmmc/read_physical/read_hdl/
-# read_power_intent/run_init_design) is MMMC-oriented and not something
-# WOLF resolves today -- WOLF's own init_elaborate step in synthesis.tcl
-# already covers technology libraries, optional physical views, RTL, and
-# constraints for the single-corner case WOLF resolves, so init_design is
-# dropped from the sequences below rather than defined as a no-op.
+# Adapted from Cadence's own vendor-neutral Genus/Innovus Stylus flow
+# template (`write_flow_template -type stylus -tools {genus innovus}`):
+# the attribute definitions and flow_header_tcl below are its generic
+# bookkeeping, unchanged. Its init_design/init_innovus flows
+# (read_mmmc/read_physical/read_hdl/read_power_intent/run_init_design,
+# init_innovus_yaml/init_innovus_user) are MMMC- and yaml-config-oriented
+# and not something WOLF resolves today -- WOLF's own init_elaborate
+# (synthesis.tcl) and init_implementation/init_floorplan (floorplanning.tcl)
+# steps cover what WOLF does resolve for the single-corner case, so those
+# vendor flows/steps are dropped from the sequences below rather than
+# defined as no-ops. The implementation stages below execute the Innovus
+# PnR work (floorplan/place/cts/route); they are not wired up to `wolf
+# run` yet -- see docs/CADENCE_GENUS.md for current execution status.
 #
 # `wolf flow init --from flows/cadence-genus --to <your-copy>` clones this
-# directory (and presentation.tcl/common_steps.tcl/synthesis.tcl) so a
-# project can fork and edit any of these files freely; point
-# `flow: {package: ...}` at the clone and WOLF resolves this file from
-# there instead.
+# directory (presentation.tcl, common_steps.tcl, synthesis.tcl,
+# floorplanning.tcl, cts.tcl, route.tcl, postroute.tcl) so a project can
+# fork and edit any of these files freely; point `flow: {package: ...}`
+# at the clone and WOLF resolves this file from there instead.
 
 #- Define attribute for report name
 if {![is_attribute -obj_type root flow_report_name]} {
@@ -50,6 +54,24 @@ create_flow -name syn_map -owner wolf -tool genus -tool_options -disable_user_st
 create_flow -name syn_opt -owner wolf -tool genus -tool_options -disable_user_startup \
     {block_start run_syn_opt block_finish genus_to_innovus}
 
+create_flow -name floorplan -owner wolf -tool innovus -tool_options -disable_user_startup \
+    {block_start init_implementation init_floorplan add_tracks block_finish}
+
+create_flow -name prects -owner wolf -tool innovus -tool_options -disable_user_startup \
+    {block_start add_clock_spec commit_route_types run_place_opt block_finish}
+
+create_flow -name cts -owner wolf -tool innovus -tool_options -disable_user_startup \
+    {block_start add_clock_tree add_tieoffs block_finish}
+
+create_flow -name postcts -owner wolf -tool innovus -tool_options -disable_user_startup \
+    {block_start run_opt_postcts_hold block_finish}
+
+create_flow -name route -owner wolf -tool innovus -tool_options -disable_user_startup \
+    {block_start add_fillers run_route block_finish}
+
+create_flow -name postroute -owner wolf -tool innovus -tool_options -disable_user_startup \
+    {block_start run_opt_postroute block_finish}
+
 #=============================================================================
 # Flow: Toplevel Flows
 #=============================================================================
@@ -57,5 +79,8 @@ create_flow -name syn_opt -owner wolf -tool genus -tool_options -disable_user_st
 create_flow -name synthesis -owner wolf -tool genus -skip_metric -tool_options -disable_user_startup \
     {syn_generic syn_map syn_opt}
 
-create_flow -name block -owner wolf -skip_metric {synthesis}
+create_flow -name implementation -owner wolf -tool innovus -skip_metric -tool_options -disable_user_startup \
+    {floorplan prects cts postcts route postroute}
+
+create_flow -name block -owner wolf -skip_metric {synthesis implementation}
 set_db flow_top flow:block
