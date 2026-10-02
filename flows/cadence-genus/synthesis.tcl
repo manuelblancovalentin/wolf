@@ -1,11 +1,22 @@
-# WOLF's default Cadence Genus flow -- the steps every adopting project
-# always writes itself: how RTL actually gets read and elaborated, and
-# which cells are marked dont_use. Cadence's own vendor-neutral Genus
-# Stylus flow template deliberately leaves these two undefined -- they
-# reference "init_elaborate" and "set_dont_use" in common_flows.tcl's step
-# sequences without ever defining them, exactly the extension point this
-# file fills. This is a real, editable part of the flow, not generated
-# output; see presentation.tcl's header for how to fork it.
+# WOLF's default Cadence Genus flow -- the actual synthesis work: reading
+# and elaborating RTL, marking dont_use cells, and the three real Genus
+# synthesis actions (generic, mapped, optimized). Cross-cutting flow
+# infrastructure that isn't really "about synthesis" -- block_start/
+# block_finish bookkeeping, the genus_to_innovus handoff to the next tool
+# -- lives in common_steps.tcl instead, since a future flow (floorplan,
+# route) would also want those but not these.
+#
+# init_elaborate and set_dont_use are the two steps every adopting project
+# always writes itself: Cadence's own vendor-neutral Genus Stylus flow
+# template deliberately leaves them undefined -- it references them in
+# common_flows.tcl's step sequences without ever defining them, exactly
+# the extension point they fill here. create_cost_group and
+# run_syn_generic/run_syn_map/run_syn_opt are that same template's
+# Genus-specific reference content (not institution-specific), just given
+# wolf_step banners and wolf_inject hooks for consistency.
+#
+# This is a real, editable part of the flow, not generated output; see
+# presentation.tcl's header for how to fork it.
 #
 # flow-config.tcl (sourced before this file, alongside presentation.tcl
 # and common_steps.tcl, by whatever project points flow_source_directory
@@ -84,3 +95,64 @@ create_flow_step -name set_dont_use -owner wolf {
     }
     wolf_inject_for_step set_dont_use post
 }
+
+create_flow_step -name create_cost_group -owner wolf {
+    wolf_step "Creating cost groups"
+    wolf_inject_for_step create_cost_group pre
+
+    #- Clear existing path_groups, then add the standard four
+    get_db cost_groups -if {.name != default} -foreach {delete_obj $obj(.)}
+    group_path -name in2out -from [all_inputs] -to [all_outputs]
+    if {[sizeof_collection [all_registers]] > 0} {
+        group_path -name in2reg -from [all_inputs] -to [all_registers]
+        group_path -name reg2out -from [all_registers] -to [all_outputs]
+        group_path -name reg2reg -from [all_registers] -to [all_registers]
+    }
+
+    wolf_inject_for_step create_cost_group post
+    puts [wolf_sep]
+}
+
+create_flow_step -name run_syn_generic -owner wolf {
+    wolf_step "run_syn_generic: synthesizing to generic gates"
+    wolf_inject_for_step run_syn_generic pre
+
+    syn_generic
+
+    report_area > [file join $::wolf_reports_dir area.generic.rpt]
+    write_hdl > [file join $::wolf_outputs_dir $::wolf_design_name.generic.v]
+
+    wolf_inject_for_step run_syn_generic post
+    puts [wolf_sep]
+} -write_db
+
+create_flow_step -name run_syn_map -owner wolf {
+    wolf_step "run_syn_map: mapping to technology library"
+    wolf_inject_for_step run_syn_map pre
+
+    syn_map
+
+    report_area > [file join $::wolf_reports_dir area.mapped.rpt]
+    write_hdl > [file join $::wolf_outputs_dir $::wolf_design_name.mapped.v]
+
+    wolf_inject_for_step run_syn_map post
+    puts [wolf_sep]
+} -write_db
+
+create_flow_step -name run_syn_opt -owner wolf {
+    wolf_step "run_syn_opt: optimizing mapped netlist"
+    wolf_inject_for_step run_syn_opt pre
+
+    syn_opt
+
+    check_design -unresolved
+    report_hierarchy > [file join $::wolf_reports_dir hierarchy.rpt]
+    report_messages > [file join $::wolf_reports_dir messages.rpt]
+    report_area > [file join $::wolf_reports_dir area.opt.rpt]
+    report_timing_summary -checks {setup drv} > [file join $::wolf_reports_dir timing.opt.rpt]
+    report_power > [file join $::wolf_reports_dir power.opt.rpt]
+    write_hdl > [file join $::wolf_outputs_dir $::wolf_design_name.opt.v]
+
+    wolf_inject_for_step run_syn_opt post
+    puts [wolf_sep]
+} -write_db
