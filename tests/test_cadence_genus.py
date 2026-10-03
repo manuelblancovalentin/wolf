@@ -10,7 +10,7 @@ from wolf.backend.cadence_genus import (
     FLOW_GENUS_SYN_GENERIC, FLOW_GENUS_SYN_MAP, FLOW_GENUS_SYN_OPT,
     _period_ns, prepare_genus_inputs,
 )
-from wolf.context import ResolvedContext, ResolvedSource, ResolvedTechnology
+from wolf.context import ResolvedContext, ResolvedSource, ResolvedTechnology, ResolvedTimingCorner
 from wolf.paths import builtin_flow_root
 
 TCLSH = shutil.which("tclsh")
@@ -550,6 +550,98 @@ class GenusSynthesisFlowTests(GenusFixtureTestCase):
         self.assertEqual(manifest["floorplan_def"], str(deff))
 
 
+class GenusMultiCornerMmmcTests(GenusFixtureTestCase):
+    """Named MMMC corners -- technology.tcl's plain set_db library is only
+    correct for one corner; several corners emit real MMMC Tcl instead."""
+
+    def _corners(self):
+        typical_lib = self.root / "typical.lib"
+        worst_lib = self.root / "worst.lib"
+        qrc = self.root / "worst.qrc"
+        for path in (typical_lib, worst_lib, qrc):
+            path.write_text(f"-- {path.name} --\n", encoding="utf-8")
+        return (
+            ResolvedTimingCorner(name="typical", libraries=(typical_lib,)),
+            ResolvedTimingCorner(name="worst_case", libraries=(worst_lib,), qrc_tech_file=qrc),
+        )
+
+    def test_single_corner_keeps_the_plain_technology_script(self):
+        technology = ResolvedTechnology(package="pdk/demo", revision="1", name="demo", root=self.root)
+        inputs = prepare_genus_inputs(
+            self._context(technology=technology), self.root / "backend" / "cadence-genus",
+        )
+        self.assertIsNone(inputs.mmmc_script)
+        self.assertIsNotNone(inputs.technology_script)
+        flow_config = inputs.flow_config_script.read_text(encoding="utf-8")
+        self.assertIn('set wolf_mmmc_script ""', flow_config)
+
+    def test_multiple_corners_emit_mmmc_instead_of_plain_library(self):
+        technology = ResolvedTechnology(
+            package="pdk/demo", revision="1", name="demo", root=self.root,
+            timing_corners=self._corners(),
+        )
+        inputs = prepare_genus_inputs(
+            self._context(technology=technology), self.root / "backend" / "cadence-genus",
+        )
+        self.assertIsNone(inputs.technology_script)
+        self.assertIsNotNone(inputs.mmmc_script)
+        mmmc_text = inputs.mmmc_script.read_text(encoding="utf-8")
+        self.assertIn('create_library_set -name "typical"', mmmc_text)
+        self.assertIn('create_library_set -name "worst_case"', mmmc_text)
+        self.assertIn('create_timing_condition -name "typical" -library_sets {"typical"}', mmmc_text)
+        self.assertIn('create_rc_corner -name "worst_case"', mmmc_text)
+        self.assertNotIn('create_rc_corner -name "typical"', mmmc_text)
+        self.assertIn('create_delay_corner -name "typical" -timing_condition "typical"', mmmc_text)
+        self.assertIn(
+            'create_delay_corner -name "worst_case" -timing_condition "worst_case" -rc_corner "worst_case"',
+            mmmc_text,
+        )
+        self.assertIn('create_analysis_view -name "typical"', mmmc_text)
+        self.assertIn('create_analysis_view -name "worst_case"', mmmc_text)
+        self.assertIn('set_analysis_view -setup {"typical" "worst_case"} -hold {"typical" "worst_case"}', mmmc_text)
+        flow_config = inputs.flow_config_script.read_text(encoding="utf-8")
+        self.assertIn(str(inputs.mmmc_script), flow_config)
+        self.assertIn('set wolf_technology_script ""', flow_config)
+        manifest = yaml.safe_load(inputs.manifest.read_text(encoding="utf-8"))
+        corner_names = {entry["name"] for entry in manifest["technology"]["timing_corners"]}
+        self.assertEqual(corner_names, {"typical", "worst_case"})
+
+
+class GenusExtraConstraintsTests(GenusFixtureTestCase):
+    """constraints.files/constraints.lines -- raw SDC content WOLF never parses."""
+
+    def test_extra_files_and_lines_are_appended_after_generated_clocks(self):
+        extra_sdc = self.root / "extra.sdc"
+        extra_sdc.write_text("set_false_path -from [get_ports rst_n]\n", encoding="utf-8")
+        from wolf.environment import ClockConstraint
+        inputs = prepare_genus_inputs(
+            self._context(
+                clocks=(ClockConstraint("clk", "clk_i", 10000.0),),
+                constraint_files=(extra_sdc,),
+                constraint_lines=("set_case_analysis 0 [get_ports test_mode]",),
+            ),
+            self.root / "backend" / "cadence-genus",
+        )
+        text = (inputs.directory / "constraints.sdc").read_text(encoding="utf-8")
+        clock_index = text.index("create_clock")
+        file_index = text.index("set_false_path")
+        line_index = text.index("set_case_analysis")
+        self.assertLess(clock_index, file_index)
+        self.assertLess(file_index, line_index)
+        manifest = yaml.safe_load(inputs.manifest.read_text(encoding="utf-8"))
+        self.assertEqual(manifest["constraints"]["files"], [str(extra_sdc)])
+        self.assertEqual(
+            manifest["constraints"]["lines"], ["set_case_analysis 0 [get_ports test_mode]"]
+        )
+
+    def test_missing_constraint_file_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "constraints.files entry does not exist"):
+            prepare_genus_inputs(
+                self._context(constraint_files=(self.root / "missing.sdc",)),
+                self.root / "backend" / "cadence-genus",
+            )
+
+
 @unittest.skipUnless(TCLSH, "tclsh is not installed")
 class GenusFlowTclSyntaxTests(GenusFixtureTestCase):
     """Proves the bundled flow scripts are syntactically valid and the real
@@ -595,6 +687,16 @@ proc read_hdl {args} { puts "STUB read_hdl $args" }
 proc read_physical {args} { puts "STUB read_physical $args" }
 proc init_design {} { puts "STUB init_design" }
 proc read_def {f} { puts "STUB read_def $f" }
+proc read_mmmc {f} { puts "STUB read_mmmc $f"; uplevel #0 [list source $f] }
+proc create_library_set {args} { puts "STUB create_library_set $args" }
+proc create_timing_condition {args} { puts "STUB create_timing_condition $args" }
+proc create_rc_corner {args} { puts "STUB create_rc_corner $args" }
+proc create_delay_corner {args} { puts "STUB create_delay_corner $args" }
+proc create_constraint_mode {args} { puts "STUB create_constraint_mode $args" }
+proc create_analysis_view {args} { puts "STUB create_analysis_view $args" }
+proc set_analysis_view {args} { puts "STUB set_analysis_view $args" }
+proc all_constraint_modes {} { return {} }
+proc set_interactive_constraint_modes {args} { puts "STUB set_interactive_constraint_modes $args" }
 
 # Crude, recursive stand-in for Flowtool's own engine: create_flow and
 # create_flow_step both only REGISTER (name -> ordered member list, or
@@ -658,6 +760,7 @@ proc wolf_test_run_flow {name} {
             "wolf_reports_dir": str(self.root / "reports"), "wolf_outputs_dir": str(self.root / "outputs"),
             "wolf_handoff_dir": str(self.root / "handoff"),
             "wolf_max_cpus_per_server": '""', "wolf_technology_script": '""',
+            "wolf_mmmc_script": '""',
             "wolf_overrides_script": '""', "wolf_sources_script": str(self.root / "sources.tcl"),
             "wolf_constraints_file": str(self.root / "constraints.sdc"),
             "wolf_dont_use_cells": "{}", "wolf_technology_lefs": "{}", "wolf_cell_lefs": "{}",
@@ -696,6 +799,36 @@ proc wolf_test_run_flow {name} {
         self._run_flow_tcl(self._base_config(), run="syn_generic")
         self._run_flow_tcl(self._base_config(), run="syn_map")
         self._run_flow_tcl(self._base_config(), run="syn_opt")
+
+    def test_mmmc_script_is_read_and_skips_the_plain_read_sdc(self):
+        """A real mmmc.tcl (as prepare_genus_inputs would generate for a
+        multi-corner technology package) must be real, valid Tcl, and
+        init_elaborate must not also call read_sdc once MMMC already
+        points its constraint modes at the same file."""
+        mmmc = self.root / "mmmc.tcl"
+        mmmc.write_text(
+            'create_library_set -name "typical" -timing {"/lib/typical.lib"}\n'
+            'create_timing_condition -name "typical" -library_sets {"typical"}\n'
+            'create_delay_corner -name "typical" -timing_condition "typical"\n'
+            'create_constraint_mode -name "typical" -sdc_files {"/x/constraints.sdc"}\n'
+            'create_analysis_view -name "typical" -constraint_mode "typical" -delay_corner "typical"\n'
+            'set_analysis_view -setup {"typical"} -hold {"typical"}\n',
+            encoding="utf-8",
+        )
+        output = self._run_flow_tcl(
+            self._base_config(wolf_mmmc_script=str(mmmc)), run="syn_generic",
+        )
+        self.assertIn(f"STUB read_mmmc {mmmc}", output)
+        self.assertIn("STUB create_library_set -name typical", output)
+        self.assertIn('STUB set_analysis_view -setup {"typical"} -hold {"typical"}', output)
+        self.assertNotIn("STUB read_sdc", output)
+        # Confirmed against a real multi-corner run: group_path otherwise
+        # refuses with "SDC command requires a constraint mode specification".
+        self.assertIn("STUB set_interactive_constraint_modes", output)
+        # Confirmed against a real genus run: MMMC requires init_design
+        # before syn_generic even with no physical (LEF) views at all.
+        self.assertIn("STUB init_design", output)
+        self.assertLess(output.index("STUB init_design"), output.index("STUB syn_generic"))
 
     def test_physical_views_add_read_physical_and_init_design(self):
         lef = self.root / "tech.lef"

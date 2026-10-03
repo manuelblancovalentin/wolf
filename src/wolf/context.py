@@ -57,6 +57,15 @@ class ResolvedSource:
 
 
 @dataclass(frozen=True)
+class ResolvedTimingCorner:
+    """One named MMMC corner: its own library set and, optionally, QRC tech file."""
+
+    name: str
+    libraries: tuple[Path, ...]
+    qrc_tech_file: Optional[Path] = None
+
+
+@dataclass(frozen=True)
 class ResolvedTechnology:
     """Package-resolved technology views available to a backend."""
 
@@ -66,6 +75,7 @@ class ResolvedTechnology:
     root: Path
     timing_corner: str = "typical"
     timing_libraries: tuple[Path, ...] = ()
+    timing_corners: tuple[ResolvedTimingCorner, ...] = ()
     technology_lefs: tuple[Path, ...] = ()
     cell_lefs: tuple[Path, ...] = ()
     rc_files: tuple[Path, ...] = ()
@@ -106,6 +116,8 @@ class ResolvedContext:
     vhdl_standard: Optional[str] = None
     package_checksums: Mapping[str, str] = field(default_factory=dict)
     clocks: tuple[Any, ...] = ()
+    constraint_files: tuple[Path, ...] = ()
+    constraint_lines: tuple[str, ...] = ()
     floorplan_def: Optional[Path] = None
     project_root: Optional[Path] = None
     threads: Optional[int] = None

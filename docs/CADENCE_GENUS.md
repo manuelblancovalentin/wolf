@@ -304,10 +304,107 @@ constraints:
   floorplan_def: ./floorplans/demo.def
 ```
 
-Full multi-mode multi-corner (MMMC) setup — separate setup/hold library
-sets, RC corners, delay corners, and analysis views — is a larger technology
-model expansion than today's single corner/single flat SDC, and is tracked
-as a follow-up rather than implemented here.
+### Multi-corner (MMMC) technology packages
+
+A technology package may declare several named timing corners instead of one
+flat `timing.libraries` list:
+
+```yaml
+metadata:
+  technology:
+    name: tsmc65
+    timing:
+      corners:
+        typical:
+          libraries: [Front_End/.../tcbn65lplvttc1d0_ecsm.lib, ...]
+        worst_case:
+          libraries: [Front_End/.../tcbn65lplvtwc_ecsm.lib, ...]
+          qrc_tech_file: PVS_QRC/.../qrcTechFile   # optional, per corner
+```
+
+`timing.corners` and `timing.libraries` are mutually exclusive -- declare
+either a single flat list (unchanged, existing behavior) or several named
+corners, not both. Each corner becomes its own real Genus MMMC library set,
+timing condition, (optional) RC corner, delay corner, constraint mode, and
+analysis view, written to a generated `mmmc.tcl` and loaded via `read_mmmc`
+instead of `technology.tcl`'s plain `set_db library`. Every declared corner
+is active for both setup and hold checks in the generated
+`set_analysis_view` -- WOLF does not infer which corner is electrically
+slow/fast from its name or voltage, so this is the conservative default
+(check timing against all of them, for both checks).
+
+This is the fix for the real failure mode a single flat list has: TSMC-style
+split liberty files often reuse the same cell names across what are actually
+different corners (e.g. a `*tc1d0*` "typical" file and a `*wc*` "worst case"
+file both defining `AN4D2LVT`). Genus's library loader silently resolves a
+same-named collision by keeping the first-loaded definition and discarding
+the rest (`LBR-22`), so a flat multi-file list that mixes corners discards
+an entire corner's cells without raising an error -- timing then reflects
+only whichever corner's files loaded first, not every corner combined.
+Splitting corners into separate named library sets (confirmed against a
+real multi-corner `tsmc65` run through real `genus`/`flowtool`) keeps each
+corner's cells intact; any remaining `LBR-22` warnings after that reflect a
+narrower, same-corner library-curation question (TSMC's own multi-rail
+level-shifter cells are sometimes re-declared across more than one of a
+single corner's own split files) rather than cross-corner contamination.
+
+Once MMMC is active, two Genus behaviors are not optional, and `synthesis.tcl`
+accounts for both (each confirmed against the real failure before fixing it):
+`init_elaborate` always calls `init_design` (Genus otherwise refuses
+`syn_generic` with "Please use init_design command prior to syn_gen
+command", regardless of whether physical/LEF views are configured), and
+`create_cost_group` calls `set_interactive_constraint_modes [all_constraint_modes]`
+before its `group_path` calls (Genus otherwise refuses with "SDC command
+requires a constraint mode specification" once more than one constraint
+mode exists). `init_elaborate` also skips its own plain `read_sdc` when MMMC
+is active, since each corner's `create_constraint_mode -sdc_files` already
+points at the same generated `constraints.sdc`.
+
+`write_design -innovus` carries MMMC through to the handoff automatically
+(it writes its own `<design>.mmmc.tcl` alongside the netlist/SDC/init
+script, listing every corner) -- `genus_to_innovus` needed no changes for
+this.
+
+### Physical views, floorplan DEF, and MMMC
+
+When the technology package declares `physical.technology_lefs` and/or
+`physical.cell_lefs`, the `elaborate` step becomes physical-aware
+automatically: it loads those LEFs before elaboration and runs `init_design`
+right after. Declaring `constraints.floorplan_def` in `wolf.yaml`
+additionally reads a placed floorplan DEF once the physical design is
+initialized; it is rejected up front if no physical views are configured,
+since there would be no physical database for the DEF to load into.
+
+```yaml
+constraints:
+  floorplan_def: ./floorplans/demo.def
+```
+
+## Extra constraints (`constraints.files`/`constraints.lines`)
+
+`constraints.clocks` is the only structured input WOLF resolves into SDC
+itself. For anything else -- false paths, disabled timing, case analysis,
+any other timing exception -- `wolf.yaml` can supply raw SDC content, which
+is appended to `constraints.sdc` verbatim, after the generated clocks, and
+never parsed or interpreted by WOLF (the same ignorance boundary as the
+`env:`/`inject` passthroughs):
+
+```yaml
+constraints:
+  clocks:
+    - name: core_clock
+      port: clk_i
+      period_ps: 10000
+  files:
+    - ./constraints/efpga_exceptions.sdc
+  lines:
+    - 'set_case_analysis 0 [get_ports test_mode]'
+```
+
+`files` entries are resolved relative to the environment's own directory
+(the same rule as `constraints.floorplan_def`); each file's content is
+required to exist at run-preparation time and is recorded in both the
+run manifest and provenance under `constraints.files`/`constraints.lines`.
 
 ## Interactive runs
 

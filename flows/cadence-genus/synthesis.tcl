@@ -25,10 +25,18 @@
 #   wolf_design_name          design name, used for netlist output filenames
 #   wolf_design_top            top-level module/entity passed to `elaborate`
 #   wolf_max_cpus_per_server    thread count, or "" if none was resolved
-#   wolf_technology_script     path to a generated technology.tcl, or ""
+#   wolf_technology_script     path to a generated technology.tcl (single-
+#                              corner set_db library), or "" when the
+#                              technology package declares named corners
+#                              instead (see wolf_mmmc_script)
+#   wolf_mmmc_script           path to a generated mmmc.tcl (multi-corner
+#                              library sets/delay corners/analysis views),
+#                              or "" for a single-corner technology package
 #   wolf_overrides_script      path to a generated overrides.tcl, or ""
 #   wolf_sources_script        path to the generated sources.tcl
-#   wolf_constraints_file      path to the generated constraints.sdc
+#   wolf_constraints_file      path to the generated constraints.sdc --
+#                              generated clocks plus any constraints.files/
+#                              constraints.lines content, unparsed by WOLF
 #   wolf_dont_use_cells        list of PDK-declared dont-use cell name globs
 #   wolf_technology_lefs       list of technology LEF paths, or {}
 #   wolf_cell_lefs             list of cell LEF paths, or {}
@@ -56,6 +64,9 @@ create_flow_step -name init_elaborate -owner wolf {
     if {$::wolf_technology_script ne ""} {
         source $::wolf_technology_script
     }
+    if {$::wolf_mmmc_script ne ""} {
+        read_mmmc $::wolf_mmmc_script
+    }
     if {$::wolf_overrides_script ne ""} {
         source $::wolf_overrides_script
     }
@@ -74,14 +85,24 @@ create_flow_step -name init_elaborate -owner wolf {
     source $::wolf_sources_script
     elaborate $::wolf_design_top
 
-    if {$has_physical_views} {
+    # init_design is also required once MMMC is active (Genus refuses
+    # syn_generic otherwise: "Please use init_design command prior to
+    # syn_gen command"), not only for physical views -- confirmed against
+    # a real multi-corner MMMC run with no LEF data at all.
+    if {$has_physical_views || $::wolf_mmmc_script ne ""} {
         init_design
     }
     if {$::wolf_floorplan_def ne ""} {
         read_def $::wolf_floorplan_def
     }
 
-    read_sdc $::wolf_constraints_file
+    # A multi-corner mmmc_script's own create_constraint_mode already
+    # points at this same constraints.sdc for every analysis view -- a
+    # plain read_sdc here would reapply (and error re-creating) the same
+    # clocks a second time.
+    if {$::wolf_mmmc_script eq ""} {
+        read_sdc $::wolf_constraints_file
+    }
     check_design -unresolved
 
     wolf_inject_for_step init_elaborate post
@@ -99,6 +120,15 @@ create_flow_step -name set_dont_use -owner wolf {
 create_flow_step -name create_cost_group -owner wolf {
     wolf_step "Creating cost groups"
     wolf_inject_for_step create_cost_group pre
+
+    # Once MMMC has more than one constraint mode active, group_path (an
+    # interactive SDC-context command) refuses to run without one explicitly
+    # selected ("SDC command requires a constraint mode specification",
+    # confirmed against a real multi-corner run) -- apply it to every
+    # declared corner's constraint mode, not just whichever is implicit.
+    if {$::wolf_mmmc_script ne ""} {
+        set_interactive_constraint_modes [all_constraint_modes]
+    }
 
     #- Clear existing path_groups, then add the standard four
     get_db cost_groups -if {.name != default} -foreach {delete_obj $obj(.)}

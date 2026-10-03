@@ -267,6 +267,106 @@ workspace:
         )
         self.assertIsNone(context.project_root)
 
+    def test_constraints_files_are_resolved_relative_to_the_environment_and_recorded(self):
+        extra_sdc = self.environment / "extra.sdc"
+        extra_sdc.write_text("set_false_path -from [get_ports rst_n]\n", encoding="utf-8")
+        extra = "  files:\n    - extra.sdc\n  lines:\n    - 'set_case_analysis 0 [get_ports test_mode]'\n"
+        text = self._complete_yaml().replace(
+            "constraints:\n  clocks:", f"constraints:\n{extra}  clocks:"
+        )
+        profile = load_environment(self._write(text, "with-extra-constraints.yaml"), expected_name="demo")
+        self.assertEqual(profile.constraint_files, ("extra.sdc",))
+        self.assertEqual(
+            profile.constraint_lines, ("set_case_analysis 0 [get_ports test_mode]",)
+        )
+        context = resolve_declarative_environment(
+            profile, state_root=self.state, environment_directory=self.environment
+        )
+        self.assertEqual(context.constraint_files, (extra_sdc.resolve(),))
+        self.assertEqual(
+            context.constraint_lines, ("set_case_analysis 0 [get_ports test_mode]",)
+        )
+
+    def test_constraints_files_and_lines_must_be_lists_of_strings(self):
+        cases = (
+            ("files", "not-a-list", "constraints.files must be a list"),
+            ("files", "[1, 2]", "constraints.files must be a list"),
+            ("lines", "not-a-list", "constraints.lines must be a list"),
+        )
+        for index, (key, value, message) in enumerate(cases):
+            text = self._complete_yaml().replace(
+                "constraints:\n  clocks:", f"constraints:\n  {key}: {value}\n  clocks:"
+            )
+            with self.subTest(message=message), self.assertRaisesRegex(ValueError, message):
+                load_environment(self._write(text, f"bad-constraints-{index}.yaml"))
+
+
+class MultiCornerTechnologyTests(DeclarativeEnvironmentTests):
+    """Technology packages may declare several named MMMC corners."""
+
+    def _multicorner_package(self, name="tsmc65-multicorner"):
+        # technology.timing paths are relative to the installed package's own
+        # content_path (see _technology_inputs' `paths()` helper), the same as
+        # the flat timing.libraries case -- not arbitrary filesystem paths.
+        self._package("pdk", name, "pdk-rev", {"technology": {
+            "name": name,
+            "timing": {
+                "corners": {
+                    "typical": {"libraries": ["typical.lib"]},
+                    "worst_case": {"libraries": ["worst_case.lib"], "qrc_tech_file": "worst_case.qrc"},
+                },
+            },
+        }})
+        content = self.state / "packages" / "pdk" / name / "pdk-rev" / "source"
+        typical = content / "typical.lib"
+        worst_case = content / "worst_case.lib"
+        qrc = content / "worst_case.qrc"
+        for path in (typical, worst_case, qrc):
+            path.write_text(f"-- {path.name} --\n", encoding="utf-8")
+        return typical, worst_case, qrc
+
+    def test_multiple_named_corners_are_resolved_with_their_own_libraries(self):
+        typical, worst_case, qrc = self._multicorner_package()
+        text = self._complete_yaml().replace("package: pdk/asap7", "package: pdk/tsmc65-multicorner")
+        context = resolve_declarative_environment(
+            load_environment(self._write(text, "multicorner.yaml")),
+            state_root=self.state, environment_directory=self.environment,
+        )
+        corners = {corner.name: corner for corner in context.technology.timing_corners}
+        self.assertEqual(set(corners), {"typical", "worst_case"})
+        self.assertEqual(corners["typical"].libraries, (typical.resolve(),))
+        self.assertEqual(corners["worst_case"].libraries, (worst_case.resolve(),))
+        self.assertEqual(corners["worst_case"].qrc_tech_file, qrc.resolve())
+        self.assertIsNone(corners["typical"].qrc_tech_file)
+        # The union, for existence/checksum bookkeeping.
+        self.assertEqual(
+            set(context.technology.timing_libraries), {typical.resolve(), worst_case.resolve()}
+        )
+
+    def test_corners_and_flat_libraries_are_mutually_exclusive(self):
+        self._multicorner_package()
+        manifest_path = self.registry / "pdk" / "tsmc65-multicorner.yaml"
+        data = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+        data["metadata"]["technology"]["timing"]["libraries"] = ["somewhere.lib"]
+        manifest_path.write_text(yaml.safe_dump(data), encoding="utf-8")
+        text = self._complete_yaml().replace("package: pdk/asap7", "package: pdk/tsmc65-multicorner")
+        with self.assertRaisesRegex(ValueError, "mutually exclusive"):
+            resolve_declarative_environment(
+                load_environment(self._write(text, "conflicting.yaml")),
+                state_root=self.state, environment_directory=self.environment,
+            )
+
+    def test_corner_requires_nonempty_libraries(self):
+        self._package("pdk", "empty-corner", "pdk-rev", {"technology": {
+            "name": "empty-corner", "timing": {"corners": {"typical": {}}}},
+        })
+        text = self._complete_yaml().replace("package: pdk/asap7", "package: pdk/empty-corner")
+        with self.assertRaisesRegex(ValueError, "libraries must be nonempty"):
+            resolve_declarative_environment(
+                load_environment(self._write(text, "empty-corner.yaml")),
+                state_root=self.state, environment_directory=self.environment,
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

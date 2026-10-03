@@ -14,7 +14,9 @@ from typing import Any, Mapping, Optional
 
 import yaml
 
-from wolf.context import ResolvedContext, ResolvedSource, ResolvedTechnology, resolve_stored_path
+from wolf.context import (
+    ResolvedContext, ResolvedSource, ResolvedTechnology, ResolvedTimingCorner, resolve_stored_path,
+)
 from wolf.package.model import PackageId
 from wolf.package.registry import PackageRegistry
 from wolf.package.store import PackageStore
@@ -68,6 +70,8 @@ class EnvironmentProfile:
     project_root: Optional[str] = None
     workspace_root: Optional[str] = None
     clocks: tuple[ClockConstraint, ...] = ()
+    constraint_files: tuple[str, ...] = ()
+    constraint_lines: tuple[str, ...] = ()
     floorplan_def: Optional[str] = None
     threads: Optional[int] = None
     backend_overrides: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
@@ -165,8 +169,18 @@ def load_environment(path: Path, *, expected_name: Optional[str] = None) -> Envi
     workspace_root = _optional_string(workspace.get("root"), "workspace.root")
 
     constraints = _mapping(data.get("constraints"), "constraints", optional=True)
-    _known_fields(constraints, {"clocks", "floorplan_def"}, "constraints")
+    _known_fields(constraints, {"clocks", "floorplan_def", "files", "lines"}, "constraints")
     floorplan_def = _optional_string(constraints.get("floorplan_def"), "constraints.floorplan_def")
+    raw_constraint_files = constraints.get("files", [])
+    if not isinstance(raw_constraint_files, list) or not all(
+        isinstance(item, str) and item for item in raw_constraint_files
+    ):
+        raise ValueError("constraints.files must be a list of nonempty paths")
+    raw_constraint_lines = constraints.get("lines", [])
+    if not isinstance(raw_constraint_lines, list) or not all(
+        isinstance(item, str) for item in raw_constraint_lines
+    ):
+        raise ValueError("constraints.lines must be a list of strings")
     raw_clocks = constraints.get("clocks", [])
     if not isinstance(raw_clocks, list):
         raise ValueError("constraints.clocks must be a sequence")
@@ -218,6 +232,8 @@ def load_environment(path: Path, *, expected_name: Optional[str] = None) -> Envi
         project_root=project_root,
         workspace_root=workspace_root,
         clocks=tuple(clocks),
+        constraint_files=tuple(raw_constraint_files),
+        constraint_lines=tuple(raw_constraint_lines),
         floorplan_def=floorplan_def,
         threads=threads,
         backend_overrides=backend,
@@ -238,6 +254,13 @@ def normalize_environment(source: Path, destination: Path, *, name: str) -> Envi
         data.setdefault("workspace", {})["root"] = str(
             resolve_stored_path(profile.workspace_root, profile.path.parent)
         )
+    constraint_files = data.get("constraints", {}).get("files") \
+        if isinstance(data.get("constraints"), dict) else None
+    if isinstance(constraint_files, list):
+        data["constraints"]["files"] = [
+            str(resolve_stored_path(item, profile.path.parent)) if isinstance(item, str) else item
+            for item in constraint_files
+        ]
     design_sources = data.get("design", {}).get("sources") if isinstance(data.get("design"), dict) else None
     if isinstance(design_sources, list):
         for entry in design_sources:
@@ -295,16 +318,63 @@ def _technology_inputs(manifest: Any, installed: Any) -> Optional[ResolvedTechno
             resolved.append(path)
         return tuple(resolved)
 
-    libraries = paths(timing.get("libraries", []), "timing.libraries")
+    raw_corners = timing.get("corners")
+    timing_corners: tuple[ResolvedTimingCorner, ...] = ()
+    corner_qrc_files: tuple[Path, ...] = ()
+    if raw_corners is not None:
+        if timing.get("libraries"):
+            raise ValueError(
+                "technology.timing.corners and technology.timing.libraries are mutually "
+                "exclusive -- declare either one named corner's libraries there, or several "
+                "named corners under timing.corners, not both"
+            )
+        if not isinstance(raw_corners, dict) or not raw_corners:
+            raise ValueError("technology.timing.corners must be a nonempty mapping")
+        corners = []
+        qrc_files = []
+        for corner_name, corner_data in raw_corners.items():
+            if not isinstance(corner_name, str) or not corner_name:
+                raise ValueError("technology.timing.corners keys must be nonempty corner names")
+            if not isinstance(corner_data, dict):
+                raise ValueError(f"technology.timing.corners.{corner_name} must be a mapping")
+            corner_libraries = paths(
+                corner_data.get("libraries", []), f"timing.corners.{corner_name}.libraries"
+            )
+            if not corner_libraries:
+                raise ValueError(
+                    f"technology.timing.corners.{corner_name}.libraries must be nonempty"
+                )
+            qrc_value = corner_data.get("qrc_tech_file")
+            qrc_path: Optional[Path] = None
+            if qrc_value is not None:
+                if not isinstance(qrc_value, str) or not qrc_value:
+                    raise ValueError(
+                        f"technology.timing.corners.{corner_name}.qrc_tech_file must be "
+                        "a nonempty string"
+                    )
+                qrc_path = paths([qrc_value], f"timing.corners.{corner_name}.qrc_tech_file")[0]
+                qrc_files.append(qrc_path)
+            corners.append(ResolvedTimingCorner(
+                name=corner_name, libraries=corner_libraries, qrc_tech_file=qrc_path,
+            ))
+        timing_corners = tuple(corners)
+        corner_qrc_files = tuple(qrc_files)
+        # The union of every corner's libraries, for existence/checksum bookkeeping and
+        # as a technology-independent "are timing libraries configured at all" signal.
+        libraries = tuple(dict.fromkeys(
+            library for corner in timing_corners for library in corner.libraries
+        ))
+    else:
+        libraries = paths(timing.get("libraries", []), "timing.libraries")
     technology_lefs = paths(physical.get("technology_lefs", []), "physical.technology_lefs")
     cell_lefs = paths(physical.get("cell_lefs", []), "physical.cell_lefs")
     rc_files = paths(physical.get("rc", []), "physical.rc")
     gds_files = paths(physical.get("gds", []), "physical.gds")
-    all_files = (*libraries, *technology_lefs, *cell_lefs, *rc_files, *gds_files)
+    all_files = (*libraries, *technology_lefs, *cell_lefs, *rc_files, *gds_files, *corner_qrc_files)
     checksums = {
         str(path): hashlib.sha256(path.read_bytes()).hexdigest() for path in all_files
     }
-    corner = timing.get("corner", "typical")
+    corner = timing.get("corner") or ("multi-corner" if timing_corners else "typical")
     if not isinstance(corner, str) or not corner:
         raise ValueError("technology.timing.corner must be a nonempty string")
     dont_use = synthesis.get("dont_use", [])
@@ -313,6 +383,7 @@ def _technology_inputs(manifest: Any, installed: Any) -> Optional[ResolvedTechno
     return ResolvedTechnology(
         package=str(manifest.identifier), revision=manifest.revision, name=name,
         root=root, timing_corner=corner, timing_libraries=libraries,
+        timing_corners=timing_corners,
         technology_lefs=technology_lefs, cell_lefs=cell_lefs, rc_files=rc_files,
         gds_files=gds_files, checksums=checksums, dont_use_cells=tuple(dont_use),
     )
@@ -685,6 +756,10 @@ def resolve_declarative_environment(
         vhdl_standard=vhdl_standard,
         package_checksums=package_checksums,
         clocks=profile.clocks,
+        constraint_files=tuple(
+            resolve_stored_path(item, profile.path.parent) for item in profile.constraint_files
+        ),
+        constraint_lines=profile.constraint_lines,
         floorplan_def=(
             resolve_stored_path(profile.floorplan_def, profile.path.parent)
             if profile.floorplan_def else None

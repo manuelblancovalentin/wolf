@@ -16,22 +16,32 @@
 # (or on Cadence's other yaml-step-tree features) can still override this
 # file entirely via backend.cadence-flowtool.flowtool.flow_template (paired
 # with its own setup_template) -- that escape hatch is unchanged.
+#
+# include_procs/default_flow_steps/user_flow_steps are written as absolute
+# paths rather than bare filenames resolved against init_flow_directory:
+# confirmed against a real flowtool run that these resolve relative to
+# this yaml file's OWN directory, not init_flow_directory (which is a
+# generic Flowtool attribute a flow's own Tcl can read back via
+# get_flow_config, not something Flowtool applies to this yaml's own file
+# lists) -- and this file lives alongside the per-run generated values in
+# backend/cadence-genus, one level above the real scripts in their own
+# deduplicated scripts.<N> snapshot.
 
 remarks: WOLF generic Cadence Genus/Innovus flow descriptor
 
 init_flow_directory: ${WOLF_SCRIPTS_DIR}
 
 include_procs:
-  - presentation.tcl
+  - ${WOLF_SCRIPTS_DIR}/presentation.tcl
 
 default_flow_steps:
-  - common_flows.tcl
-  - common_steps.tcl
-  - synthesis.tcl
-  - floorplanning.tcl
-  - cts.tcl
-  - route.tcl
-  - postroute.tcl
+  - ${WOLF_SCRIPTS_DIR}/common_flows.tcl
+  - ${WOLF_SCRIPTS_DIR}/common_steps.tcl
+  - ${WOLF_SCRIPTS_DIR}/synthesis.tcl
+  - ${WOLF_SCRIPTS_DIR}/floorplanning.tcl
+  - ${WOLF_SCRIPTS_DIR}/cts.tcl
+  - ${WOLF_SCRIPTS_DIR}/route.tcl
+  - ${WOLF_SCRIPTS_DIR}/postroute.tcl
 
 user_flow_steps:
   - ${WOLF_FLOW_CONFIG_SCRIPT}
