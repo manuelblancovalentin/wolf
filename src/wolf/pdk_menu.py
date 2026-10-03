@@ -21,6 +21,13 @@ from the package root every time -- real PDK trees keep lib/lef/gds/qrc
 for the same corner near each other, so jumping back to the same
 neighborhood across several consecutive picks (libraries, then that
 corner's qrc file, then the next corner) is the common case.
+
+NAME is optional: `wolf pdk menu` with none picks from existing pdk/*
+packages (or offers to create one). A given NAME may also be a dotted
+path into one package's own tracks/vths -- `tsmc65`, `tsmc65.9T`, or
+`tsmc65.9T.lvt` -- to jump straight to that level instead of starting at
+the top of the package's own menu; shell completion offers all three
+forms (see wolf.commands.pdk._candidates).
 """
 
 from __future__ import annotations
@@ -463,8 +470,10 @@ class _CornerEditScreen(ModalScreen[Optional[dict]]):
     def _options(self) -> list[Option]:
         libraries = self._data.get("libraries", [])
         qrc = self._data.get("qrc_tech_file")
+        library_format = self._data.get("format", "liberty")
         return [
             Option(f"Libraries ({len(libraries)} file(s))", id="libraries"),
+            Option(f"Format: {library_format}", id="format"),
             Option(f"QRC tech file: {qrc or 'not set'}", id="qrc_tech_file"),
         ]
 
@@ -484,6 +493,18 @@ class _CornerEditScreen(ModalScreen[Optional[dict]]):
             self.app.push_screen(
                 _FileListScreen(
                     f"Libraries for corner {self._name}", self._root, self._data.get("libraries", []),
+                ),
+                handle,
+            )
+        elif event.option_id == "format":
+            def handle(value: Optional[str]) -> None:
+                if value:
+                    self._data["format"] = value
+                    self._refresh()
+            self.app.push_screen(
+                _TextScreen(
+                    "Library format (e.g. liberty, ecsm, variation/aocv-socv)",
+                    self._data.get("format", "liberty"),
                 ),
                 handle,
             )
@@ -815,12 +836,12 @@ class _MainMenuOptionList(OptionList):
 
 
 class PdkMenuApp(App[None]):
-    """`wolf pdk menu NAME` -- creates or edits a pdk/NAME registry manifest.
+    """Creates or edits one pdk/NAME registry manifest.
 
-    Unlike environments, PDK packages have no "active" one to default to,
-    so NAME is required: `wolf pdk menu tsmc65` either opens the existing
-    pdk/tsmc65 manifest (wherever it's registered) or offers to create it
-    in a chosen local registry.
+    `initial_track`/`initial_vth`, when given (a dotted NAME like
+    `tsmc65.9T.lvt`), jump straight to that track or vth's own screen on
+    mount instead of starting at the top of this package's menu --
+    closing it (esc) returns to the main menu, same as any other edit.
     """
 
     CSS = """
@@ -848,15 +869,45 @@ class PdkMenuApp(App[None]):
     ]
     TITLE = "WOLF PDK setup"
 
-    def __init__(self, name: str, manifest_path: Path, data: dict, *, is_new: bool):
+    def __init__(
+        self, name: str, manifest_path: Path, data: dict, *, is_new: bool,
+        initial_track: Optional[str] = None, initial_vth: Optional[str] = None,
+    ):
         super().__init__()
         self._name = name
         self._manifest_path = manifest_path
         self._data = data
         self._is_new = is_new
         self._dirty = is_new
+        self._initial_track = initial_track
+        self._initial_vth = initial_vth
         self.last_browsed_dir: Optional[str] = None
         self.sub_title = self._name
+
+    def on_mount(self) -> None:
+        if self._initial_track is not None:
+            self._open_track_directly(self._initial_track, self._initial_vth)
+
+    def _open_track_directly(self, track_name: str, vth_name: Optional[str]) -> None:
+        tracks = self._technology.setdefault("tracks", {})
+        track_data = tracks.setdefault(track_name, {"vths": {}})
+        if vth_name is None:
+            def handle_track(data: Optional[dict]) -> None:
+                if data is not None:
+                    tracks[track_name] = data
+                    self._refresh()
+            self.push_screen(_TrackScreen(track_name, self._root, track_data), handle_track)
+            return
+        vths = track_data.setdefault("vths", {})
+        vth_data = vths.setdefault(vth_name, {})
+
+        def handle_vth(data: Optional[dict]) -> None:
+            if data is not None:
+                vths[vth_name] = data
+                self._refresh()
+        self.push_screen(
+            _VthScreen(f"{track_name}/{vth_name}", self._root, vth_data), handle_vth,
+        )
 
     @property
     def _technology(self) -> dict:
@@ -1059,14 +1110,75 @@ def _writable_local_registries() -> list:
     return [spec for spec in RegistryManager().specs() if spec.type == "local"]
 
 
-def open_pdk_menu(name: str) -> None:
-    """Resolve pdk/NAME to a manifest path (existing or new) and run the menu.
+def _existing_pdk_names() -> list[str]:
+    return sorted(
+        manifest.identifier.name
+        for manifest in PackageRegistry().manifests()
+        if manifest.identifier.kind == "pdk"
+    )
 
-    Kept out of PdkMenuApp.__init__ so picking a destination registry for a
-    brand new package (a plain prompt, no need for the full app yet) stays
-    separate from the editor itself.
+
+class _PdkPickerApp(App[Optional[str]]):
+    """A one-shot picker: existing pdk/* packages, plus "create new"."""
+
+    CSS = """
+    #dialog {
+        width: 80; height: auto; max-height: 30; border: round #ad4ce5; padding: 1 2;
+        background: $surface;
+    }
+    #dialog-title { color: #ad4ce5; text-style: bold; margin-bottom: 1; }
+    #dialog-hint { color: $text-muted; margin-top: 1; }
+    Screen { align: center middle; }
+    OptionList { border: round #ad4ce5; }
     """
-    identifier = str(PackageId.parse(f"pdk/{name}"))
+
+    def __init__(self, names: list[str]):
+        super().__init__()
+        self._names = names
+
+    def on_mount(self) -> None:
+        choices = [(f"pdk/{name}", name) for name in self._names]
+        choices.append(("Create a new PDK package...", "__create__"))
+
+        def handle(value: Optional[str]) -> None:
+            self.exit(value)
+        self.push_screen(_PickScreen("Pick a PDK package to edit", choices), handle)
+
+
+def _pick_or_create_name() -> Optional[str]:
+    """No NAME given: pick an existing pdk/* package, or name a new one."""
+    chosen = _PdkPickerApp(_existing_pdk_names()).run()
+    if chosen is None:
+        return None
+    if chosen != "__create__":
+        return chosen
+    new_name = input("New PDK package name (e.g. tsmc65): ").strip()
+    return new_name or None
+
+
+def open_pdk_menu(name: Optional[str] = None) -> None:
+    """Resolve NAME to a manifest path (existing or new) and run the menu.
+
+    NAME may be a dotted path (`tsmc65`, `tsmc65.9T`, or `tsmc65.9T.lvt`)
+    to jump straight into a track or vth; with no NAME at all, pick from
+    existing pdk/* packages or name a new one first.
+
+    Kept out of PdkMenuApp.__init__ so picking a package (or a destination
+    registry for a brand new one) stays separate from the editor itself.
+    """
+    if name is None:
+        name = _pick_or_create_name()
+        if name is None:
+            return
+
+    parts = name.split(".")
+    package_name = parts[0]
+    initial_track = parts[1] if len(parts) > 1 else None
+    initial_vth = parts[2] if len(parts) > 2 else None
+    if len(parts) > 3 or not package_name:
+        raise ValueError(f"invalid pdk menu target {name!r}; expected NAME[.TRACK[.VTH]]")
+
+    identifier = str(PackageId.parse(f"pdk/{package_name}"))
     registry = PackageRegistry()
     try:
         manifest = registry.get(identifier)
@@ -1076,19 +1188,25 @@ def open_pdk_menu(name: str) -> None:
     if manifest is not None:
         manifest_path = Path(manifest.manifest_path)
         data = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
-        PdkMenuApp(name, manifest_path, data, is_new=False).run()
+        PdkMenuApp(
+            package_name, manifest_path, data, is_new=False,
+            initial_track=initial_track, initial_vth=initial_vth,
+        ).run()
         return
+
+    if initial_track is not None:
+        raise ValueError(f"pdk/{package_name} does not exist yet; create it first without .{initial_track}")
 
     local_registries = _writable_local_registries()
     if not local_registries:
         raise ValueError(
             "no local package registry is configured to create pdk/"
-            f"{name} in; add one with: wolf registry add <name> <path> --type local"
+            f"{package_name} in; add one with: wolf registry add <name> <path> --type local"
         )
     if len(local_registries) == 1:
         destination_root = RegistryManager().content_root(local_registries[0])
     else:
-        print(f"pdk/{name} does not exist yet. Pick a registry to create it in:")
+        print(f"pdk/{package_name} does not exist yet. Pick a registry to create it in:")
         for index, spec in enumerate(local_registries):
             print(f"  [{index}] {spec.name} ({spec.source})")
         choice = input("Registry index: ").strip()
@@ -1098,11 +1216,15 @@ def open_pdk_menu(name: str) -> None:
             raise ValueError(f"invalid registry choice: {choice!r}") from None
 
     source_root = input(
-        f"Local filesystem root for pdk/{name}'s real files (e.g. /asic/Library/...): "
+        f"Local filesystem root for pdk/{package_name}'s real files (e.g. /asic/Library/...): "
     ).strip()
     if not source_root or not Path(source_root).is_absolute():
         raise ValueError("pdk source root must be a nonempty absolute path")
-    manifest_path = destination_root / "pdk" / f"{name}.yaml"
+    manifest_path = destination_root / "pdk" / f"{package_name}.yaml"
     if manifest_path.exists():
-        raise ValueError(f"{manifest_path} already exists but is not a registered pdk/{name} manifest")
-    PdkMenuApp(name, manifest_path, _default_document(name, source_root), is_new=True).run()
+        raise ValueError(
+            f"{manifest_path} already exists but is not a registered pdk/{package_name} manifest"
+        )
+    PdkMenuApp(
+        package_name, manifest_path, _default_document(package_name, source_root), is_new=True,
+    ).run()

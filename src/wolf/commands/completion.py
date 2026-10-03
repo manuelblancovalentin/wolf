@@ -7,6 +7,7 @@ from collections.abc import Iterable
 
 from wolf.backend import backend_names
 from wolf.commands.env import _environment_names
+from wolf.commands.pdk import _menu_candidates as _pdk_menu_candidates
 from wolf.package.registry import PackageRegistry
 from wolf.config import CONFIG_KEYS
 from wolf.registry import RegistryManager
@@ -22,6 +23,8 @@ _DYNAMIC_POSITIONALS = {
     ("env", "remove"): _environment_names,
     ("env", "set"): _environment_names,
     ("env", "clone"): _environment_names,
+    ("env", "menu"): _environment_names,
+    ("pdk", "menu"): _pdk_menu_candidates,
     ("backend", "info"): backend_names,
     ("package", "info"): lambda: PackageRegistry().completion_identifiers(),
     ("install",): lambda: PackageRegistry().completion_identifiers(),

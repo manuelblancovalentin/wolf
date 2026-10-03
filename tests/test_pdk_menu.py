@@ -87,8 +87,18 @@ class PdkMenuEndToEndTests(unittest.TestCase):
                 await pilot.press("escape")  # done browsing -- this is what records last_browsed_dir
                 await pilot.pause()
                 self.assertEqual(app.last_browsed_dir, str(self.lib_root))
+                await pilot.press("escape")  # back to CornerEditScreen (FileListScreen done)
+                await pilot.pause()
 
-                for _ in range(6):  # unwind every nested screen back to the main menu
+                corner_edit_list = app.screen.query_one(OptionList)
+                corner_edit_list.highlighted = 1  # "Format"
+                await pilot.press("enter")
+                await pilot.pause()
+                app.screen.query_one(Input).value = "ecsm"
+                await pilot.press("enter")
+                await pilot.pause()
+
+                for _ in range(5):  # unwind every remaining nested screen back to the main menu
                     await pilot.pause()
                     await pilot.press("escape")
                 await pilot.pause()
@@ -100,9 +110,10 @@ class PdkMenuEndToEndTests(unittest.TestCase):
 
         self.assertTrue(self.manifest_path.is_file())
         document = yaml.safe_load(self.manifest_path.read_text(encoding="utf-8"))
-        libraries = document["metadata"]["technology"]["tracks"]["9T"]["vths"]["lvt"] \
-            ["timing"]["corners"]["typical"]["libraries"]
-        self.assertEqual(sorted(libraries), ["lib/typical.lib", "lib/worst.lib"])
+        typical = document["metadata"]["technology"]["tracks"]["9T"]["vths"]["lvt"] \
+            ["timing"]["corners"]["typical"]
+        self.assertEqual(sorted(typical["libraries"]), ["lib/typical.lib", "lib/worst.lib"])
+        self.assertEqual(typical["format"], "ecsm")
 
         manifest = load_manifest(self.manifest_path)
 
@@ -112,6 +123,7 @@ class PdkMenuEndToEndTests(unittest.TestCase):
         self.assertEqual((resolved.track, resolved.vth), ("9T", "lvt"))
         self.assertEqual(len(resolved.timing_corners), 1)
         self.assertEqual(resolved.timing_corners[0].name, "typical")
+        self.assertEqual(resolved.timing_corners[0].format, "ecsm")
 
     def test_editing_an_existing_manifest_preserves_its_structure(self):
         data = _default_document("smoketest", str(self.root / "libroot"))
@@ -184,7 +196,10 @@ class OpenPdkMenuRoutingTests(unittest.TestCase):
         name, path, data, = app_cls.call_args.args
         self.assertEqual((name, path), ("tsmc65", manifest_path.resolve()))
         self.assertEqual(data["source"]["revision"], "V1")
-        self.assertEqual(app_cls.call_args.kwargs, {"is_new": False})
+        self.assertEqual(
+            app_cls.call_args.kwargs,
+            {"is_new": False, "initial_track": None, "initial_vth": None},
+        )
 
     def test_new_package_without_any_local_registry_is_rejected(self):
         # WOLF_REGISTRY aggregation is disabled by the env override (see
@@ -192,6 +207,99 @@ class OpenPdkMenuRoutingTests(unittest.TestCase):
         # registries exist here either -- the real "nothing to create in" case.
         with self.assertRaisesRegex(ValueError, "no local package registry"):
             open_pdk_menu("brand-new")
+
+    def test_dotted_name_resolves_to_initial_track_and_vth(self):
+        root = self.root / "libroot"
+        root.mkdir()
+        self._write_manifest("tsmc65", root)
+        with patch("wolf.pdk_menu.PdkMenuApp") as app_cls:
+            open_pdk_menu("tsmc65.9T.lvt")
+        self.assertEqual(
+            app_cls.call_args.kwargs,
+            {"is_new": False, "initial_track": "9T", "initial_vth": "lvt"},
+        )
+
+    def test_dotted_name_with_too_many_parts_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "invalid pdk menu target"):
+            open_pdk_menu("tsmc65.9T.lvt.extra")
+
+    def test_deep_link_into_a_nonexistent_package_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "does not exist yet"):
+            open_pdk_menu("brand-new.9T")
+
+    def test_no_name_picks_from_existing_packages(self):
+        root = self.root / "libroot"
+        root.mkdir()
+        self._write_manifest("tsmc65", root)
+        with patch("wolf.pdk_menu._PdkPickerApp") as picker_cls, \
+             patch("wolf.pdk_menu.PdkMenuApp") as app_cls:
+            picker_cls.return_value.run.return_value = "tsmc65"
+            open_pdk_menu()
+        picker_cls.assert_called_once_with(["tsmc65"])
+        self.assertEqual(app_cls.call_args.args[0], "tsmc65")
+
+    def test_no_name_cancelled_picker_does_nothing(self):
+        with patch("wolf.pdk_menu._PdkPickerApp") as picker_cls, \
+             patch("wolf.pdk_menu.PdkMenuApp") as app_cls:
+            picker_cls.return_value.run.return_value = None
+            open_pdk_menu()
+        app_cls.assert_not_called()
+
+    def test_no_name_create_new_prompts_for_a_name(self):
+        with patch("wolf.pdk_menu._PdkPickerApp") as picker_cls, \
+             patch("builtins.input", return_value="freshpdk") as mock_input, \
+             patch("wolf.pdk_menu._writable_local_registries", return_value=[]):
+            picker_cls.return_value.run.return_value = "__create__"
+            with self.assertRaisesRegex(ValueError, "no local package registry"):
+                open_pdk_menu()
+        mock_input.assert_called_once()
+
+
+class MenuCandidatesTests(unittest.TestCase):
+    """wolf.commands.pdk._menu_candidates feeds `wolf pdk menu` completion."""
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory(prefix="wolf-pdk-candidates-")
+        self.root = Path(self.temporary.name)
+        self.registry = self.root / "registry"
+        (self.registry / "pdk").mkdir(parents=True)
+        self.variables = patch.dict(os.environ, {
+            "HOME": str(self.root / "home"), "XDG_CONFIG_HOME": str(self.root / "config"),
+            "XDG_DATA_HOME": str(self.root / "data"), "WOLF_HOME": str(self.root / "state"),
+            "WOLF_REGISTRY": str(self.registry),
+        }, clear=True)
+        self.variables.start()
+
+    def tearDown(self):
+        self.variables.stop()
+        self.temporary.cleanup()
+
+    def test_candidates_include_package_track_and_vth_forms(self):
+        from wolf.commands.pdk import _menu_candidates
+        (self.registry / "pdk" / "tsmc65.yaml").write_text(yaml.safe_dump({
+            "schema_version": 1, "kind": "pdk", "name": "tsmc65", "description": "tsmc65",
+            "source": {"type": "local-path", "root": str(self.root), "revision": "V1"},
+            "validation": {"required_paths": []},
+            "metadata": {"technology": {
+                "name": "tsmc65",
+                "tracks": {"9T": {"vths": {"lvt": {}, "rvt": {}}}, "7T": {"vths": {"rvt": {}}}},
+            }},
+        }), encoding="utf-8")
+        candidates = set(_menu_candidates())
+        self.assertEqual(candidates, {
+            "tsmc65", "tsmc65.9T", "tsmc65.9T.lvt", "tsmc65.9T.rvt",
+            "tsmc65.7T", "tsmc65.7T.rvt",
+        })
+
+    def test_flat_package_contributes_only_its_bare_name(self):
+        from wolf.commands.pdk import _menu_candidates
+        (self.registry / "pdk" / "asap7.yaml").write_text(yaml.safe_dump({
+            "schema_version": 1, "kind": "pdk", "name": "asap7", "description": "asap7",
+            "source": {"type": "local-path", "root": str(self.root), "revision": "V1"},
+            "validation": {"required_paths": []},
+            "metadata": {"technology": {"name": "asap7"}},
+        }), encoding="utf-8")
+        self.assertEqual(_menu_candidates(), ("asap7",))
 
 
 if __name__ == "__main__":

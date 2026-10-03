@@ -351,8 +351,12 @@ def _parse_timing_corners(
                 raise ValueError(f"{field}.corners.{corner_name}.qrc_tech_file must be a nonempty string")
             qrc_path = _paths_under(root, [qrc_value], f"{field}.corners.{corner_name}.qrc_tech_file")[0]
             qrc_files.append(qrc_path)
+        library_format = corner_data.get("format", "liberty")
+        if not isinstance(library_format, str) or not library_format:
+            raise ValueError(f"{field}.corners.{corner_name}.format must be a nonempty string")
         corners.append(ResolvedTimingCorner(
             name=corner_name, libraries=corner_libraries, qrc_tech_file=qrc_path,
+            format=library_format,
         ))
     return tuple(corners), tuple(qrc_files)
 

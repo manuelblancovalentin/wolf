@@ -58,11 +58,19 @@ class ResolvedSource:
 
 @dataclass(frozen=True)
 class ResolvedTimingCorner:
-    """One named MMMC corner: its own library set and, optionally, QRC tech file."""
+    """One named MMMC corner: its own library set and, optionally, QRC tech file.
+
+    `format` is declared metadata, not yet interpreted by any backend --
+    Genus/Innovus auto-detect Liberty-family content regardless. It exists
+    so a PDK package can record what it actually has (plain Liberty, ECSM,
+    a variation/AOCV-SOCV library, ...) for whatever future consumer cares,
+    the same declared-but-not-yet-consumed boundary as technology.generic.
+    """
 
     name: str
     libraries: tuple[Path, ...]
     qrc_tech_file: Optional[Path] = None
+    format: str = "liberty"
 
 
 @dataclass(frozen=True)

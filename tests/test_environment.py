@@ -313,7 +313,10 @@ class MultiCornerTechnologyTests(DeclarativeEnvironmentTests):
             "timing": {
                 "corners": {
                     "typical": {"libraries": ["typical.lib"]},
-                    "worst_case": {"libraries": ["worst_case.lib"], "qrc_tech_file": "worst_case.qrc"},
+                    "worst_case": {
+                        "libraries": ["worst_case.lib"], "qrc_tech_file": "worst_case.qrc",
+                        "format": "ecsm",
+                    },
                 },
             },
         }})
@@ -338,6 +341,8 @@ class MultiCornerTechnologyTests(DeclarativeEnvironmentTests):
         self.assertEqual(corners["worst_case"].libraries, (worst_case.resolve(),))
         self.assertEqual(corners["worst_case"].qrc_tech_file, qrc.resolve())
         self.assertIsNone(corners["typical"].qrc_tech_file)
+        self.assertEqual(corners["typical"].format, "liberty")
+        self.assertEqual(corners["worst_case"].format, "ecsm")
         # The union, for existence/checksum bookkeeping.
         self.assertEqual(
             set(context.technology.timing_libraries), {typical.resolve(), worst_case.resolve()}

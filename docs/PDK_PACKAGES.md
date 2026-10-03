@@ -70,6 +70,7 @@ metadata:
                 worst_case:
                   libraries: [lib/9t_lvt_worst.lib]
                   qrc_tech_file: qrc/9t_lvt_worst.captable
+                  format: ecsm
           rvt: {...}
       7T:
         vths:
@@ -82,6 +83,14 @@ one entry -- almost everything in a real library tree can legitimately be
 several files (a tech LEF plus a pad LEF plus a custom LEF, say). Only a
 corner's own `qrc_tech_file` is a single path, since that's what
 `create_rc_corner -qrc_tech_file` actually takes.
+
+A corner's optional `format` (default `liberty`) records what kind of
+library it actually is -- plain Liberty, ECSM, a variation/AOCV-SOCV
+library, or whatever else shows up -- for whatever future consumer cares.
+Genus/Innovus auto-detect Liberty-family content regardless, so this
+isn't interpreted by WOLF today; it exists so the information isn't lost
+at declaration time, the same declared-but-not-yet-consumed boundary as
+`generic` below.
 
 An environment picks which (track, vth) a run uses via `technology.track`/
 `technology.vth` in its own `wolf.yaml`:

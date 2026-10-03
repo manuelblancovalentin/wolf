@@ -746,6 +746,7 @@ def prepare_genus_inputs(
                     "name": corner.name,
                     "libraries": [str(path) for path in corner.libraries],
                     "qrc_tech_file": str(corner.qrc_tech_file) if corner.qrc_tech_file else None,
+                    "format": corner.format,
                 }
                 for corner in context.technology.timing_corners
             ],
