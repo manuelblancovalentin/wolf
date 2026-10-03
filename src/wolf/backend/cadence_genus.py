@@ -737,6 +737,8 @@ def prepare_genus_inputs(
             "package": context.technology.package,
             "revision": context.technology.revision,
             "name": context.technology.name,
+            "track": context.technology.track,
+            "vth": context.technology.vth,
             "timing_corner": context.technology.timing_corner,
             "timing_libraries": [str(path) for path in context.technology.timing_libraries],
             "timing_corners": [
@@ -751,6 +753,10 @@ def prepare_genus_inputs(
             "cell_lefs": [str(path) for path in context.technology.cell_lefs],
             "rc_files": [str(path) for path in context.technology.rc_files],
             "gds_files": [str(path) for path in context.technology.gds_files],
+            "verilog_models": [str(path) for path in context.technology.verilog_models],
+            "spice_models": [str(path) for path in context.technology.spice_models],
+            "qrc_techfiles": [str(path) for path in context.technology.qrc_techfiles],
+            "generic": dict(context.technology.generic),
             "checksums": dict(context.technology.checksums),
         } if context.technology else None),
         "packages": [

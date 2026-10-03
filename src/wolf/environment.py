@@ -44,6 +44,8 @@ class ComponentReference:
     package: Optional[str] = None
     name: Optional[str] = None
     top: Optional[str] = None
+    track: Optional[str] = None
+    vth: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -127,16 +129,22 @@ def _component(
     if data is None:
         return None
     mapping = _mapping(data, field)
-    allowed = {"package", "name"} | ({"top", "sources"} if field == "design" else set())
+    allowed = (
+        {"package", "name"}
+        | ({"top", "sources"} if field == "design" else set())
+        | ({"track", "vth"} if field == "technology" else set())
+    )
     _known_fields(mapping, allowed, field)
     package = _optional_string(mapping.get("package"), f"{field}.package")
     if package and PackageId.parse(package).kind != expected_kind:
         raise ValueError(f"{field}.package must identify a {expected_kind} package")
     name = _optional_string(mapping.get("name"), f"{field}.name")
     top = _optional_string(mapping.get("top"), f"{field}.top") if field == "design" else None
+    track = _optional_string(mapping.get("track"), f"{field}.track") if field == "technology" else None
+    vth = _optional_string(mapping.get("vth"), f"{field}.vth") if field == "technology" else None
     if not any((package, name, top)) and not extra_satisfied:
         raise ValueError(f"{field} must define at least one value")
-    return ComponentReference(package=package, name=name, top=top)
+    return ComponentReference(package=package, name=name, top=top, track=track, vth=vth)
 
 
 def load_environment(path: Path, *, expected_name: Optional[str] = None) -> EnvironmentProfile:
@@ -286,7 +294,143 @@ def _semantic(manifest: Any, section: str, field: str) -> Optional[str]:
     return value if isinstance(value, str) and value else None
 
 
-def _technology_inputs(manifest: Any, installed: Any) -> Optional[ResolvedTechnology]:
+def _paths_under(root: Path, value: Any, field: str) -> tuple[Path, ...]:
+    """Resolve a list of package-relative paths, rejecting escapes or misses."""
+    if value is None:
+        return ()
+    if not isinstance(value, list) or not all(isinstance(item, str) and item for item in value):
+        raise ValueError(f"technology.{field} must be a list of relative paths")
+    resolved = []
+    for item in value:
+        path = (root / item).resolve()
+        if not path.is_relative_to(root):
+            raise ValueError(f"technology.{field} escapes installed package: {item}")
+        if not path.is_file():
+            raise ValueError(f"technology.{field} file does not exist: {path}")
+        resolved.append(path)
+    return tuple(resolved)
+
+
+def _parse_timing_corners(
+    root: Path, timing: Mapping[str, Any], *, field: str,
+) -> tuple[tuple[ResolvedTimingCorner, ...], tuple[Path, ...]]:
+    """Parse one timing.corners mapping (flat, or nested under one track/vth).
+
+    Returns (corners, the union of every corner's libraries) -- the union is
+    only for existence/checksum bookkeeping, not a value a backend should
+    treat as one combined library set (that would reintroduce the exact
+    cross-corner cell-name collision this whole mechanism exists to avoid).
+    """
+    raw_corners = timing.get("corners")
+    if raw_corners is None:
+        return (), ()
+    if timing.get("libraries"):
+        raise ValueError(
+            f"{field}.corners and {field}.libraries are mutually exclusive -- declare "
+            "either one named corner's libraries there, or several named corners under "
+            "corners, not both"
+        )
+    if not isinstance(raw_corners, dict) or not raw_corners:
+        raise ValueError(f"{field}.corners must be a nonempty mapping")
+    corners = []
+    qrc_files = []
+    for corner_name, corner_data in raw_corners.items():
+        if not isinstance(corner_name, str) or not corner_name:
+            raise ValueError(f"{field}.corners keys must be nonempty corner names")
+        if not isinstance(corner_data, dict):
+            raise ValueError(f"{field}.corners.{corner_name} must be a mapping")
+        corner_libraries = _paths_under(
+            root, corner_data.get("libraries", []), f"{field}.corners.{corner_name}.libraries"
+        )
+        if not corner_libraries:
+            raise ValueError(f"{field}.corners.{corner_name}.libraries must be nonempty")
+        qrc_value = corner_data.get("qrc_tech_file")
+        qrc_path: Optional[Path] = None
+        if qrc_value is not None:
+            if not isinstance(qrc_value, str) or not qrc_value:
+                raise ValueError(f"{field}.corners.{corner_name}.qrc_tech_file must be a nonempty string")
+            qrc_path = _paths_under(root, [qrc_value], f"{field}.corners.{corner_name}.qrc_tech_file")[0]
+            qrc_files.append(qrc_path)
+        corners.append(ResolvedTimingCorner(
+            name=corner_name, libraries=corner_libraries, qrc_tech_file=qrc_path,
+        ))
+    return tuple(corners), tuple(qrc_files)
+
+
+# A flat (no tracks) technology's timing/physical keys, kept exactly as before.
+_FLAT_TECHNOLOGY_FIELDS = {"name", "timing", "physical", "synthesis"}
+# A multi-track technology's own top-level keys.
+_TRACKED_TECHNOLOGY_FIELDS = {"name", "tracks", "generic", "synthesis"}
+
+
+def _technology_variant(
+    root: Path, track: str, vth: str, data: Any,
+) -> tuple[
+    tuple[ResolvedTimingCorner, ...], tuple[Path, ...], tuple[Path, ...], tuple[Path, ...],
+    tuple[Path, ...], tuple[Path, ...], tuple[Path, ...],
+]:
+    """Parse one tracks.<track>.vths.<vth> entry: corners, lef, gds, verilog, spice, qrc."""
+    field = f"tracks.{track}.vths.{vth}"
+    if not isinstance(data, dict):
+        raise ValueError(f"technology.{field} must be a mapping")
+    timing = data.get("timing", {})
+    timing = timing if isinstance(timing, dict) else {}
+    corners, corner_qrc_files = _parse_timing_corners(root, timing, field=f"{field}.timing")
+    if not corners:
+        raise ValueError(f"technology.{field}.timing.corners must declare at least one corner")
+    lef = _paths_under(root, data.get("lef", []), f"{field}.lef")
+    gds = _paths_under(root, data.get("gds", []), f"{field}.gds")
+    verilog_models = _paths_under(root, data.get("verilog_models", []), f"{field}.verilog_models")
+    spice_models = _paths_under(root, data.get("spice_models", []), f"{field}.spice_models")
+    qrc_techfiles = _paths_under(root, data.get("qrc_techfiles", []), f"{field}.qrc_techfiles")
+    return corners, corner_qrc_files, lef, gds, verilog_models, spice_models, qrc_techfiles
+
+
+def _select_track_vth(
+    tracks: Mapping[str, Any], reference: Optional[ComponentReference],
+) -> tuple[str, str, Any]:
+    """Pick the (track, vth) variant a run actually uses.
+
+    Required once more than one combination exists; a single declared track
+    with a single declared vth is selected automatically so a simple
+    one-track package needs no selection at all.
+    """
+    if not isinstance(tracks, dict) or not tracks:
+        raise ValueError("technology.tracks must be a nonempty mapping")
+    available = []
+    for track_name, track_data in tracks.items():
+        if not isinstance(track_data, dict):
+            raise ValueError(f"technology.tracks.{track_name} must be a mapping")
+        vths = track_data.get("vths")
+        if not isinstance(vths, dict) or not vths:
+            raise ValueError(f"technology.tracks.{track_name}.vths must be a nonempty mapping")
+        for vth_name in vths:
+            available.append((track_name, vth_name))
+    requested_track = reference.track if reference else None
+    requested_vth = reference.vth if reference else None
+    if requested_track is None and requested_vth is None:
+        if len(available) == 1:
+            track_name, vth_name = available[0]
+            return track_name, vth_name, tracks[track_name]["vths"][vth_name]
+        raise ValueError(
+            "technology.track and technology.vth are required when the package declares "
+            "more than one track/vth combination; available: "
+            + ", ".join(f"{track}/{vth}" for track, vth in available)
+        )
+    if requested_track is None or requested_vth is None:
+        raise ValueError("technology.track and technology.vth must both be set, or neither")
+    track_data = tracks.get(requested_track)
+    if not isinstance(track_data, dict) or requested_vth not in track_data.get("vths", {}):
+        raise ValueError(
+            f"technology {requested_track}/{requested_vth} is not declared; available: "
+            + ", ".join(f"{track}/{vth}" for track, vth in available)
+        )
+    return requested_track, requested_vth, track_data["vths"][requested_vth]
+
+
+def _technology_inputs(
+    manifest: Any, installed: Any, reference: Optional[ComponentReference] = None,
+) -> Optional[ResolvedTechnology]:
     """Resolve portable technology views declared by an installed PDK package."""
     metadata = manifest.metadata.get("technology", {})
     if not isinstance(metadata, dict) or not installed:
@@ -295,97 +439,79 @@ def _technology_inputs(manifest: Any, installed: Any) -> Optional[ResolvedTechno
     name = metadata.get("name")
     if not isinstance(name, str) or not name:
         return None
-
-    timing = metadata.get("timing", {})
-    timing = timing if isinstance(timing, dict) else {}
-    physical = metadata.get("physical", {})
-    physical = physical if isinstance(physical, dict) else {}
     synthesis = metadata.get("synthesis", {})
     synthesis = synthesis if isinstance(synthesis, dict) else {}
 
-    def paths(value: Any, field: str) -> tuple[Path, ...]:
-        if value is None:
-            return ()
-        if not isinstance(value, list) or not all(isinstance(item, str) and item for item in value):
-            raise ValueError(f"technology.{field} must be a list of relative paths")
-        resolved = []
-        for item in value:
-            path = (root / item).resolve()
-            if not path.is_relative_to(root):
-                raise ValueError(f"technology.{field} escapes installed package: {item}")
-            if not path.is_file():
-                raise ValueError(f"technology.{field} file does not exist: {path}")
-            resolved.append(path)
-        return tuple(resolved)
+    track: Optional[str] = None
+    vth: Optional[str] = None
+    generic: Mapping[str, Any] = {}
+    verilog_models: tuple[Path, ...] = ()
+    spice_models: tuple[Path, ...] = ()
+    qrc_techfiles: tuple[Path, ...] = ()
 
-    raw_corners = timing.get("corners")
-    timing_corners: tuple[ResolvedTimingCorner, ...] = ()
-    corner_qrc_files: tuple[Path, ...] = ()
-    if raw_corners is not None:
-        if timing.get("libraries"):
-            raise ValueError(
-                "technology.timing.corners and technology.timing.libraries are mutually "
-                "exclusive -- declare either one named corner's libraries there, or several "
-                "named corners under timing.corners, not both"
-            )
-        if not isinstance(raw_corners, dict) or not raw_corners:
-            raise ValueError("technology.timing.corners must be a nonempty mapping")
-        corners = []
-        qrc_files = []
-        for corner_name, corner_data in raw_corners.items():
-            if not isinstance(corner_name, str) or not corner_name:
-                raise ValueError("technology.timing.corners keys must be nonempty corner names")
-            if not isinstance(corner_data, dict):
-                raise ValueError(f"technology.timing.corners.{corner_name} must be a mapping")
-            corner_libraries = paths(
-                corner_data.get("libraries", []), f"timing.corners.{corner_name}.libraries"
-            )
-            if not corner_libraries:
-                raise ValueError(
-                    f"technology.timing.corners.{corner_name}.libraries must be nonempty"
-                )
-            qrc_value = corner_data.get("qrc_tech_file")
-            qrc_path: Optional[Path] = None
-            if qrc_value is not None:
-                if not isinstance(qrc_value, str) or not qrc_value:
-                    raise ValueError(
-                        f"technology.timing.corners.{corner_name}.qrc_tech_file must be "
-                        "a nonempty string"
-                    )
-                qrc_path = paths([qrc_value], f"timing.corners.{corner_name}.qrc_tech_file")[0]
-                qrc_files.append(qrc_path)
-            corners.append(ResolvedTimingCorner(
-                name=corner_name, libraries=corner_libraries, qrc_tech_file=qrc_path,
-            ))
-        timing_corners = tuple(corners)
-        corner_qrc_files = tuple(qrc_files)
-        # The union of every corner's libraries, for existence/checksum bookkeeping and
-        # as a technology-independent "are timing libraries configured at all" signal.
+    if "tracks" in metadata:
+        unknown = set(metadata) - _TRACKED_TECHNOLOGY_FIELDS
+        if unknown:
+            raise ValueError(f"unsupported technology field alongside tracks: {sorted(unknown)[0]}")
+        generic = metadata.get("generic", {})
+        if not isinstance(generic, dict):
+            raise ValueError("technology.generic must be a mapping")
+        track, vth, variant = _select_track_vth(metadata["tracks"], reference)
+        timing_corners, corner_qrc_files, technology_lefs, gds_files, verilog_models, \
+            spice_models, qrc_techfiles = _technology_variant(root, track, vth, variant)
+        cell_lefs: tuple[Path, ...] = ()
+        rc_files: tuple[Path, ...] = ()
         libraries = tuple(dict.fromkeys(
             library for corner in timing_corners for library in corner.libraries
         ))
+        corner = f"{track}/{vth}"
+        all_files = (
+            *libraries, *technology_lefs, *gds_files, *verilog_models, *spice_models,
+            *qrc_techfiles, *corner_qrc_files,
+        )
     else:
-        libraries = paths(timing.get("libraries", []), "timing.libraries")
-    technology_lefs = paths(physical.get("technology_lefs", []), "physical.technology_lefs")
-    cell_lefs = paths(physical.get("cell_lefs", []), "physical.cell_lefs")
-    rc_files = paths(physical.get("rc", []), "physical.rc")
-    gds_files = paths(physical.get("gds", []), "physical.gds")
-    all_files = (*libraries, *technology_lefs, *cell_lefs, *rc_files, *gds_files, *corner_qrc_files)
+        if reference is not None and (reference.track or reference.vth):
+            raise ValueError(
+                "technology.track/technology.vth require the package to declare "
+                "technology.tracks; this package declares a flat timing/physical section"
+            )
+        unknown = set(metadata) - _FLAT_TECHNOLOGY_FIELDS
+        if unknown:
+            raise ValueError(f"unsupported technology field: {sorted(unknown)[0]}")
+        timing = metadata.get("timing", {})
+        timing = timing if isinstance(timing, dict) else {}
+        physical = metadata.get("physical", {})
+        physical = physical if isinstance(physical, dict) else {}
+        timing_corners, corner_qrc_files = _parse_timing_corners(root, timing, field="timing")
+        if timing_corners:
+            libraries = tuple(dict.fromkeys(
+                library for corner in timing_corners for library in corner.libraries
+            ))
+        else:
+            libraries = _paths_under(root, timing.get("libraries", []), "timing.libraries")
+        technology_lefs = _paths_under(root, physical.get("technology_lefs", []), "physical.technology_lefs")
+        cell_lefs = _paths_under(root, physical.get("cell_lefs", []), "physical.cell_lefs")
+        rc_files = _paths_under(root, physical.get("rc", []), "physical.rc")
+        gds_files = _paths_under(root, physical.get("gds", []), "physical.gds")
+        corner = timing.get("corner") or ("multi-corner" if timing_corners else "typical")
+        if not isinstance(corner, str) or not corner:
+            raise ValueError("technology.timing.corner must be a nonempty string")
+        all_files = (*libraries, *technology_lefs, *cell_lefs, *rc_files, *gds_files, *corner_qrc_files)
+
     checksums = {
         str(path): hashlib.sha256(path.read_bytes()).hexdigest() for path in all_files
     }
-    corner = timing.get("corner") or ("multi-corner" if timing_corners else "typical")
-    if not isinstance(corner, str) or not corner:
-        raise ValueError("technology.timing.corner must be a nonempty string")
     dont_use = synthesis.get("dont_use", [])
     if not isinstance(dont_use, list) or not all(isinstance(item, str) and item for item in dont_use):
         raise ValueError("technology.synthesis.dont_use must be a list of nonempty cell name patterns")
     return ResolvedTechnology(
         package=str(manifest.identifier), revision=manifest.revision, name=name,
-        root=root, timing_corner=corner, timing_libraries=libraries,
+        root=root, track=track, vth=vth, timing_corner=corner, timing_libraries=libraries,
         timing_corners=timing_corners,
         technology_lefs=technology_lefs, cell_lefs=cell_lefs, rc_files=rc_files,
-        gds_files=gds_files, checksums=checksums, dont_use_cells=tuple(dont_use),
+        gds_files=gds_files, verilog_models=verilog_models, spice_models=spice_models,
+        qrc_techfiles=qrc_techfiles, generic=generic,
+        checksums=checksums, dont_use_cells=tuple(dont_use),
     )
 
 
@@ -702,8 +828,10 @@ def resolve_declarative_environment(
     defines: tuple[str, ...] = ()
     vhdl_standard: Optional[str] = None
     package_checksums: dict[str, str] = {}
-    resolved_technology = _technology_inputs(manifests.get("technology"), installed.get("technology")) \
+    resolved_technology = (
+        _technology_inputs(manifests.get("technology"), installed.get("technology"), technology)
         if "technology" in manifests else None
+    )
     if profile.design_sources:
         sources, include_directories, defines, vhdl_standard, package_checksums, used = (
             _resolve_source_entries(

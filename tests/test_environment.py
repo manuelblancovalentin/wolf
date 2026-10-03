@@ -368,5 +368,143 @@ class MultiCornerTechnologyTests(DeclarativeEnvironmentTests):
             )
 
 
+class MultiTrackVthTechnologyTests(DeclarativeEnvironmentTests):
+    """Technology packages may declare several named track/vth combinations,
+    each with its own corners, physical/behavioral views, plus a free-form
+    'generic' bucket for whatever doesn't depend on track/vth at all."""
+
+    def _write_file(self, content, name):
+        path = self.state / "packages" / "pdk" / "tsmc65-tracked" / "pdk-rev" / "source" / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"-- {name} --\n", encoding="utf-8")
+        return path
+
+    def _tracked_package(self, *, extra_track=False):
+        technology = {
+            "name": "tsmc65-tracked",
+            "generic": {
+                "tech_layermap": "config/tsmc65.sorted.gds2map",
+                "rc_corners": {
+                    "rc_25C": {"temperature": 25, "qrc_tech_file": "qrc/rc_25C.captable"},
+                },
+            },
+            "tracks": {
+                "9T": {
+                    "vths": {
+                        "lvt": {
+                            "lef": ["lef/9t_lvt.lef"],
+                            "gds": ["gds/9t_lvt.gds"],
+                            "verilog_models": ["verilog/9t_lvt.v"],
+                            "spice_models": ["spice/9t_lvt.spi"],
+                            "qrc_techfiles": ["qrc/9t_lvt.captable"],
+                            "timing": {"corners": {
+                                "typical": {"libraries": ["lib/9t_lvt_typical.lib"]},
+                                "worst_case": {"libraries": ["lib/9t_lvt_worst.lib"]},
+                            }},
+                        },
+                    },
+                },
+            },
+        }
+        if extra_track:
+            technology["tracks"]["7T"] = {"vths": {"rvt": {
+                "lef": ["lef/7t_rvt.lef"],
+                "timing": {"corners": {"typical": {"libraries": ["lib/7t_rvt_typical.lib"]}}},
+            }}}
+        self._package("pdk", "tsmc65-tracked", "pdk-rev", {"technology": technology})
+        for relative in (
+            "config/tsmc65.sorted.gds2map", "qrc/rc_25C.captable",
+            "lef/9t_lvt.lef", "gds/9t_lvt.gds", "verilog/9t_lvt.v", "spice/9t_lvt.spi",
+            "qrc/9t_lvt.captable", "lib/9t_lvt_typical.lib", "lib/9t_lvt_worst.lib",
+        ):
+            self._write_file("x", relative)
+        if extra_track:
+            for relative in ("lef/7t_rvt.lef", "lib/7t_rvt_typical.lib"):
+                self._write_file("x", relative)
+
+    def _yaml_with_selector(self, *, track=None, vth=None, extra_track=False):
+        self._tracked_package(extra_track=extra_track)
+        selector = ""
+        if track is not None:
+            selector += f"\n  track: {track}"
+        if vth is not None:
+            selector += f"\n  vth: {vth}"
+        return self._complete_yaml().replace(
+            "package: pdk/asap7", f"package: pdk/tsmc65-tracked{selector}"
+        )
+
+    def test_single_track_vth_is_selected_automatically(self):
+        text = self._yaml_with_selector()
+        context = resolve_declarative_environment(
+            load_environment(self._write(text, "tracked.yaml")),
+            state_root=self.state, environment_directory=self.environment,
+        )
+        self.assertEqual((context.technology.track, context.technology.vth), ("9T", "lvt"))
+        corners = {corner.name for corner in context.technology.timing_corners}
+        self.assertEqual(corners, {"typical", "worst_case"})
+        self.assertEqual(len(context.technology.technology_lefs), 1)
+        self.assertEqual(len(context.technology.gds_files), 1)
+        self.assertEqual(len(context.technology.verilog_models), 1)
+        self.assertEqual(len(context.technology.spice_models), 1)
+        self.assertEqual(len(context.technology.qrc_techfiles), 1)
+
+    def test_generic_bucket_is_passed_through_verbatim(self):
+        text = self._yaml_with_selector()
+        context = resolve_declarative_environment(
+            load_environment(self._write(text, "tracked.yaml")),
+            state_root=self.state, environment_directory=self.environment,
+        )
+        self.assertEqual(
+            context.technology.generic["tech_layermap"], "config/tsmc65.sorted.gds2map",
+        )
+        self.assertEqual(
+            context.technology.generic["rc_corners"]["rc_25C"]["temperature"], 25,
+        )
+
+    def test_multiple_tracks_require_explicit_selection(self):
+        text = self._yaml_with_selector(extra_track=True)
+        with self.assertRaisesRegex(ValueError, "technology.track and technology.vth are required"):
+            resolve_declarative_environment(
+                load_environment(self._write(text, "tracked.yaml")),
+                state_root=self.state, environment_directory=self.environment,
+            )
+
+    def test_explicit_track_vth_selects_the_right_variant(self):
+        text = self._yaml_with_selector(track="7T", vth="rvt", extra_track=True)
+        context = resolve_declarative_environment(
+            load_environment(self._write(text, "tracked.yaml")),
+            state_root=self.state, environment_directory=self.environment,
+        )
+        self.assertEqual((context.technology.track, context.technology.vth), ("7T", "rvt"))
+        corners = {corner.name for corner in context.technology.timing_corners}
+        self.assertEqual(corners, {"typical"})
+
+    def test_unknown_track_vth_is_rejected(self):
+        text = self._yaml_with_selector(track="9T", vth="hvt")
+        with self.assertRaisesRegex(ValueError, "is not declared"):
+            resolve_declarative_environment(
+                load_environment(self._write(text, "tracked.yaml")),
+                state_root=self.state, environment_directory=self.environment,
+            )
+
+    def test_track_without_vth_is_rejected(self):
+        text = self._yaml_with_selector(track="9T")
+        with self.assertRaisesRegex(ValueError, "must both be set, or neither"):
+            resolve_declarative_environment(
+                load_environment(self._write(text, "tracked.yaml")),
+                state_root=self.state, environment_directory=self.environment,
+            )
+
+    def test_track_vth_selector_requires_a_tracked_package(self):
+        text = self._complete_yaml().replace(
+            "package: pdk/asap7", "package: pdk/asap7\n  track: 9T\n  vth: lvt",
+        )
+        with self.assertRaisesRegex(ValueError, "declares a flat timing/physical section"):
+            resolve_declarative_environment(
+                load_environment(self._write(text, "flat-with-selector.yaml")),
+                state_root=self.state, environment_directory=self.environment,
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -67,12 +67,23 @@ class ResolvedTimingCorner:
 
 @dataclass(frozen=True)
 class ResolvedTechnology:
-    """Package-resolved technology views available to a backend."""
+    """Package-resolved technology views available to a backend.
+
+    A technology package may declare its views flat (one implicit track/vth,
+    today's shape) or nested under several named tracks/vths (e.g. 9T/lvt,
+    9T/hvt, 7T/rvt) when it needs more than one. Either way, resolution
+    always flattens down to exactly one selected variant's data here --
+    `track`/`vth` record which one (None for a flat-declared package), and
+    every other field below is that variant's data, in the same shape
+    backends already consume regardless of how it was declared.
+    """
 
     package: str
     revision: str
     name: str
     root: Path
+    track: Optional[str] = None
+    vth: Optional[str] = None
     timing_corner: str = "typical"
     timing_libraries: tuple[Path, ...] = ()
     timing_corners: tuple[ResolvedTimingCorner, ...] = ()
@@ -80,6 +91,10 @@ class ResolvedTechnology:
     cell_lefs: tuple[Path, ...] = ()
     rc_files: tuple[Path, ...] = ()
     gds_files: tuple[Path, ...] = ()
+    verilog_models: tuple[Path, ...] = ()
+    spice_models: tuple[Path, ...] = ()
+    qrc_techfiles: tuple[Path, ...] = ()
+    generic: Mapping[str, Any] = field(default_factory=dict)
     checksums: Mapping[str, str] = field(default_factory=dict)
     dont_use_cells: tuple[str, ...] = ()
 
