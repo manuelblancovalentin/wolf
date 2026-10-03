@@ -59,11 +59,18 @@ metadata:
       9T:
         vths:
           lvt:
-            lef: [lef/9t_lvt.lef]
-            gds: [gds/9t_lvt.gds]
+            default_metal_stack: 9lmT2
+            lef:
+              9lmT2: [lef/9t_lvt_9lmT2.lef]
+              7lmT1: [lef/9t_lvt_7lmT1.lef]
+            gds:
+              9lmT2: [gds/9t_lvt_9lmT2.gds]
+              7lmT1: [gds/9t_lvt_7lmT1.gds]
+            qrc_techfiles:
+              9lmT2: [qrc/9t_lvt_9lmT2.captable]
+              7lmT1: [qrc/9t_lvt_7lmT1.captable]
             verilog_models: [verilog/9t_lvt.v]
             spice_models: [spice/9t_lvt.spi]
-            qrc_techfiles: [qrc/9t_lvt.captable]
             timing:
               corners:
                 typical: {libraries: [lib/9t_lvt_typical.lib]}
@@ -83,6 +90,40 @@ one entry -- almost everything in a real library tree can legitimately be
 several files (a tech LEF plus a pad LEF plus a custom LEF, say). Only a
 corner's own `qrc_tech_file` is a single path, since that's what
 `create_rc_corner -qrc_tech_file` actually takes.
+
+### Metal stack (`lef`/`gds`/`qrc_techfiles` per named stack)
+
+`lef`/`gds`/`qrc_techfiles` are physically tied to a **metal stack** --
+how many routing layers the design commits to, plus a top-metal routing
+option (e.g. TSMC's `9lmT2` = 9 metal layers, top-metal option "T2").
+It's a real, independent design axis: the *same* track/vth cells can be
+implemented against any of several stacks, and switching stacks (even
+just to try two for the same design) should be as simple as changing one
+field, not re-declaring the whole vth.
+
+Instead of a flat list, declare each of `lef`/`gds`/`qrc_techfiles` as a
+mapping of stack name to its file list (as in the example above). All
+three that are present must declare the *same* set of stack names --
+WOLF rejects a vth where `lef` has `{9lmT2, 7lmT1}` but `gds` only has
+`{9lmT2}`, rather than silently resolving an inconsistent pair. A vth
+with only one stack can still use a flat list (no selection needed,
+exactly like a single-corner technology).
+
+An environment picks the stack via `technology.metal_stack`:
+
+```yaml
+technology:
+  package: pdk/tsmc65
+  track: 9T
+  vth: lvt
+  metal_stack: 7lmT1
+```
+
+Resolution order: explicit `technology.metal_stack` in the environment,
+else the vth's own `default_metal_stack`, else auto-selected if only one
+stack is declared, else a clear error listing what's available. Cloning
+an environment and changing only `metal_stack` is meant to just work --
+it's one field, resolved the same way `track`/`vth` already are.
 
 A corner's optional `format` (default `liberty`) records what kind of
 library it actually is -- plain Liberty, ECSM, a variation/AOCV-SOCV

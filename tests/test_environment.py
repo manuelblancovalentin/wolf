@@ -511,5 +511,139 @@ class MultiTrackVthTechnologyTests(DeclarativeEnvironmentTests):
             )
 
 
+class MetalStackTests(DeclarativeEnvironmentTests):
+    """lef/gds/qrc_techfiles may vary by named metal stack (routing layer
+    count + top-metal option, e.g. 9lmT2) within one track/vth -- a real
+    TSMC65-shaped case: the same 9T/lvt cells, several metal-stack LEFs."""
+
+    def _write_file(self, name, package="tsmc65-stacks"):
+        path = self.state / "packages" / "pdk" / package / "pdk-rev" / "source" / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"-- {name} --\n", encoding="utf-8")
+        return path
+
+    def _stacked_package(self, *, default_metal_stack=None):
+        lvt = {
+            "lef": {"9lmT2": ["lef/9t_lvt_9lmT2.lef"], "7lmT1": ["lef/9t_lvt_7lmT1.lef"]},
+            "gds": {"9lmT2": ["gds/9t_lvt_9lmT2.gds"], "7lmT1": ["gds/9t_lvt_7lmT1.gds"]},
+            "qrc_techfiles": {
+                "9lmT2": ["qrc/9t_lvt_9lmT2.captable"], "7lmT1": ["qrc/9t_lvt_7lmT1.captable"],
+            },
+            "timing": {"corners": {"typical": {"libraries": ["lib/9t_lvt_typical.lib"]}}},
+        }
+        if default_metal_stack is not None:
+            lvt["default_metal_stack"] = default_metal_stack
+        self._package("pdk", "tsmc65-stacks", "pdk-rev", {"technology": {
+            "name": "tsmc65-stacks", "tracks": {"9T": {"vths": {"lvt": lvt}}},
+        }})
+        for relative in (
+            "lef/9t_lvt_9lmT2.lef", "lef/9t_lvt_7lmT1.lef",
+            "gds/9t_lvt_9lmT2.gds", "gds/9t_lvt_7lmT1.gds",
+            "qrc/9t_lvt_9lmT2.captable", "qrc/9t_lvt_7lmT1.captable",
+            "lib/9t_lvt_typical.lib",
+        ):
+            self._write_file(relative)
+
+    def _yaml_with_stack(self, *, metal_stack=None):
+        selector = f"\n  metal_stack: {metal_stack}" if metal_stack else ""
+        return self._complete_yaml().replace(
+            "package: pdk/asap7", f"package: pdk/tsmc65-stacks{selector}"
+        )
+
+    def test_explicit_metal_stack_selects_matching_lef_gds_qrc(self):
+        self._stacked_package()
+        context = resolve_declarative_environment(
+            load_environment(self._write(self._yaml_with_stack(metal_stack="7lmT1"), "stacks.yaml")),
+            state_root=self.state, environment_directory=self.environment,
+        )
+        self.assertEqual(context.technology.metal_stack, "7lmT1")
+        self.assertTrue(str(context.technology.technology_lefs[0]).endswith("9t_lvt_7lmT1.lef"))
+        self.assertTrue(str(context.technology.gds_files[0]).endswith("9t_lvt_7lmT1.gds"))
+        self.assertTrue(str(context.technology.qrc_techfiles[0]).endswith("9t_lvt_7lmT1.captable"))
+
+    def test_missing_metal_stack_with_several_declared_is_rejected(self):
+        self._stacked_package()
+        with self.assertRaisesRegex(ValueError, "technology.metal_stack is required"):
+            resolve_declarative_environment(
+                load_environment(self._write(self._yaml_with_stack(), "stacks.yaml")),
+                state_root=self.state, environment_directory=self.environment,
+            )
+
+    def test_default_metal_stack_is_used_when_not_overridden(self):
+        self._stacked_package(default_metal_stack="9lmT2")
+        context = resolve_declarative_environment(
+            load_environment(self._write(self._yaml_with_stack(), "stacks.yaml")),
+            state_root=self.state, environment_directory=self.environment,
+        )
+        self.assertEqual(context.technology.metal_stack, "9lmT2")
+
+    def test_explicit_metal_stack_overrides_the_default(self):
+        self._stacked_package(default_metal_stack="9lmT2")
+        context = resolve_declarative_environment(
+            load_environment(self._write(self._yaml_with_stack(metal_stack="7lmT1"), "stacks.yaml")),
+            state_root=self.state, environment_directory=self.environment,
+        )
+        self.assertEqual(context.technology.metal_stack, "7lmT1")
+
+    def test_unknown_metal_stack_is_rejected(self):
+        self._stacked_package()
+        with self.assertRaisesRegex(ValueError, "is not declared"):
+            resolve_declarative_environment(
+                load_environment(self._write(self._yaml_with_stack(metal_stack="12lmT9"), "stacks.yaml")),
+                state_root=self.state, environment_directory=self.environment,
+            )
+
+    def test_mismatched_stack_keys_across_fields_is_rejected(self):
+        self._package("pdk", "tsmc65-mismatch", "pdk-rev", {"technology": {
+            "name": "tsmc65-mismatch", "tracks": {"9T": {"vths": {"lvt": {
+                "lef": {"9lmT2": ["lef/x.lef"]},
+                "gds": {"7lmT1": ["gds/x.gds"]},
+                "timing": {"corners": {"typical": {"libraries": ["lib/x.lib"]}}},
+            }}}},
+        }})
+        for relative in ("lef/x.lef", "gds/x.gds", "lib/x.lib"):
+            self._write_file(relative, package="tsmc65-mismatch")
+        text = self._complete_yaml().replace("package: pdk/asap7", "package: pdk/tsmc65-mismatch")
+        with self.assertRaisesRegex(ValueError, "doesn't match"):
+            resolve_declarative_environment(
+                load_environment(self._write(text, "mismatch.yaml")),
+                state_root=self.state, environment_directory=self.environment,
+            )
+
+    def test_single_stack_still_requires_no_selection(self):
+        self._package("pdk", "tsmc65-onestack", "pdk-rev", {"technology": {
+            "name": "tsmc65-onestack", "tracks": {"9T": {"vths": {"lvt": {
+                "lef": {"9lmT2": ["lef/x.lef"]},
+                "timing": {"corners": {"typical": {"libraries": ["lib/x.lib"]}}},
+            }}}},
+        }})
+        self._write_file("lef/x.lef", package="tsmc65-onestack")
+        self._write_file("lib/x.lib", package="tsmc65-onestack")
+        text = self._complete_yaml().replace("package: pdk/asap7", "package: pdk/tsmc65-onestack")
+        context = resolve_declarative_environment(
+            load_environment(self._write(text, "onestack.yaml")),
+            state_root=self.state, environment_directory=self.environment,
+        )
+        self.assertEqual(context.technology.metal_stack, "9lmT2")
+
+    def test_metal_stack_without_declared_stacks_is_rejected(self):
+        self._package("pdk", "tsmc65-flatlef", "pdk-rev", {"technology": {
+            "name": "tsmc65-flatlef", "tracks": {"9T": {"vths": {"lvt": {
+                "lef": ["lef/x.lef"],
+                "timing": {"corners": {"typical": {"libraries": ["lib/x.lib"]}}},
+            }}}},
+        }})
+        self._write_file("lef/x.lef", package="tsmc65-flatlef")
+        self._write_file("lib/x.lib", package="tsmc65-flatlef")
+        text = self._complete_yaml().replace(
+            "package: pdk/asap7", "package: pdk/tsmc65-flatlef\n  metal_stack: 9lmT2",
+        )
+        with self.assertRaisesRegex(ValueError, "declares no named metal stacks"):
+            resolve_declarative_environment(
+                load_environment(self._write(text, "flatlef.yaml")),
+                state_root=self.state, environment_directory=self.environment,
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

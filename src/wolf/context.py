@@ -92,6 +92,7 @@ class ResolvedTechnology:
     root: Path
     track: Optional[str] = None
     vth: Optional[str] = None
+    metal_stack: Optional[str] = None
     timing_corner: str = "typical"
     timing_libraries: tuple[Path, ...] = ()
     timing_corners: tuple[ResolvedTimingCorner, ...] = ()

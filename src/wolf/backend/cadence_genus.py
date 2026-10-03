@@ -739,6 +739,7 @@ def prepare_genus_inputs(
             "name": context.technology.name,
             "track": context.technology.track,
             "vth": context.technology.vth,
+            "metal_stack": context.technology.metal_stack,
             "timing_corner": context.technology.timing_corner,
             "timing_libraries": [str(path) for path in context.technology.timing_libraries],
             "timing_corners": [

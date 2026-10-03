@@ -46,6 +46,7 @@ class ComponentReference:
     top: Optional[str] = None
     track: Optional[str] = None
     vth: Optional[str] = None
+    metal_stack: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -132,7 +133,7 @@ def _component(
     allowed = (
         {"package", "name"}
         | ({"top", "sources"} if field == "design" else set())
-        | ({"track", "vth"} if field == "technology" else set())
+        | ({"track", "vth", "metal_stack"} if field == "technology" else set())
     )
     _known_fields(mapping, allowed, field)
     package = _optional_string(mapping.get("package"), f"{field}.package")
@@ -140,11 +141,17 @@ def _component(
         raise ValueError(f"{field}.package must identify a {expected_kind} package")
     name = _optional_string(mapping.get("name"), f"{field}.name")
     top = _optional_string(mapping.get("top"), f"{field}.top") if field == "design" else None
-    track = _optional_string(mapping.get("track"), f"{field}.track") if field == "technology" else None
-    vth = _optional_string(mapping.get("vth"), f"{field}.vth") if field == "technology" else None
+    is_technology = field == "technology"
+    track = _optional_string(mapping.get("track"), f"{field}.track") if is_technology else None
+    vth = _optional_string(mapping.get("vth"), f"{field}.vth") if is_technology else None
+    metal_stack = (
+        _optional_string(mapping.get("metal_stack"), f"{field}.metal_stack") if is_technology else None
+    )
     if not any((package, name, top)) and not extra_satisfied:
         raise ValueError(f"{field} must define at least one value")
-    return ComponentReference(package=package, name=name, top=top, track=track, vth=vth)
+    return ComponentReference(
+        package=package, name=name, top=top, track=track, vth=vth, metal_stack=metal_stack,
+    )
 
 
 def load_environment(path: Path, *, expected_name: Optional[str] = None) -> EnvironmentProfile:
@@ -367,13 +374,84 @@ _FLAT_TECHNOLOGY_FIELDS = {"name", "timing", "physical", "synthesis"}
 _TRACKED_TECHNOLOGY_FIELDS = {"name", "tracks", "generic", "synthesis"}
 
 
+_STACK_KEYED_FIELDS = ("lef", "gds", "qrc_techfiles")
+
+
+def _vth_metal_stacks(data: Mapping[str, Any], field: str) -> Optional[tuple[str, ...]]:
+    """If this vth declares lef/gds/qrc_techfiles per named metal stack (a
+    mapping) rather than one flat list, return the shared stack names --
+    every stack-keyed field that's present must declare the exact same
+    set, so lef/gds/qrc_techfiles can never silently disagree about which
+    stack is which. Returns None when none of them use the mapping form
+    at all (a single-stack vth, unchanged from before this existed).
+    """
+    stack_names: Optional[tuple[str, ...]] = None
+    for key in _STACK_KEYED_FIELDS:
+        value = data.get(key)
+        if value is None:
+            continue
+        if isinstance(value, dict):
+            names = tuple(sorted(value))
+            if not names:
+                raise ValueError(f"technology.{field}.{key} must be a nonempty mapping")
+            if stack_names is None:
+                stack_names = names
+            elif names != stack_names:
+                raise ValueError(
+                    f"technology.{field}.{key} declares metal stacks {list(names)}, which "
+                    f"doesn't match this vth's other stack-keyed fields {list(stack_names)}"
+                )
+        elif isinstance(value, list):
+            if stack_names is not None:
+                raise ValueError(
+                    f"technology.{field}.{key} must declare the same named metal stacks as "
+                    f"this vth's other fields ({list(stack_names)}), not a flat list"
+                )
+        else:
+            raise ValueError(f"technology.{field}.{key} must be a list or a mapping of metal stacks")
+    return stack_names
+
+
+def _select_metal_stack(
+    stack_names: tuple[str, ...], data: Mapping[str, Any],
+    reference: Optional[ComponentReference], field: str,
+) -> str:
+    requested = reference.metal_stack if reference else None
+    default = data.get("default_metal_stack")
+    if default is not None and not isinstance(default, str):
+        raise ValueError(f"technology.{field}.default_metal_stack must be a string")
+    stack = requested or default
+    if stack is None:
+        if len(stack_names) == 1:
+            return stack_names[0]
+        raise ValueError(
+            f"technology.metal_stack is required for {field} (several declared, no "
+            f"default_metal_stack set): " + ", ".join(stack_names)
+        )
+    if stack not in stack_names:
+        raise ValueError(
+            f"technology.metal_stack {stack!r} is not declared for {field}; available: "
+            + ", ".join(stack_names)
+        )
+    return stack
+
+
 def _technology_variant(
-    root: Path, track: str, vth: str, data: Any,
+    root: Path, track: str, vth: str, data: Any, reference: Optional[ComponentReference],
 ) -> tuple[
     tuple[ResolvedTimingCorner, ...], tuple[Path, ...], tuple[Path, ...], tuple[Path, ...],
-    tuple[Path, ...], tuple[Path, ...], tuple[Path, ...],
+    tuple[Path, ...], tuple[Path, ...], tuple[Path, ...], Optional[str],
 ]:
-    """Parse one tracks.<track>.vths.<vth> entry: corners, lef, gds, verilog, spice, qrc."""
+    """Parse one tracks.<track>.vths.<vth> entry: corners, lef, gds, verilog, spice, qrc.
+
+    lef/gds/qrc_techfiles are physically tied to a metal stack (routing
+    layer count plus top-metal option, e.g. 9lmT2) -- a real design axis,
+    not a detail to just pick one file for and forget: the same track/vth
+    can legitimately be built against several stacks (cloning an
+    environment and only changing technology.metal_stack is meant to just
+    work). See _vth_metal_stacks/_select_metal_stack for how the stack
+    actually gets picked.
+    """
     field = f"tracks.{track}.vths.{vth}"
     if not isinstance(data, dict):
         raise ValueError(f"technology.{field} must be a mapping")
@@ -382,12 +460,35 @@ def _technology_variant(
     corners, corner_qrc_files = _parse_timing_corners(root, timing, field=f"{field}.timing")
     if not corners:
         raise ValueError(f"technology.{field}.timing.corners must declare at least one corner")
-    lef = _paths_under(root, data.get("lef", []), f"{field}.lef")
-    gds = _paths_under(root, data.get("gds", []), f"{field}.gds")
+
+    stack_names = _vth_metal_stacks(data, field)
+    if stack_names is None:
+        if reference is not None and reference.metal_stack:
+            raise ValueError(
+                f"technology.metal_stack was given but {field} declares no named metal stacks"
+            )
+        metal_stack = None
+        lef = _paths_under(root, data.get("lef", []), f"{field}.lef")
+        gds = _paths_under(root, data.get("gds", []), f"{field}.gds")
+        qrc_techfiles = _paths_under(root, data.get("qrc_techfiles", []), f"{field}.qrc_techfiles")
+    else:
+        metal_stack = _select_metal_stack(stack_names, data, reference, field)
+
+        def stack_paths(key: str) -> tuple[Path, ...]:
+            value = data.get(key)
+            if value is None:
+                return ()
+            return _paths_under(root, value[metal_stack], f"{field}.{key}.{metal_stack}")
+        lef = stack_paths("lef")
+        gds = stack_paths("gds")
+        qrc_techfiles = stack_paths("qrc_techfiles")
+
     verilog_models = _paths_under(root, data.get("verilog_models", []), f"{field}.verilog_models")
     spice_models = _paths_under(root, data.get("spice_models", []), f"{field}.spice_models")
-    qrc_techfiles = _paths_under(root, data.get("qrc_techfiles", []), f"{field}.qrc_techfiles")
-    return corners, corner_qrc_files, lef, gds, verilog_models, spice_models, qrc_techfiles
+    return (
+        corners, corner_qrc_files, lef, gds, verilog_models, spice_models, qrc_techfiles,
+        metal_stack,
+    )
 
 
 def _select_track_vth(
@@ -462,7 +563,9 @@ def _technology_inputs(
             raise ValueError("technology.generic must be a mapping")
         track, vth, variant = _select_track_vth(metadata["tracks"], reference)
         timing_corners, corner_qrc_files, technology_lefs, gds_files, verilog_models, \
-            spice_models, qrc_techfiles = _technology_variant(root, track, vth, variant)
+            spice_models, qrc_techfiles, metal_stack = _technology_variant(
+                root, track, vth, variant, reference,
+            )
         cell_lefs: tuple[Path, ...] = ()
         rc_files: tuple[Path, ...] = ()
         libraries = tuple(dict.fromkeys(
@@ -474,10 +577,11 @@ def _technology_inputs(
             *qrc_techfiles, *corner_qrc_files,
         )
     else:
-        if reference is not None and (reference.track or reference.vth):
+        metal_stack = None
+        if reference is not None and (reference.track or reference.vth or reference.metal_stack):
             raise ValueError(
-                "technology.track/technology.vth require the package to declare "
-                "technology.tracks; this package declares a flat timing/physical section"
+                "technology.track/technology.vth/technology.metal_stack require the package "
+                "to declare technology.tracks; this package declares a flat timing/physical section"
             )
         unknown = set(metadata) - _FLAT_TECHNOLOGY_FIELDS
         if unknown:
@@ -510,7 +614,8 @@ def _technology_inputs(
         raise ValueError("technology.synthesis.dont_use must be a list of nonempty cell name patterns")
     return ResolvedTechnology(
         package=str(manifest.identifier), revision=manifest.revision, name=name,
-        root=root, track=track, vth=vth, timing_corner=corner, timing_libraries=libraries,
+        root=root, track=track, vth=vth, metal_stack=metal_stack,
+        timing_corner=corner, timing_libraries=libraries,
         timing_corners=timing_corners,
         technology_lefs=technology_lefs, cell_lefs=cell_lefs, rc_files=rc_files,
         gds_files=gds_files, verilog_models=verilog_models, spice_models=spice_models,
