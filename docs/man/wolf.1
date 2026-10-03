@@ -103,6 +103,22 @@ directory with
 .B wolf registry add
 to make the flow installable as
 .IR flow/name .
+.SH PDK COMMANDS
+.TP
+.BI "wolf pdk menu " name
+Interactively create or edit the
+.BI pdk/ name
+registry manifest: its source root/revision, and its
+.B technology
+metadata -- either one flat corner set, or several named track/vth
+combinations (e.g. 9T/lvt, 7T/rvt), each with its own named timing
+corners and LEF/GDS/Verilog/SPICE/QRC file lists. A free-form
+.B generic
+bucket holds whatever doesn't depend on track/vth at all (a GDS layermap,
+RC extraction corners), edited as raw YAML in
+.BR $EDITOR .
+Creating a package this way asks which configured local registry to place
+it in when more than one is configured.
 .SH BACKEND COMMANDS
 .TP
 .B wolf backend list
