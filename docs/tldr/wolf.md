@@ -64,7 +64,11 @@
 
 `wolf flow init {{name}} --from {{/path/to/base/flow}} --to {{/path/to/project/flows/name}} --manifest {{/path/to/registry/flow/name.yaml}} --backend {{cadence-flowtool}} --revision {{label}}`
 
-- Create or edit a PDK registry manifest's tracks/vths/corners and file lists:
+- List all pdk/* registry manifests, or show one in detail:
+
+`wolf pdk {{list|info tsmc65}}`
+
+- Create or edit a PDK registry manifest's tracks/vths/corners and file lists (omit the name to pick from existing packages):
 
 `wolf pdk menu {{tsmc65}}`
 

@@ -131,6 +131,14 @@ does yet -- the same "declared, not yet consumed" boundary as
 resolved or existence-checked by WOLF; join them against
 `context.technology.root` yourself if you add a consumer for one.
 
+## Listing and inspecting
+
+`wolf pdk list` lists every `pdk/*` manifest across all configured
+registries, with its pinned revision, installation status, owning
+registry, and a one-line summary (flat corner count, or track/vth combo
+count). `wolf pdk info <name>` shows one package's source, revision,
+license, and full track/vth/corner breakdown.
+
 ## Editing with `wolf pdk menu`
 
 `wolf pdk menu <name>` opens the existing `pdk/<name>` manifest (wherever

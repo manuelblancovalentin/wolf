@@ -105,20 +105,41 @@ to make the flow installable as
 .IR flow/name .
 .SH PDK COMMANDS
 .TP
-.BI "wolf pdk menu " name
-Interactively create or edit the
+.B wolf pdk list
+List every
+.B pdk/*
+registry manifest across all configured registries, with pinned revision,
+installation status, owning registry, and a one-line summary of its
+declared tracks/vths or flat corners.
+.TP
+.BI "wolf pdk info " name
+Show one
+.BI pdk/ name
+manifest's source, revision, registry, license, and declared
+tracks/vths/corners in detail.
+.TP
+.BI "wolf pdk menu " "[name]"
+Interactively create or edit a
 .BI pdk/ name
 registry manifest: its source root/revision, and its
 .B technology
 metadata -- either one flat corner set, or several named track/vth
 combinations (e.g. 9T/lvt, 7T/rvt), each with its own named timing
-corners and LEF/GDS/Verilog/SPICE/QRC file lists. A free-form
+corners (each optionally tagging its library
+.BR format ,
+e.g. liberty/ecsm/variation) and LEF/GDS/Verilog/SPICE/QRC file lists. A
+free-form
 .B generic
 bucket holds whatever doesn't depend on track/vth at all (a GDS layermap,
 RC extraction corners), edited as raw YAML in
 .BR $EDITOR .
+.I name
+may be dotted into a track/vth to jump straight there
+.RI ( tsmc65.9T.lvt );
+omit it entirely to pick from existing packages or name a new one.
 Creating a package this way asks which configured local registry to place
-it in when more than one is configured.
+it in when more than one is configured. Shell completion offers existing
+package names and their declared dotted track/vth forms.
 .SH BACKEND COMMANDS
 .TP
 .B wolf backend list

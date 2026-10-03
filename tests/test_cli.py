@@ -403,5 +403,92 @@ print(stream.getvalue(), end="")
         self.assertEqual([entry.name for entry in real_default.joinpath("envs").iterdir()], ["do-not-touch"])
 
 
+class PdkCommandTests(unittest.TestCase):
+    """`wolf pdk list`/`wolf pdk info` -- the discoverability gap of having
+    only `wolf pdk menu`, pointed at an isolated scratch registry so this
+    never lists the real host's own pdk/* packages. A fresh TestCase, not
+    a subclass of InstalledCliTests: WOLF_REGISTRY disables registry
+    aggregation entirely (see PackageRegistry.__init__), which would
+    break every one of that class's own inherited tests that need the
+    real builtin packages."""
+
+    def setUp(self):
+        self._temporary_directory = tempfile.TemporaryDirectory(prefix="wolf-pdk-cli-")
+        self.root = Path(self._temporary_directory.name)
+        self.registry = self.root / "registry"
+        (self.registry / "pdk").mkdir(parents=True)
+        self.environment = os.environ.copy()
+        self.environment.update({
+            "HOME": str(self.root / "home"),
+            "WOLF_HOME": str(self.root / "wolf-state"),
+            "WOLF_REGISTRY": str(self.registry),
+            "PYTHONPATH": str(SOURCE_ROOT),
+        })
+
+    def tearDown(self):
+        self._temporary_directory.cleanup()
+
+    def wolf(self, *arguments):
+        return subprocess.run(
+            [sys.executable, "-m", "wolf.cli", *arguments],
+            cwd=self.root, env=self.environment, text=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+        )
+
+    def assert_success(self, result):
+        self.assertEqual(
+            result.returncode, 0, msg=f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}",
+        )
+
+    def _write_manifest(self, name, *, tracked=False):
+        technology = {"name": name}
+        if tracked:
+            technology["tracks"] = {"9T": {"vths": {"lvt": {}, "rvt": {}}}}
+        else:
+            technology["timing"] = {"corners": {"typical": {}, "worst_case": {}}}
+        (self.registry / "pdk" / f"{name}.yaml").write_text(yaml.safe_dump({
+            "schema_version": 1, "kind": "pdk", "name": name, "description": f"{name} package",
+            "source": {"type": "local-path", "root": str(self.root), "revision": "V1"},
+            "validation": {"required_paths": []},
+            "metadata": {"technology": technology},
+        }), encoding="utf-8")
+
+    def test_list_shows_every_pdk_package_with_its_variant_summary(self):
+        self._write_manifest("flatpdk")
+        self._write_manifest("trackedpdk", tracked=True)
+        result = self.wolf("pdk", "list")
+        self.assert_success(result)
+        self.assertIn("flatpdk", result.stdout)
+        self.assertIn("flat, 2 corner(s)", result.stdout)
+        self.assertIn("trackedpdk", result.stdout)
+        self.assertIn("1 track(s), 2 track/vth combo(s)", result.stdout)
+
+    def test_list_with_no_packages_says_so(self):
+        result = self.wolf("pdk", "list")
+        self.assert_success(result)
+        self.assertIn("No pdk/* packages found", result.stdout)
+
+    def test_info_shows_source_corners_and_status(self):
+        self._write_manifest("flatpdk")
+        result = self.wolf("pdk", "info", "flatpdk")
+        self.assert_success(result)
+        self.assertIn("pdk/flatpdk", result.stdout)
+        self.assertIn("local-path", result.stdout)
+        self.assertIn("typical", result.stdout)
+        self.assertIn("worst_case", result.stdout)
+
+    def test_info_for_tracked_package_shows_each_track_vth(self):
+        self._write_manifest("trackedpdk", tracked=True)
+        result = self.wolf("pdk", "info", "trackedpdk")
+        self.assert_success(result)
+        self.assertIn("Track 9T/lvt", result.stdout)
+        self.assertIn("Track 9T/rvt", result.stdout)
+
+    def test_info_for_unknown_package_fails_clearly(self):
+        result = self.wolf("pdk", "info", "does-not-exist")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("unknown WOLF package", result.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()
