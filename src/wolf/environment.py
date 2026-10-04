@@ -15,7 +15,8 @@ from typing import Any, Mapping, Optional
 import yaml
 
 from wolf.context import (
-    ResolvedContext, ResolvedSource, ResolvedTechnology, ResolvedTimingCorner, resolve_stored_path,
+    CatalogFileList, CatalogLibrarySet, ResolvedContext, ResolvedSource, ResolvedTechnology,
+    ResolvedTimingCorner, resolve_stored_path,
 )
 from wolf.package.model import PackageId
 from wolf.package.registry import PackageRegistry
@@ -436,6 +437,96 @@ def _select_metal_stack(
     return stack
 
 
+def _catalog_stack_files(
+    root: Path, vth_data: Mapping[str, Any], key: str, metal_stack: Optional[str],
+) -> Optional[tuple[Path, ...]]:
+    """One track/vth's file list for a stack-keyed field (lef or gds),
+    building the technology's single resolved metal_stack -- or this
+    vth's own default, or its one declared stack if there's only one.
+    Returns None (not an error) when this vth doesn't declare the
+    relevant stack at all, or declares none unambiguously -- a catalog
+    entry simply isn't produced for it, the same "normal mid-edit state"
+    tolerance the rest of this module already extends to a package still
+    being populated.
+    """
+    value = vth_data.get(key)
+    if value is None:
+        return None
+    try:
+        if isinstance(value, list):
+            return _paths_under(root, value, f"catalog.{key}")
+        if isinstance(value, dict):
+            stack = metal_stack or vth_data.get("default_metal_stack")
+            if stack is None and len(value) == 1:
+                stack = next(iter(value))
+            if stack is None or stack not in value:
+                return None
+            return _paths_under(root, value[stack], f"catalog.{key}.{stack}")
+    except ValueError:
+        return None
+    return None
+
+
+def _build_catalog(
+    root: Path, tracks: Mapping[str, Any], metal_stack: Optional[str],
+) -> tuple[tuple[CatalogLibrarySet, ...], tuple[CatalogFileList, ...], tuple[CatalogFileList, ...]]:
+    """Walk every declared track/vth (not just the one variant an
+    environment selected) to build the full get_flow_config-style catalog
+    a real Flowtool-driven flow indexes itself at Tcl run time:
+    library_sets keyed by corner (confirmed against a real legacy
+    synthesis.tcl: `get_flow_config library_sets $name library_files $trk
+    $vth`), lef/gds keyed by track/vth only -- no corner level (lef/gds
+    aren't PVT-corner-dependent) and no metal-stack level either (also
+    confirmed against real Tcl: `get_flow_config init_physical_files
+    lef_files $trk $vth`, `get_flow_config std_cell_GDS_files $trk $vth`
+    -- neither indexes by stack, so WOLF resolves metal_stack to one
+    value across the whole catalog instead of exposing every stack).
+
+    A track/vth with a missing file, or without the resolved metal_stack,
+    is simply absent from the catalog rather than failing the whole
+    resolution -- the same tolerance _technology_variant already extends
+    to the one selected variant while a package is still being populated.
+    """
+    library_sets: list[CatalogLibrarySet] = []
+    lef_files: list[CatalogFileList] = []
+    gds_files: list[CatalogFileList] = []
+    for track_name, track_data in tracks.items():
+        if not isinstance(track_data, dict):
+            continue
+        vths = track_data.get("vths")
+        if not isinstance(vths, dict):
+            continue
+        for vth_name, vth_data in vths.items():
+            if not isinstance(vth_data, dict):
+                continue
+            corners = vth_data.get("timing", {})
+            corners = corners.get("corners", {}) if isinstance(corners, dict) else {}
+            if isinstance(corners, dict):
+                for corner_name, corner_data in corners.items():
+                    if not isinstance(corner_data, dict):
+                        continue
+                    libraries = corner_data.get("libraries", [])
+                    if not isinstance(libraries, list):
+                        continue
+                    try:
+                        paths = _paths_under(
+                            root, libraries,
+                            f"catalog.library_sets.{corner_name}.{track_name}.{vth_name}",
+                        )
+                    except ValueError:
+                        continue
+                    library_sets.append(CatalogLibrarySet(
+                        corner=corner_name, track=track_name, vth=vth_name, libraries=paths,
+                    ))
+            lef = _catalog_stack_files(root, vth_data, "lef", metal_stack)
+            if lef is not None:
+                lef_files.append(CatalogFileList(track=track_name, vth=vth_name, files=lef))
+            gds = _catalog_stack_files(root, vth_data, "gds", metal_stack)
+            if gds is not None:
+                gds_files.append(CatalogFileList(track=track_name, vth=vth_name, files=gds))
+    return tuple(library_sets), tuple(lef_files), tuple(gds_files)
+
+
 def _technology_variant(
     root: Path, track: str, vth: str, data: Any, reference: Optional[ComponentReference],
 ) -> tuple[
@@ -576,7 +667,11 @@ def _technology_inputs(
             *libraries, *technology_lefs, *gds_files, *verilog_models, *spice_models,
             *qrc_techfiles, *corner_qrc_files,
         )
+        catalog_library_sets, catalog_lef_files, catalog_gds_files = _build_catalog(
+            root, metadata["tracks"], metal_stack,
+        )
     else:
+        catalog_library_sets, catalog_lef_files, catalog_gds_files = (), (), ()
         metal_stack = None
         if reference is not None and (reference.track or reference.vth or reference.metal_stack):
             raise ValueError(
@@ -630,6 +725,8 @@ def _technology_inputs(
         qrc_techfiles=qrc_techfiles, generic=generic,
         checksums=checksums, dont_use_cells=tuple(dont_use),
         setup_yaml_fragment=setup_yaml_fragment,
+        catalog_library_sets=catalog_library_sets, catalog_lef_files=catalog_lef_files,
+        catalog_gds_files=catalog_gds_files,
     )
 
 

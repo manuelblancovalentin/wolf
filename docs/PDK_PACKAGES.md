@@ -172,6 +172,32 @@ does yet -- the same "declared, not yet consumed" boundary as
 resolved or existence-checked by WOLF; join them against
 `context.technology.root` yourself if you add a consumer for one.
 
+### `setup_yaml_fragment`: this PDK's own Flowtool setup.yaml chunk
+
+`technology.setup_yaml_fragment` points at one yaml file -- process/PDK-
+specific flow knobs (max routing layers, dont-use cells, decap cells,
+whatever your institution's real flow tunes per PDK), not committed
+library content. It's concatenated onto the institution's own
+`backend.cadence-flowtool.flowtool.setup_template` at run time (see
+[CADENCE_GENUS.md](CADENCE_GENUS.md)'s `setup_template` section for the
+exact mechanism and token set) -- a flat path field like any other,
+available for both flat and tracked packages:
+
+```yaml
+technology:
+  name: tsmc65
+  setup_yaml_fragment: setup/tsmc65.setup.fragment.yaml
+  tracks: {...}
+```
+
+Every track/vth/corner a tracked package declares is also injected into
+that same rendered setup.yaml automatically, as `library_sets`,
+`init_physical_files.lef_files`, and `std_cell_GDS_files` -- the exact
+`get_flow_config`-indexed shape a real Flowtool-driven flow's own Tcl
+expects. Nothing needs to be hand-maintained for that part; it comes
+straight from the same track/vth/corner data `wolf pdk menu` already
+edits.
+
 ## Listing and inspecting
 
 `wolf pdk list` lists every `pdk/*` manifest across all configured

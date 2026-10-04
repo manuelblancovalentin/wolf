@@ -10,7 +10,10 @@ from wolf.backend.cadence_genus import (
     FLOW_GENUS_SYN_GENERIC, FLOW_GENUS_SYN_MAP, FLOW_GENUS_SYN_OPT,
     _period_ns, prepare_genus_inputs,
 )
-from wolf.context import ResolvedContext, ResolvedSource, ResolvedTechnology, ResolvedTimingCorner
+from wolf.context import (
+    CatalogFileList, CatalogLibrarySet, ResolvedContext, ResolvedSource, ResolvedTechnology,
+    ResolvedTimingCorner,
+)
 from wolf.paths import builtin_flow_root
 
 TCLSH = shutil.which("tclsh")
@@ -190,6 +193,37 @@ class GenusSetupYamlFragmentTests(GenusFixtureTestCase):
         # Only the primary template's own header survives -- the fragment's
         # was dropped, so there's exactly one document-start marker.
         self.assertEqual(setup_text.count("%TAG"), 1)
+
+    def test_catalog_is_injected_with_the_confirmed_get_flow_config_keys(self):
+        """library_sets/init_physical_files/std_cell_GDS_files -- the exact
+        keys and nesting a real legacy synthesis.tcl's own get_flow_config
+        calls expect (get_flow_config library_sets $corner library_files
+        $track $vth; get_flow_config init_physical_files lef_files $track
+        $vth; get_flow_config std_cell_GDS_files $track $vth), covering
+        every track/vth the PDK declares, not just the one this run uses."""
+        lib = self.root / "typical.lib"
+        lef = self.root / "9t_lvt.lef"
+        gds = self.root / "9t_lvt.gds"
+        for path in (lib, lef, gds):
+            path.write_text(f"-- {path.name} --\n", encoding="utf-8")
+        technology = ResolvedTechnology(
+            package="pdk/demo", revision="1", name="demo", root=self.root,
+            track="9T", vth="lvt",
+            catalog_library_sets=(
+                CatalogLibrarySet(corner="bc", track="9T", vth="lvt", libraries=(lib,)),
+            ),
+            catalog_lef_files=(CatalogFileList(track="9T", vth="lvt", files=(lef,)),),
+            catalog_gds_files=(CatalogFileList(track="9T", vth="lvt", files=(gds,)),),
+        )
+        inputs = prepare_genus_inputs(
+            self._context(technology=technology), self.root / "backend" / "cadence-genus",
+        )
+        document = yaml.safe_load(inputs.setup_yaml.read_text(encoding="utf-8"))
+        self.assertEqual(
+            document["library_sets"]["bc"]["library_files"]["9T"]["lvt"], [str(lib)],
+        )
+        self.assertEqual(document["init_physical_files"]["lef_files"]["9T"]["lvt"], [str(lef)])
+        self.assertEqual(document["std_cell_GDS_files"]["9T"]["lvt"], [str(gds)])
 
     def test_flat_legacy_tokens_are_substituted(self):
         fragment = self._fragment(

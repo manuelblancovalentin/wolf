@@ -1731,6 +1731,10 @@ class PdkMenuApp(App[None]):
             Option("Back-End (LEF, GDS, techfiles, SPICE)", id="back_end"),
             Option(f"Generic / other fields ({len(generic)} key(s), edit as YAML)", id="generic"),
             Option(f"Synthesis dont_use cells ({len(dont_use)})", id="dont_use"),
+            Option(
+                f"Setup.yaml fragment: {technology.get('setup_yaml_fragment') or 'not set'}",
+                id="setup_yaml_fragment",
+            ),
         ])
         return options
 
@@ -1763,6 +1767,8 @@ class PdkMenuApp(App[None]):
             self._edit_generic()
         elif choice == "dont_use":
             self._edit_dont_use()
+        elif choice == "setup_yaml_fragment":
+            self._edit_setup_yaml_fragment()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "save":
@@ -1895,6 +1901,22 @@ class PdkMenuApp(App[None]):
                 self._refresh()
         self.push_screen(
             _StringListScreen("Dont_use cell name globs", synthesis.get("dont_use", [])), handle,
+        )
+
+    def _edit_setup_yaml_fragment(self) -> None:
+        def handle(value: Optional[str]) -> None:
+            if value is not None:
+                if value:
+                    self._technology["setup_yaml_fragment"] = value
+                else:
+                    self._technology.pop("setup_yaml_fragment", None)
+                self._refresh()
+        self.push_screen(
+            _SingleFileScreen(
+                "Setup.yaml fragment (flow knobs for this PDK)", self._root,
+                self._technology.get("setup_yaml_fragment"),
+            ),
+            handle,
         )
 
     def _edit_generic(self) -> None:

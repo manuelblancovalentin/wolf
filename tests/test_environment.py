@@ -453,6 +453,29 @@ class MultiTrackVthTechnologyTests(DeclarativeEnvironmentTests):
         self.assertEqual(len(context.technology.spice_models), 1)
         self.assertEqual(len(context.technology.qrc_techfiles), 1)
 
+    def test_catalog_covers_every_track_vth_not_just_the_selected_one(self):
+        """A get_flow_config-driven real flow indexes library_sets/lef_files
+        by whatever track/vth its own Tcl is given at run time -- the
+        catalog must include every declared combination, not collapse to
+        the one this particular environment happens to select."""
+        text = self._yaml_with_selector(track="9T", vth="lvt", extra_track=True)
+        context = resolve_declarative_environment(
+            load_environment(self._write(text, "tracked.yaml")),
+            state_root=self.state, environment_directory=self.environment,
+        )
+        self.assertEqual((context.technology.track, context.technology.vth), ("9T", "lvt"))
+        library_set_keys = {
+            (entry.corner, entry.track, entry.vth)
+            for entry in context.technology.catalog_library_sets
+        }
+        self.assertEqual(library_set_keys, {
+            ("typical", "9T", "lvt"), ("worst_case", "9T", "lvt"), ("typical", "7T", "rvt"),
+        })
+        lef_keys = {(entry.track, entry.vth) for entry in context.technology.catalog_lef_files}
+        self.assertEqual(lef_keys, {("9T", "lvt"), ("7T", "rvt")})
+        gds_keys = {(entry.track, entry.vth) for entry in context.technology.catalog_gds_files}
+        self.assertEqual(gds_keys, {("9T", "lvt")})  # 7T/rvt never declares gds
+
     def test_generic_bucket_is_passed_through_verbatim(self):
         text = self._yaml_with_selector()
         context = resolve_declarative_environment(

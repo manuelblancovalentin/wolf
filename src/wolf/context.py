@@ -74,6 +74,35 @@ class ResolvedTimingCorner:
 
 
 @dataclass(frozen=True)
+class CatalogLibrarySet:
+    """One (corner, track, vth)'s own library files -- the full cross
+    product a tracked technology package declares, not just the one
+    variant an environment selected. Exists so a get_flow_config-driven
+    real flow can index `library_sets.<corner>.library_files.<track>.<vth>`
+    itself at Tcl run time (its own code picks $trk/$vth; WOLF just hands
+    over every combination that exists)."""
+
+    corner: str
+    track: str
+    vth: str
+    libraries: tuple[Path, ...]
+
+
+@dataclass(frozen=True)
+class CatalogFileList:
+    """One (track, vth)'s own file list for a track/vth-keyed (not
+    corner-keyed) physical/behavioral field -- lef or gds, say. Built
+    against the technology's single resolved metal_stack (if the package
+    declares named stacks at all): a track/vth that doesn't declare that
+    stack is simply absent from the catalog, not an error -- not every
+    track/vth combination necessarily supports every stack."""
+
+    track: str
+    vth: str
+    files: tuple[Path, ...]
+
+
+@dataclass(frozen=True)
 class ResolvedTechnology:
     """Package-resolved technology views available to a backend.
 
@@ -107,6 +136,9 @@ class ResolvedTechnology:
     checksums: Mapping[str, str] = field(default_factory=dict)
     dont_use_cells: tuple[str, ...] = ()
     setup_yaml_fragment: Optional[Path] = None
+    catalog_library_sets: tuple[CatalogLibrarySet, ...] = ()
+    catalog_lef_files: tuple[CatalogFileList, ...] = ()
+    catalog_gds_files: tuple[CatalogFileList, ...] = ()
 
 
 @dataclass(frozen=True)

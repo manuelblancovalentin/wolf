@@ -369,18 +369,61 @@ def _setup_yaml_tokens(
     return tokens
 
 
+def _catalog_document(technology: Optional[ResolvedTechnology]) -> dict:
+    """The get_flow_config-indexed catalog keys injected into every run's
+    setup.yaml, built from the PDK's full track/vth/corner catalog (see
+    wolf.environment's technology.catalog_library_sets/catalog_lef_files/
+    catalog_gds_files). Key names and nesting are fixed, confirmed
+    against a real legacy synthesis.tcl's own get_flow_config calls --
+    not WOLF's invention:
+      get_flow_config library_sets $corner library_files $track $vth
+      get_flow_config init_physical_files lef_files $track $vth
+      get_flow_config std_cell_GDS_files $track $vth
+    Neither lef nor gds indexes by metal_stack -- WOLF already resolved
+    that to one value while building the catalog (see
+    wolf.environment._build_catalog), the same way DESIGN_NAME is one
+    resolved scalar rather than every design WOLF has ever heard of.
+    verilog/spice/qrc_techfiles have no confirmed get_flow_config access
+    pattern yet, so they're deliberately not injected here.
+    """
+    if technology is None:
+        return {}
+    library_sets: dict[str, Any] = {}
+    for entry in technology.catalog_library_sets:
+        corner = library_sets.setdefault(entry.corner, {"library_files": {}})
+        corner["library_files"].setdefault(entry.track, {})[entry.vth] = [
+            str(path) for path in entry.libraries
+        ]
+    lef_files: dict[str, Any] = {}
+    for entry in technology.catalog_lef_files:
+        lef_files.setdefault(entry.track, {})[entry.vth] = [str(path) for path in entry.files]
+    gds_files: dict[str, Any] = {}
+    for entry in technology.catalog_gds_files:
+        gds_files.setdefault(entry.track, {})[entry.vth] = [str(path) for path in entry.files]
+    document: dict[str, Any] = {}
+    if library_sets:
+        document["library_sets"] = library_sets
+    if lef_files:
+        document["init_physical_files"] = {"lef_files": lef_files}
+    if gds_files:
+        document["std_cell_GDS_files"] = gds_files
+    return document
+
+
 def _render_setup_yaml(
     setup_template: Path, technology: Optional[ResolvedTechnology], tokens: Mapping[str, str],
 ) -> str:
     """Render one run's Flowtool setup.yaml: concatenate the institution's
     primary template with the PDK's own setup_yaml_fragment (if declared --
-    see wolf.environment's technology.setup_yaml_fragment), then substitute
+    see wolf.environment's technology.setup_yaml_fragment), substitute
     every ${TOKEN} WOLF can resolve (see _setup_yaml_tokens), falling back
     to technology.generic for anything else a fragment references -- an
-    institution-specific directory root with no general WOLF model, say.
-    Any ${TOKEN} still present after both passes is a real error: a run's
-    actual setup.yaml should never be written with a literal, unresolved
-    placeholder still sitting in it.
+    institution-specific directory root with no general WOLF model, say
+    -- then inject the PDK's full track/vth/corner catalog (see
+    _catalog_document) as a few fixed top-level keys. Any ${TOKEN} still
+    unresolved after both substitution passes is a real error: a run's
+    actual setup.yaml should never be written with a literal placeholder
+    still sitting in it.
     """
     fragments = (technology.setup_yaml_fragment,) if technology and technology.setup_yaml_fragment else ()
     text = _concatenate_setup_fragments(setup_template, *fragments)
@@ -399,6 +442,13 @@ def _render_setup_yaml(
             + " -- define them under technology.generic in the pdk manifest, or add support "
             "for them in wolf.backend.cadence_genus._setup_yaml_tokens"
         )
+    catalog = _catalog_document(technology)
+    if catalog:
+        document = yaml.safe_load(text)
+        if not isinstance(document, dict):
+            raise ValueError(f"rendered setup.yaml is not a yaml mapping: {setup_template}")
+        document.update(catalog)
+        text = yaml.safe_dump(document, sort_keys=False)
     return text
 
 

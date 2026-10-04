@@ -127,11 +127,17 @@ backend:
 ```
 
 Both keys are required when overriding at all (omit the whole `flowtool`
-key to use WOLF's bundled default); each path must exist. WOLF substitutes
-plain `${TOKEN}` placeholders into copies of these files (the same
-mechanism the legacy Bash runner already uses via `sed`) -- it does not
-parse or otherwise understand their YAML structure. The template decides
-which of these tokens to use and how:
+key to use WOLF's bundled default); each path must exist.
+`prepare_genus_inputs` rejects a missing or nonexistent template path, a
+partial override (only one of the two keys given), or an unknown key under
+`backend.cadence-flowtool.flowtool`, before writing anything.
+
+### `flow_template`: WOLF's own `${WOLF_*}` tokens
+
+`flow_template` is always rendered by plain `${TOKEN}` substitution (the
+same mechanism the legacy Bash runner already uses via `sed`) -- WOLF
+does not parse or otherwise understand its YAML structure. The template
+decides which of these tokens to use and how:
 
 | Token | Value |
 |---|---|
@@ -146,9 +152,59 @@ which of these tokens to use and how:
 | `${WOLF_REPORTS_DIR}` | absolute directory the flow writes reports under |
 | `${WOLF_OUTPUTS_DIR}` | absolute directory the flow writes netlists under |
 
-`prepare_genus_inputs` rejects a missing or nonexistent template path, a
-partial override (only one of the two keys given), or an unknown key under
-`backend.cadence-flowtool.flowtool`, before writing anything.
+### `setup_template`: the flat legacy token set, a PDK fragment, and the catalog
+
+`setup_template` is the point where a real flow's own Tcl reads values
+back via `get_flow_config` rather than the `${WOLF_*}` mechanism above,
+so it's rendered differently, in three steps:
+
+1. **Concatenate.** If the selected technology package declares
+   `technology.setup_yaml_fragment` (a PDK/process-specific yaml chunk
+   `wolf pdk menu` owns -- see [PDK_PACKAGES.md](PDK_PACKAGES.md)), its
+   content is appended to `setup_template`'s own, mirroring the legacy
+   Bash backend's own `cp primary; tail -n +3 fragment >> ...`
+   (`bin/backends/cadence-flowtool.sh`'s `_wolf_backend_prepare`): the
+   fragment's own `%TAG !.../---` document header is dropped so the
+   result is still one valid document.
+2. **Substitute the flat token set**, matching that same legacy
+   mechanism's own `sed` map exactly (no `WOLF_` prefix):
+
+   | Token | Value |
+   |---|---|
+   | `${DESIGN_NAME}` | resolved design name |
+   | `${CONSTRAINTS_FILES}` | this run's generated `constraints.sdc`, as an inline yaml list |
+   | `${FLOORPLAN_FILE}` | `constraints.floorplan_def`, if set |
+   | `${PDK_DIR}` | the selected technology package's installed root |
+   | `${METAL_STACK}` / `${TRACKS}` / `${VTHS}` | the technology's resolved `metal_stack`/`track`/`vth`, if set |
+   | `${WORKSPACE_DIR}` / `${SCRIPTS_DIR}` / `${RUNDIR}` | resolved workspace root / scripts.\<N\> directory / this run's own directory |
+
+   Anything the fragment references outside that set falls back to
+   `technology.generic` (an institution-specific directory convention
+   with no general WOLF model, say); any `${TOKEN}` still unresolved
+   after both passes is a hard error naming it, never left as a literal
+   placeholder in a run's actual setup.yaml.
+3. **Inject the PDK's full catalog**, if the technology package declares
+   tracks: `library_sets.<corner>.library_files.<track>.<vth>`,
+   `init_physical_files.lef_files.<track>.<vth>`, and
+   `std_cell_GDS_files.<track>.<vth>` -- every track/vth/corner the
+   package declares, not just the one this run selected, so the same
+   `get_flow_config` call works regardless of which `$trk`/`$vth` a
+   flow's own Tcl happens to be given. These three keys and their
+   nesting are fixed, confirmed against a real legacy `synthesis.tcl`'s
+   own `get_flow_config` calls -- not WOLF's invention. Metal stack is
+   *not* an indexed level here (confirmed the same way): WOLF resolves
+   it to one value across the whole catalog before injecting, the same
+   way `${DESIGN_NAME}` is already a single resolved scalar rather than
+   every design WOLF has ever heard of. `verilog_models`/`spice_models`/
+   `qrc_techfiles` have no confirmed `get_flow_config` access pattern
+   yet, so nothing is injected for them.
+
+Whenever `setup_template` is overridden this way, WOLF's own
+`mmmc.tcl`/`technology.tcl` generation (plain Tcl variables read out of
+`flow-config.tcl`, not `get_flow_config`) is skipped entirely -- a
+project whose real flow already reads library/corner data back via
+`get_flow_config` out of `setup.yaml` never needs WOLF's separate
+generation for that at all.
 
 ## scripts.\<N\>/scripts.latest
 
