@@ -367,6 +367,63 @@ class BrowseFilesScreenNavigationTests(unittest.TestCase):
         asyncio.run(drive())
         self.assertEqual(result, [str(qrc_file.resolve())])
 
+    def test_regex_filter_narrows_bulk_add_and_clears_with_empty_pattern(self):
+        from textual.app import App, ComposeResult
+        from textual.widgets import DirectoryTree, Input
+        from wolf.pdk_menu import _BrowseFilesScreen
+
+        corners = self.root / "corners"
+        corners.mkdir()
+        bc_file = corners / "bc1d11.lib"
+        wc_file = corners / "wc1d08.lib"
+        tc_file = corners / "tc1d20.lib"
+        for path in (bc_file, wc_file, tc_file):
+            path.write_text("-- lib --\n", encoding="utf-8")
+        result: list = []
+
+        class HostApp(App):
+            def compose(self) -> ComposeResult:
+                return []
+
+        async def drive():
+            app = HostApp()
+            async with app.run_test() as pilot:
+                def handle(picked):
+                    result.extend(picked or [])
+                app.push_screen(_BrowseFilesScreen(str(corners), title="t"), handle)
+                await pilot.pause()
+
+                # Narrow to the "bc" corner only, then bulk-add the (still
+                # highlighted, unmoved) root directory -- only the matching
+                # file should come through.
+                await pilot.press("r")
+                await pilot.pause()
+                app.screen.query_one(Input).value = "^bc"
+                await pilot.press("enter")
+                await pilot.pause()
+                await pilot.press("a")
+                await pilot.pause()
+
+                # Clear the filter (submit empty) and bulk-add again -- the
+                # remaining two files should come through now, the already
+                # -picked bc file skipped as a duplicate.
+                await pilot.press("r")
+                await pilot.pause()
+                app.screen.query_one(Input).value = ""
+                await pilot.press("enter")
+                await pilot.pause()
+                await pilot.press("a")
+                await pilot.pause()
+
+                await pilot.press("escape")  # done
+                await pilot.pause()
+
+        asyncio.run(drive())
+        self.assertEqual(
+            sorted(result),
+            sorted(str(path.resolve()) for path in (bc_file, wc_file, tc_file)),
+        )
+
 
 class OpenPdkMenuRoutingTests(unittest.TestCase):
     """The plain-Python routing in open_pdk_menu (existing vs. new package),

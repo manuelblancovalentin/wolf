@@ -221,5 +221,14 @@ never a dead end, though: `u` climbs one directory level at a time, since
 the QRC techfile just as often lives in a sibling directory as the
 libraries picked moments earlier, not the same one.
 
+The file browser also takes `r` to narrow the file names shown to those
+matching a regex -- directories stay visible so you can keep navigating,
+only files are filtered. Submit an empty pattern to clear it. Real
+libraries routinely pack every track/vth/corner variant into one
+directory (`tcbn65lpbc1d11d32_ecsm.lib`, `tcbn65lpwc1d08m40_ecsm.lib`,
+...); this is for narrowing that down to the one you actually want --
+`bc1d11` to find just the `bc` corner at that voltage, say -- instead of
+scanning the whole directory by eye.
+
 `q`/`escape` quits without saving; `s` saves in place without closing;
 the Save button saves and closes.

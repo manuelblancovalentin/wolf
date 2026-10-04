@@ -24,7 +24,10 @@ corner's qrc file, then the next corner) is the common case. That starting
 directory is never a hard boundary, though: 'u' climbs one level at a
 time from wherever the tree is currently rooted, since a corner's QRC
 techfile just as often lives in a sibling directory as the libraries
-picked moments earlier, not the same one.
+picked moments earlier, not the same one. The file browser also takes
+'r' to narrow file names to those matching a regex -- real libraries
+pack dozens of track/vth/corner variants into one directory, and this is
+for picking the one `.lib` you actually want out of that.
 
 NAME is optional: `wolf pdk menu` with none picks from existing pdk/*
 packages (or offers to create one). A given NAME may also be a dotted
@@ -38,6 +41,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import re
 import subprocess
 from typing import Any, Optional
 
@@ -125,14 +129,25 @@ class _PickScreen(ModalScreen[Optional[str]]):
 
 
 class _FilterableDirectoryTree(DirectoryTree):
-    """A DirectoryTree that can hide dotfiles/dotdirs, toggled at runtime."""
+    """A DirectoryTree that can hide dotfiles/dotdirs, and narrow file names
+    by regex, both toggled at runtime. Directories are never hidden by the
+    regex filter (only by the dotfile toggle) -- it narrows what files you
+    see while picking, not where you can navigate; applying the same regex
+    at every level means it stays in effect as you move around, not just
+    in the directory it was set in."""
 
     show_hidden = False
+    name_filter: Optional[re.Pattern] = None
 
     def filter_paths(self, paths):
-        if self.show_hidden:
-            return paths
-        return [path for path in paths if not path.name.startswith(".")]
+        if not self.show_hidden:
+            paths = [path for path in paths if not path.name.startswith(".")]
+        if self.name_filter is not None:
+            paths = [
+                path for path in paths
+                if self._safe_is_dir(path) or self.name_filter.search(path.name)
+            ]
+        return paths
 
 
 def _parent_or_none(path: str) -> Optional[str]:
@@ -153,15 +168,21 @@ class _BrowseFilesScreen(ModalScreen[Optional[list]]):
     being rooted at the last directory used (for convenience -- see
     App.last_browsed_dir) never traps you there, since a corner's QRC
     techfile just as often lives in a sibling directory as the libraries
-    you picked moments earlier, not the same one; 'h' toggles hidden (dot)
-    entries, off by default; enter on a file opens it in $EDITOR to
-    inspect it rather than adding it (adding is always an explicit 'a');
-    escape finishes, returning whatever was added (possibly empty).
+    you picked moments earlier, not the same one; 'r' narrows the file
+    names shown to those matching a regex (directories stay visible so
+    you can still navigate through them; submit an empty pattern to
+    clear it) -- real libraries keep dozens of track/vth/corner variants
+    in one directory, and picking the one `.lib` you actually want out of
+    that is the common case this is for; 'h' toggles hidden (dot) entries,
+    off by default; enter on a file opens it in $EDITOR to inspect it
+    rather than adding it (adding is always an explicit 'a'); escape
+    finishes, returning whatever was added (possibly empty).
     """
 
     BINDINGS = [
         ("a", "add", "Add"),
         ("u", "up", "Up a level"),
+        ("r", "filter", "Filter (regex)"),
         ("h", "toggle_hidden", "Hidden files"),
         ("escape", "done", "Done"),
     ]
@@ -172,6 +193,7 @@ class _BrowseFilesScreen(ModalScreen[Optional[list]]):
         self._title = title
         self._selected: list[str] = []
         self._show_hidden = False
+        self._name_filter: Optional[re.Pattern] = None
 
     def compose(self) -> ComposeResult:
         with Vertical(id="dialog"):
@@ -184,9 +206,11 @@ class _BrowseFilesScreen(ModalScreen[Optional[list]]):
     def _hint(self) -> str:
         picked = f"{len(self._selected)} file(s) picked" if self._selected else "none picked yet"
         hidden = "shown" if self._show_hidden else "hidden"
+        filtered = f"/{self._name_filter.pattern}/" if self._name_filter else "none"
         return (
             f"{picked} — enter: expand folder / edit file in $EDITOR — a: add — "
-            f"u: up a level — h: toggle dotfiles (currently {hidden}) — esc: done"
+            f"u: up a level — r: filter (currently {filtered}) — "
+            f"h: toggle dotfiles (currently {hidden}) — esc: done"
         )
 
     def _refresh_hint(self) -> None:
@@ -207,6 +231,36 @@ class _BrowseFilesScreen(ModalScreen[Optional[list]]):
             return
         tree.path = parent
 
+    def action_filter(self) -> None:
+        current = self._name_filter.pattern if self._name_filter else ""
+
+        def handle(value: Optional[str]) -> None:
+            if value is None:
+                return  # cancelled -- keep whatever filter was already set
+            value = value.strip()
+            if not value:
+                self._name_filter = None
+                self.app.notify("Filter cleared.")
+            else:
+                try:
+                    self._name_filter = re.compile(value)
+                except re.error as error:
+                    self.app.notify(f"Invalid regex: {error}", severity="error")
+                    return
+                self.app.notify(f"Filtering file names by /{value}/")
+            tree = self.query_one(DirectoryTree)
+            tree.name_filter = self._name_filter
+            tree.reload()
+            self._refresh_hint()
+
+        self.app.push_screen(
+            _TextScreen(
+                "Filter file names by regex (submit empty to clear)",
+                current,
+            ),
+            handle,
+        )
+
     def on_directory_tree_file_selected(self, event: DirectoryTree.FileSelected) -> None:
         event.stop()
         _open_in_editor(self.app, event.path)
@@ -220,7 +274,7 @@ class _BrowseFilesScreen(ModalScreen[Optional[list]]):
         if path.is_dir():
             added = 0
             for entry in sorted(path.iterdir()):
-                if entry.is_file():
+                if entry.is_file() and (self._name_filter is None or self._name_filter.search(entry.name)):
                     resolved = str(entry.resolve())
                     if resolved not in self._selected:
                         self._selected.append(resolved)
