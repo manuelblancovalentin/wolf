@@ -204,7 +204,16 @@ edits.
 registries, with its pinned revision, installation status, owning
 registry, and a one-line summary (flat corner count, or track/vth combo
 count). `wolf pdk info <name>` shows one package's source, revision,
-license, and full track/vth/corner breakdown.
+license, full track/vth/corner breakdown, and -- when present --
+`author`/`creation-date`/`last-modified-date`.
+
+Those three are plain top-level yaml fields (siblings of `schema_version`/
+`kind`/`name`), not under `metadata`, and `wolf pdk menu` stamps them
+itself: `author` and `creation-date` are set once, the first time a new
+package is saved (`author` from `$USER`), and `last-modified-date` is
+updated on every save after that, new or existing. Hand-editing the yaml
+works too -- `wolf pdk menu` never overwrites `author`/`creation-date`
+if they're already set, only adds them when missing.
 
 ## Editing with `wolf pdk menu`
 

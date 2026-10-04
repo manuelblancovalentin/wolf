@@ -56,6 +56,9 @@ class PackageManifest:
     registry_type: str = "builtin"
     registry_revision: Optional[str] = None
     manifest_path: Optional[str] = None
+    author: Optional[str] = None
+    created: Optional[str] = None
+    last_modified: Optional[str] = None
 
     @property
     def revision(self) -> str:

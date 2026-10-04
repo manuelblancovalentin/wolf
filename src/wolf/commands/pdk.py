@@ -113,6 +113,12 @@ def command_info(args: argparse.Namespace) -> int:
     ui.key_value("Status", store.status(manifest))
     if manifest.license:
         ui.key_value("License", manifest.license.get("spdx") or manifest.license.get("name", ""))
+    if manifest.author:
+        ui.key_value("Author", manifest.author)
+    if manifest.created:
+        ui.key_value("Created", manifest.created)
+    if manifest.last_modified:
+        ui.key_value("Last modified", manifest.last_modified)
 
     technology = manifest.metadata.get("technology", {})
     technology = technology if isinstance(technology, dict) else {}

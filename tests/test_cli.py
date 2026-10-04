@@ -485,6 +485,20 @@ class PdkCommandTests(unittest.TestCase):
         self.assertIn("typical", result.stdout)
         self.assertIn("worst_case", result.stdout)
 
+    def test_info_shows_author_and_timestamps_when_present(self):
+        self._write_manifest("flatpdk")
+        manifest_path = self.registry / "pdk" / "flatpdk.yaml"
+        document = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+        document["author"] = "manuelbv"
+        document["creation-date"] = "2026-09-20 00:00:00"
+        document["last-modified-date"] = "2026-10-04 00:05:17"
+        manifest_path.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+        result = self.wolf("pdk", "info", "flatpdk")
+        self.assert_success(result)
+        self.assertIn("manuelbv", result.stdout)
+        self.assertIn("2026-09-20 00:00:00", result.stdout)
+        self.assertIn("2026-10-04 00:05:17", result.stdout)
+
     def test_info_for_tracked_package_shows_each_track_vth(self):
         self._write_manifest("trackedpdk", tracked=True)
         result = self.wolf("pdk", "info", "trackedpdk")

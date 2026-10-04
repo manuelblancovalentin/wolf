@@ -578,6 +578,37 @@ class PdkMenuEndToEndTests(unittest.TestCase):
         self.assertEqual(document["source"]["revision"], "V2")
         self.assertEqual(document["name"], "smoketest")
 
+    def test_save_stamps_author_creation_date_once_and_last_modified_every_time(self):
+        data = _default_document("smoketest", str(self.root / "libroot"))
+
+        async def drive():
+            app = PdkMenuApp("smoketest", self.manifest_path, data, is_new=True)
+            async with app.run_test() as pilot:
+                with patch.dict(os.environ, {"USER": "manuelbv"}):
+                    await pilot.press("s")
+                    await pilot.pause()
+
+        asyncio.run(drive())
+        first = yaml.safe_load(self.manifest_path.read_text(encoding="utf-8"))
+        self.assertEqual(first["author"], "manuelbv")
+        self.assertIn("creation-date", first)
+        self.assertIn("last-modified-date", first)
+        created = first["creation-date"]
+
+        async def drive_again():
+            loaded = yaml.safe_load(self.manifest_path.read_text(encoding="utf-8"))
+            app = PdkMenuApp("smoketest", self.manifest_path, loaded, is_new=False)
+            async with app.run_test() as pilot:
+                await pilot.press("s")
+                await pilot.pause()
+
+        asyncio.run(drive_again())
+        second = yaml.safe_load(self.manifest_path.read_text(encoding="utf-8"))
+        # Re-saving an existing manifest never re-stamps author/creation-date.
+        self.assertEqual(second["author"], "manuelbv")
+        self.assertEqual(second["creation-date"], created)
+        self.assertIn("last-modified-date", second)
+
 
 class BrowseFilesScreenNavigationTests(unittest.TestCase):
     """The actual bug report: a browser rooted at the last directory used

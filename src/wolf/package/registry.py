@@ -110,6 +110,11 @@ def load_manifest(
         registry_type=registry_type,
         registry_revision=registry_revision,
         manifest_path=str(path.resolve()),
+        author=data.get("author") if isinstance(data.get("author"), str) else None,
+        created=data.get("creation-date") if isinstance(data.get("creation-date"), str) else None,
+        last_modified=(
+            data.get("last-modified-date") if isinstance(data.get("last-modified-date"), str) else None
+        ),
     )
 
 

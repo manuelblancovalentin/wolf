@@ -39,6 +39,7 @@ forms (see wolf.commands.pdk._candidates).
 
 from __future__ import annotations
 
+from datetime import datetime
 import os
 from pathlib import Path
 import re
@@ -2029,6 +2030,11 @@ class PdkMenuApp(App[None]):
 
     def _save(self, *, close: bool) -> None:
         temporary = self._manifest_path.with_suffix(".yaml.tmp")
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        if self._is_new:
+            self._data.setdefault("author", os.environ.get("USER", "unknown"))
+            self._data.setdefault("creation-date", now)
+        self._data["last-modified-date"] = now
         try:
             self._manifest_path.parent.mkdir(parents=True, exist_ok=True)
             temporary.write_text(yaml.safe_dump(self._data, sort_keys=False), encoding="utf-8")
