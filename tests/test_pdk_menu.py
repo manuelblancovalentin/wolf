@@ -384,6 +384,58 @@ class PdkMenuEndToEndTests(unittest.TestCase):
         corners = document["metadata"]["technology"]["tracks"]["9T"]["vths"]["lvt"]["timing"]["corners"]
         self.assertEqual(corners, {})
 
+    def test_front_end_corner_picker_shows_every_corner_regardless_of_format(self):
+        """Corners created via the Tracks path default to format: liberty
+        unless hand-edited -- Front-End -> Timing/Power -> ECSM must still
+        show them all, the same list Tracks shows for the same vth, not
+        just the ones that happen to already be tagged format: ecsm. An
+        earlier version filtered by format here, hiding real corners."""
+        data = _default_document("smoketest", str(self.root / "libroot"))
+        data["metadata"]["technology"]["tracks"] = {"9T": {"vths": {"rvt": {
+            "timing": {"corners": {
+                "bc": {"libraries": ["lib/typical.lib"], "format": "ecsm"},
+                "tc": {"libraries": ["lib/typical.lib"]},  # format defaults to liberty
+                "wc": {"libraries": ["lib/typical.lib"]},  # format defaults to liberty
+            }},
+        }}}}
+
+        async def drive():
+            app = PdkMenuApp("smoketest", self.manifest_path, data, is_new=True)
+            async with app.run_test() as pilot:
+                main_list = app.query_one(OptionList)
+                self._select(main_list, "Front-End (timing/power, verilog)")
+                await pilot.press("enter")
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "Timing / Power (lib: ECSM/NLDM/CCS)")
+                await pilot.press("enter")
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "ECSM")
+                await pilot.press("enter")
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "9T")
+                await pilot.press("enter")
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "rvt")
+                await pilot.press("enter")
+                await pilot.pause()
+                corner_list = app.screen.query_one(OptionList)
+                self.assertEqual(
+                    sorted(o.prompt for o in corner_list.options if o.prompt != "+ Create new..."),
+                    ["bc", "tc", "wc"],
+                )
+                await pilot.press("escape")
+                await pilot.pause()
+                await pilot.press("escape")
+                await pilot.pause()
+                await pilot.press("escape")
+                await pilot.pause()
+                await pilot.press("escape")
+                await pilot.pause()
+                await pilot.press("escape")
+                await pilot.pause()
+
+        asyncio.run(drive())
+
     def test_clone_vth_regex_substitutes_paths_and_drops_missing_ones(self):
         """Populating a second vth (lvt) by cloning an already-populated one
         (rvt) and regex-substituting its paths is the fast way to fill in a

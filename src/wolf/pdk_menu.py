@@ -1198,11 +1198,14 @@ def _enter_timing_format(
     def on_vth(track_name, vth_name, vth_data, vth_crumb, resume_vth) -> None:
         corners = vth_data.setdefault("timing", {}).setdefault("corners", {})
 
-        def matching() -> list[str]:
-            return [
-                name for name, data in corners.items()
-                if isinstance(data, dict) and data.get("format", "liberty") == format_name
-            ]
+        def existing() -> list[str]:
+            # Every corner, regardless of its own declared format -- this
+            # must show exactly what the Tracks path shows for the same
+            # vth. Filtering by format here (as an earlier version did)
+            # meant a corner created without ever touching this exact
+            # format path (e.g. via Tracks, or cloned) stayed invisible
+            # from Front-End even though it's the very same data.
+            return sorted(corners)
 
         def do_corner(corner_name: str, resume_corner) -> None:
             data = corners.setdefault(corner_name, {"libraries": []})
@@ -1222,8 +1225,8 @@ def _enter_timing_format(
             on_done()
 
         _loop_named_level(
-            app, f"{vth_crumb}\nPick/create/delete a {format_name} corner", matching,
-            f"Corner name (format={format_name}, e.g. typical, worst_case)",
+            app, f"{vth_crumb}\nPick/create/delete a corner (new ones default to {format_name})",
+            existing, f"Corner name (format={format_name}, e.g. typical, worst_case)",
             do_corner, resume_vth, on_delete=delete_corner,
         )
     _navigate_to_vth(app, technology, full_breadcrumb, on_vth, on_return)

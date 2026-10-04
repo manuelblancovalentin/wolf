@@ -198,9 +198,12 @@ declare for it.
 **Front-End** / **Back-End** mirror the real library layout instead:
 Front-End → Timing/Power → a delay-model format (ECSM/NLDM/CCS, or type
 your own) lands you picking, creating, or deleting a track, then a vth,
-then a corner already using that format (or a new one, pre-set to it) --
-the same corner editor Tracks would open, just reached by "what kind of
-file is this" instead of "which track/vth first". Front-End → Verilog,
+then any of that vth's corners (a new one created from here is pre-set
+to this format, but every existing corner shows regardless of its own
+format -- this is the same corner list Tracks shows for that vth, not a
+filtered view of it) -- the same corner editor Tracks would open, just
+reached by "what kind of file is this" instead of "which track/vth
+first". Front-End → Verilog,
 and Back-End → GDS / LEF / LEF → Techfiles / SPICE, work the same way --
 pick/create/delete a track and vth, then (for GDS/LEF/Techfiles) a metal
 stack, then edit that one file list directly. Nothing about the
