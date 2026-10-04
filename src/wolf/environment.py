@@ -369,9 +369,9 @@ def _parse_timing_corners(
 
 
 # A flat (no tracks) technology's timing/physical keys, kept exactly as before.
-_FLAT_TECHNOLOGY_FIELDS = {"name", "timing", "physical", "synthesis"}
+_FLAT_TECHNOLOGY_FIELDS = {"name", "timing", "physical", "synthesis", "setup_yaml_fragment"}
 # A multi-track technology's own top-level keys.
-_TRACKED_TECHNOLOGY_FIELDS = {"name", "tracks", "generic", "synthesis"}
+_TRACKED_TECHNOLOGY_FIELDS = {"name", "tracks", "generic", "synthesis", "setup_yaml_fragment"}
 
 
 _STACK_KEYED_FIELDS = ("lef", "gds", "qrc_techfiles")
@@ -606,6 +606,14 @@ def _technology_inputs(
             raise ValueError("technology.timing.corner must be a nonempty string")
         all_files = (*libraries, *technology_lefs, *cell_lefs, *rc_files, *gds_files, *corner_qrc_files)
 
+    setup_yaml_fragment_value = metadata.get("setup_yaml_fragment")
+    setup_yaml_fragment: Optional[Path] = None
+    if setup_yaml_fragment_value is not None:
+        if not isinstance(setup_yaml_fragment_value, str) or not setup_yaml_fragment_value:
+            raise ValueError("technology.setup_yaml_fragment must be a nonempty string")
+        setup_yaml_fragment = _paths_under(root, [setup_yaml_fragment_value], "setup_yaml_fragment")[0]
+        all_files = (*all_files, setup_yaml_fragment)
+
     checksums = {
         str(path): hashlib.sha256(path.read_bytes()).hexdigest() for path in all_files
     }
@@ -621,6 +629,7 @@ def _technology_inputs(
         gds_files=gds_files, verilog_models=verilog_models, spice_models=spice_models,
         qrc_techfiles=qrc_techfiles, generic=generic,
         checksums=checksums, dont_use_cells=tuple(dont_use),
+        setup_yaml_fragment=setup_yaml_fragment,
     )
 
 

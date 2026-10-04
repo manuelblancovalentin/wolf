@@ -89,7 +89,7 @@ class MixedLanguagePackageTests(unittest.TestCase):
         setup_template = templates / "setup.yaml.template"
         flow_template = templates / "flow.yaml.template"
         if not setup_template.is_file():
-            setup_template.write_text("design: ${WOLF_DESIGN_NAME}\n", encoding="utf-8")
+            setup_template.write_text("design: ${DESIGN_NAME}\n", encoding="utf-8")
             flow_template.write_text(
                 "setup_yaml: ${WOLF_SETUP_YAML}\nscripts_dir: ${WOLF_SCRIPTS_DIR}\n", encoding="utf-8"
             )
@@ -180,7 +180,11 @@ class MixedLanguagePackageTests(unittest.TestCase):
         self.assertEqual(manifest["packages"][0]["revision"], "flow-rev")
 
     def test_genus_loads_package_resolved_technology_before_rtl(self):
-        context = self._technology_context()
+        # technology.tcl is WOLF's own generation for the bundled default
+        # flow only -- disable the fixture's flowtool override so this
+        # actually exercises that path (see generate_wolf_technology_scripts
+        # in prepare_genus_inputs).
+        context = replace(self._technology_context(), backend_overrides={"cadence-flowtool": {}})
         output = prepare_genus_inputs(context, self.root / "technology")
         self.assertIsNotNone(output.technology_script)
         technology = output.technology_script.read_text(encoding="utf-8")

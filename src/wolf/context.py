@@ -106,6 +106,7 @@ class ResolvedTechnology:
     generic: Mapping[str, Any] = field(default_factory=dict)
     checksums: Mapping[str, str] = field(default_factory=dict)
     dont_use_cells: tuple[str, ...] = ()
+    setup_yaml_fragment: Optional[Path] = None
 
 
 @dataclass(frozen=True)

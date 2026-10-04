@@ -17,7 +17,7 @@ from typing import Any, Mapping, Optional
 
 import yaml
 
-from wolf.context import ResolvedContext
+from wolf.context import ResolvedContext, ResolvedTechnology
 from wolf.paths import builtin_flow_root
 
 
@@ -314,6 +314,94 @@ def _render_template(template: Path, placeholders: Mapping[str, str]) -> str:
     return text
 
 
+_SETUP_YAML_TOKEN_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+
+
+def _concatenate_setup_fragments(primary: Path, *fragments: Path) -> str:
+    """Concatenate a Flowtool setup.yaml's primary (institution-supplied)
+    template with any number of additional fragments -- a PDK's own
+    technology.setup_yaml_fragment, say -- mirroring the legacy
+    `cp primary; tail -n +3 fragment >> ...` mechanism in
+    bin/backends/cadence-flowtool.sh: a fragment's own first two lines
+    (the `%TAG !.../---` document header every one of these templates
+    starts with) are dropped, so concatenating several never produces
+    more than the one document-start marker the result actually needs.
+    """
+    text = primary.read_text(encoding="utf-8")
+    if not text.endswith("\n"):
+        text += "\n"
+    for fragment in fragments:
+        lines = fragment.read_text(encoding="utf-8").splitlines(keepends=True)
+        text += "".join(lines[2:])
+    return text
+
+
+def _setup_yaml_tokens(
+    context: ResolvedContext, destination: Path, scripts_directory: Path, constraints: Path,
+) -> dict[str, str]:
+    """The flat ${TOKEN} values WOLF itself can resolve for a Flowtool
+    setup.yaml, matching bin/backends/cadence-flowtool.sh's own sed
+    substitution map exactly (DESIGN_NAME, CONSTRAINTS_FILES, ...) so an
+    institution template authored against that legacy mechanism needs no
+    changes to work here instead. A token with no WOLF equivalent (an
+    institution-specific directory convention, say) is deliberately not
+    included here -- see _render_setup_yaml's technology.generic fallback
+    and its error for anything still unresolved after that.
+    """
+    technology = context.technology
+    tokens = {
+        "DESIGN_NAME": context.design_name,
+        "CONSTRAINTS_FILES": yaml.safe_dump([str(constraints)], default_flow_style=True).strip(),
+        "WORKSPACE_DIR": str(context.workspace_root),
+        "SCRIPTS_DIR": str(scripts_directory),
+        "RUNDIR": str(destination),
+    }
+    if context.floorplan_def:
+        tokens["FLOORPLAN_FILE"] = str(context.floorplan_def)
+    if technology is not None:
+        tokens["PDK_DIR"] = str(technology.root)
+        if technology.metal_stack:
+            tokens["METAL_STACK"] = technology.metal_stack
+        if technology.track:
+            tokens["TRACKS"] = technology.track
+        if technology.vth:
+            tokens["VTHS"] = technology.vth
+    return tokens
+
+
+def _render_setup_yaml(
+    setup_template: Path, technology: Optional[ResolvedTechnology], tokens: Mapping[str, str],
+) -> str:
+    """Render one run's Flowtool setup.yaml: concatenate the institution's
+    primary template with the PDK's own setup_yaml_fragment (if declared --
+    see wolf.environment's technology.setup_yaml_fragment), then substitute
+    every ${TOKEN} WOLF can resolve (see _setup_yaml_tokens), falling back
+    to technology.generic for anything else a fragment references -- an
+    institution-specific directory root with no general WOLF model, say.
+    Any ${TOKEN} still present after both passes is a real error: a run's
+    actual setup.yaml should never be written with a literal, unresolved
+    placeholder still sitting in it.
+    """
+    fragments = (technology.setup_yaml_fragment,) if technology and technology.setup_yaml_fragment else ()
+    text = _concatenate_setup_fragments(setup_template, *fragments)
+    for key, value in tokens.items():
+        text = text.replace("${" + key + "}", value)
+    generic = technology.generic if technology else {}
+
+    def substitute_from_generic(match: "re.Match[str]") -> str:
+        key = match.group(1)
+        return str(generic[key]) if key in generic else match.group(0)
+    text = _SETUP_YAML_TOKEN_RE.sub(substitute_from_generic, text)
+    leftover = sorted(set(_SETUP_YAML_TOKEN_RE.findall(text)))
+    if leftover:
+        raise ValueError(
+            "setup.yaml references undefined token(s): " + ", ".join(leftover)
+            + " -- define them under technology.generic in the pdk manifest, or add support "
+            "for them in wolf.backend.cadence_genus._setup_yaml_tokens"
+        )
+    return text
+
+
 def _snapshot_scripts(base_directory: Path, files: Mapping[str, str]) -> Path:
     """Materialize flow scripts into a deduplicated, numbered scripts.<N> dir.
 
@@ -499,9 +587,22 @@ def prepare_genus_inputs(
     reports_directory.mkdir(exist_ok=True)
     outputs_directory.mkdir(exist_ok=True)
     source_script = destination / "sources.tcl"
+    flow_root = _flow_root(context)
+    setup_template, flow_template = _flowtool_templates(context, flow_root)
+    # A Flowtool-native setup_template is the point where a project's real
+    # flow reads library/corner data back via get_flow_config out of
+    # setup.yaml (see _render_setup_yaml) -- WOLF's own mmmc.tcl/
+    # technology.tcl generation (plain Tcl variables in flow-config.tcl) is
+    # for the bundled default flow only, never alongside a real one.
+    generate_wolf_technology_scripts = setup_template is None
     has_corners = bool(context.technology and context.technology.timing_corners)
-    technology_script = destination / "technology.tcl" if (context.technology and not has_corners) else None
-    mmmc_script = destination / "mmmc.tcl" if has_corners else None
+    technology_script = (
+        destination / "technology.tcl"
+        if (generate_wolf_technology_scripts and context.technology and not has_corners) else None
+    )
+    mmmc_script = (
+        destination / "mmmc.tcl" if (generate_wolf_technology_scripts and has_corners) else None
+    )
     genus_overrides = _genus_set_db_overrides(context)
     overrides_script = destination / "overrides.tcl" if genus_overrides else None
     flow_config_script = destination / "flow-config.tcl"
@@ -510,8 +611,6 @@ def prepare_genus_inputs(
     package_defines = tuple(str(value) for value in context.defines)
     backend_defines = tuple(GENUS_REQUIRED_DEFINES)
     effective_defines = _effective_genus_defines(context)
-    flow_root = _flow_root(context)
-    setup_template, flow_template = _flowtool_templates(context, flow_root)
 
     if technology_script is not None:
         libraries = " ".join(_tcl_quote(str(path)) for path in context.technology.timing_libraries)
@@ -677,7 +776,10 @@ def prepare_genus_inputs(
     flow_yaml = destination / f"flow.{context.design_name}.yaml"
     if setup_template is not None:
         setup_yaml = destination / f"setup.{context.design_name}.yaml"
-        setup_yaml.write_text(_render_template(setup_template, placeholders), encoding="utf-8")
+        tokens = _setup_yaml_tokens(context, destination, scripts_directory, constraints)
+        setup_yaml.write_text(
+            _render_setup_yaml(setup_template, context.technology, tokens), encoding="utf-8",
+        )
         placeholders = {**placeholders, "WOLF_SETUP_YAML": str(setup_yaml)}
     else:
         setup_yaml = None

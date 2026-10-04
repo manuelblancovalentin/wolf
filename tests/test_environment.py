@@ -466,6 +466,26 @@ class MultiTrackVthTechnologyTests(DeclarativeEnvironmentTests):
             context.technology.generic["rc_corners"]["rc_25C"]["temperature"], 25,
         )
 
+    def test_setup_yaml_fragment_resolves_to_an_existing_path(self):
+        self._package("pdk", "tsmc65-tracked", "pdk-rev", {"technology": {
+            "name": "tsmc65-tracked",
+            "setup_yaml_fragment": "setup/tsmc65.setup.fragment.yaml",
+            "tracks": {"9T": {"vths": {"lvt": {
+                "timing": {"corners": {"typical": {"libraries": ["lib/9t_lvt_typical.lib"]}}},
+            }}}},
+        }})
+        self._write_file("x", "setup/tsmc65.setup.fragment.yaml")
+        self._write_file("x", "lib/9t_lvt_typical.lib")
+        text = self._complete_yaml().replace("package: pdk/asap7", "package: pdk/tsmc65-tracked")
+        context = resolve_declarative_environment(
+            load_environment(self._write(text, "tracked.yaml")),
+            state_root=self.state, environment_directory=self.environment,
+        )
+        self.assertEqual(
+            context.technology.setup_yaml_fragment,
+            context.technology.root / "setup" / "tsmc65.setup.fragment.yaml",
+        )
+
     def test_multiple_tracks_require_explicit_selection(self):
         text = self._yaml_with_selector(extra_track=True)
         with self.assertRaisesRegex(ValueError, "technology.track and technology.vth are required"):

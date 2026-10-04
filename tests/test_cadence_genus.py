@@ -65,8 +65,8 @@ def _flowtool_overrides(root: Path) -> dict:
     setup_template = templates / "setup.yaml.template"
     flow_template = templates / "flow.yaml.template"
     setup_template.write_text(
-        "design: ${WOLF_DESIGN_NAME}\ntop: ${WOLF_DESIGN_TOP}\n"
-        "scripts_dir: ${WOLF_SCRIPTS_DIR}\n", encoding="utf-8",
+        "%TAG ! tag:design.stylus.cadence.com,0.1:\n---\n"
+        "design: ${DESIGN_NAME}\nscripts_dir: ${SCRIPTS_DIR}\n", encoding="utf-8",
     )
     flow_template.write_text(
         "setup_yaml: ${WOLF_SETUP_YAML}\nscripts_dir: ${WOLF_SCRIPTS_DIR}\n"
@@ -155,12 +155,83 @@ class GenusFlowtoolTemplateTests(GenusFixtureTestCase):
         setup_text = inputs.setup_yaml.read_text(encoding="utf-8")
         flow_text = inputs.flow_yaml.read_text(encoding="utf-8")
         self.assertIn("design: demo", setup_text)
-        self.assertIn("top: top", setup_text)
         self.assertIn(str(inputs.scripts_directory), setup_text)
         self.assertIn(str(inputs.setup_yaml), flow_text)
         self.assertIn(str(inputs.scripts_directory), flow_text)
         self.assertNotIn("${", setup_text)
         self.assertNotIn("${", flow_text)
+
+
+class GenusSetupYamlFragmentTests(GenusFixtureTestCase):
+    """setup.yaml composition: the institution's primary setup_template
+    concatenated with the PDK's own technology.setup_yaml_fragment, then
+    the flat legacy token set substituted -- see
+    bin/backends/cadence-flowtool.sh's own _wolf_backend_prepare, which
+    this mirrors (cp + tail -n +3 concatenation, then one sed pass)."""
+
+    def _fragment(self, content: str) -> Path:
+        path = self.root / "pdk-setup-fragment.yaml"
+        path.write_text(
+            "%TAG ! tag:design.stylus.cadence.com,0.1:\n---\n" + content, encoding="utf-8",
+        )
+        return path
+
+    def test_pdk_fragment_is_concatenated_without_its_own_document_header(self):
+        fragment = self._fragment("dont_use_cells:\n  - '*D0'\n")
+        technology = ResolvedTechnology(
+            package="pdk/demo", revision="1", name="demo", root=self.root,
+            setup_yaml_fragment=fragment,
+        )
+        inputs = prepare_genus_inputs(
+            self._context(technology=technology), self.root / "backend" / "cadence-genus",
+        )
+        setup_text = inputs.setup_yaml.read_text(encoding="utf-8")
+        self.assertIn("dont_use_cells:\n  - '*D0'", setup_text)
+        # Only the primary template's own header survives -- the fragment's
+        # was dropped, so there's exactly one document-start marker.
+        self.assertEqual(setup_text.count("%TAG"), 1)
+
+    def test_flat_legacy_tokens_are_substituted(self):
+        fragment = self._fragment(
+            "pdk_dir: ${PDK_DIR}\nmetal_stack: ${METAL_STACK}\ntracks: ${TRACKS}\nvths: ${VTHS}\n"
+            "constraints: ${CONSTRAINTS_FILES}\n"
+        )
+        technology = ResolvedTechnology(
+            package="pdk/demo", revision="1", name="demo", root=self.root,
+            track="9T", vth="lvt", metal_stack="9lmT2", setup_yaml_fragment=fragment,
+        )
+        inputs = prepare_genus_inputs(
+            self._context(technology=technology), self.root / "backend" / "cadence-genus",
+        )
+        setup_text = inputs.setup_yaml.read_text(encoding="utf-8")
+        self.assertIn(f"pdk_dir: {self.root}", setup_text)
+        self.assertIn("metal_stack: 9lmT2", setup_text)
+        self.assertIn("tracks: 9T", setup_text)
+        self.assertIn("vths: lvt", setup_text)
+        self.assertNotIn("${", setup_text)
+
+    def test_technology_generic_is_a_fallback_source_for_unknown_tokens(self):
+        fragment = self._fragment("io_lib_dir: ${IO_LIB_DIR}\n")
+        technology = ResolvedTechnology(
+            package="pdk/demo", revision="1", name="demo", root=self.root,
+            setup_yaml_fragment=fragment, generic={"IO_LIB_DIR": "/asic/Library/TSMC/io"},
+        )
+        inputs = prepare_genus_inputs(
+            self._context(technology=technology), self.root / "backend" / "cadence-genus",
+        )
+        setup_text = inputs.setup_yaml.read_text(encoding="utf-8")
+        self.assertIn("io_lib_dir: /asic/Library/TSMC/io", setup_text)
+
+    def test_unresolvable_token_is_flagged_not_left_blank(self):
+        fragment = self._fragment("io_lib_dir: ${IO_LIB_DIR}\n")
+        technology = ResolvedTechnology(
+            package="pdk/demo", revision="1", name="demo", root=self.root,
+            setup_yaml_fragment=fragment,
+        )
+        with self.assertRaisesRegex(ValueError, "undefined token.*IO_LIB_DIR"):
+            prepare_genus_inputs(
+                self._context(technology=technology), self.root / "backend" / "cadence-genus",
+            )
 
 
 class GenusScriptsSnapshotTests(GenusFixtureTestCase):
@@ -566,9 +637,14 @@ class GenusMultiCornerMmmcTests(GenusFixtureTestCase):
         )
 
     def test_single_corner_keeps_the_plain_technology_script(self):
+        """mmmc.tcl/technology.tcl are WOLF's own generation for the bundled
+        default flow only -- disable the flowtool override fixture so this
+        actually exercises that path (see generate_wolf_technology_scripts
+        in prepare_genus_inputs)."""
         technology = ResolvedTechnology(package="pdk/demo", revision="1", name="demo", root=self.root)
         inputs = prepare_genus_inputs(
-            self._context(technology=technology), self.root / "backend" / "cadence-genus",
+            self._context(technology=technology, backend_overrides={"cadence-flowtool": {}}),
+            self.root / "backend" / "cadence-genus",
         )
         self.assertIsNone(inputs.mmmc_script)
         self.assertIsNotNone(inputs.technology_script)
@@ -581,7 +657,8 @@ class GenusMultiCornerMmmcTests(GenusFixtureTestCase):
             timing_corners=self._corners(),
         )
         inputs = prepare_genus_inputs(
-            self._context(technology=technology), self.root / "backend" / "cadence-genus",
+            self._context(technology=technology, backend_overrides={"cadence-flowtool": {}}),
+            self.root / "backend" / "cadence-genus",
         )
         self.assertIsNone(inputs.technology_script)
         self.assertIsNotNone(inputs.mmmc_script)

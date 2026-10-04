@@ -833,12 +833,33 @@ def _apply_clone(vth_data: dict, pattern: re.Pattern, replace: str, root: Path) 
     return new_data, all_rows
 
 
+def _common_path_prefix(paths: list[str]) -> str:
+    """The longest directory prefix shared by every path, or "" if there
+    isn't one (mixed absolute/relative paths, or fewer than 2 distinct
+    directories) -- stripped from a clone preview's rows so what's left
+    is just the part that actually differs, not a repeated screenful of
+    identical leading directories."""
+    if len(paths) < 2:
+        return ""
+    try:
+        common = os.path.commonpath(paths)
+    except ValueError:
+        return ""
+    # commonpath may return a bare filename shared by every path with no
+    # real directory in common -- only a genuine directory prefix is worth
+    # stripping.
+    return common if any(os.sep in path[len(common):] for path in paths) and common not in ("", ".") else ""
+
+
 class _ClonePreviewScreen(ModalScreen[bool]):
     """Shows every path a clone would produce (old -> new) before
     committing, with a green OK if the new path exists on disk and a red
     MISSING if it doesn't. Confirming drops every MISSING row from the
     cloned vth -- it's a preview of exactly what _apply_clone already
-    computed, not a separate judgment call."""
+    computed, not a separate judgment call. A directory prefix shared by
+    every old and new path is stripped and shown once up top instead of
+    repeated on every row -- with a few corners and several file fields,
+    that's almost the entire path on every line otherwise."""
 
     BINDINGS = [("c", "confirm", "Confirm"), ("escape", "cancel", "Cancel")]
 
@@ -849,11 +870,25 @@ class _ClonePreviewScreen(ModalScreen[bool]):
 
     def compose(self) -> ComposeResult:
         missing = sum(1 for row in self._rows if not row["exists"])
+        prefix = _common_path_prefix(
+            [row["old"] for row in self._rows] + [row["new"] for row in self._rows],
+        )
+
+        def strip(path: str) -> str:
+            return path[len(prefix):].lstrip(os.sep) if prefix else path
+
         with VerticalScroll(id="dialog"):
             yield Static(self._title, id="dialog-title")
+            if prefix:
+                yield Static(f"[dim]common path (stripped below): {prefix}{os.sep}[/dim]")
             for row in self._rows:
                 mark = "[green]OK[/green]" if row["exists"] else "[red]MISSING[/red]"
-                yield Static(f"{mark}  {row['location']}\n   {row['old']}\n-> {row['new']}")
+                yield Static(
+                    f"{mark}  {row['location']}\n"
+                    f"  {strip(row['old'])}\n"
+                    f"  -> {strip(row['new'])}"
+                )
+                yield Static("-" * 60, classes="clone-divider")
             yield Static(
                 f"{len(self._rows)} path(s), {missing} missing (dropped on confirm) -- "
                 f"c: confirm -- esc: cancel",
@@ -1581,6 +1616,7 @@ class PdkMenuApp(App[None]):
     }
     #dialog-title { color: #ad4ce5; text-style: bold; margin-bottom: 1; }
     #dialog-hint { color: $text-muted; margin-top: 1; }
+    .clone-divider { color: $text-muted; margin-bottom: 1; }
     Screen { align: center middle; }
     OptionList { border: round #ad4ce5; }
     #actions { height: auto; align: center middle; margin-top: 1; }
