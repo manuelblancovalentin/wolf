@@ -47,6 +47,10 @@ LEF, GDS, Verilog/SPICE behavioral models, and QRC extraction captables.
 Declare `tracks` instead of `timing`/`physical` (the two are mutually
 exclusive -- a package is one shape or the other, not a mix):
 
+GDS is listed here for completeness but is always flat, same as
+verilog_models/spice_models -- see [Metal stack](#metal-stack-lefqrc_techfiles-per-named-stack)
+below for why it doesn't share lef/qrc_techfiles' per-stack axis.
+
 ```yaml
 metadata:
   technology:
@@ -63,9 +67,7 @@ metadata:
             lef:
               9lmT2: [lef/9t_lvt_9lmT2.lef]
               7lmT1: [lef/9t_lvt_7lmT1.lef]
-            gds:
-              9lmT2: [gds/9t_lvt_9lmT2.gds]
-              7lmT1: [gds/9t_lvt_7lmT1.gds]
+            gds: [gds/9t_lvt.gds]
             qrc_techfiles:
               9lmT2: [qrc/9t_lvt_9lmT2.captable]
               7lmT1: [qrc/9t_lvt_7lmT1.captable]
@@ -91,22 +93,36 @@ several files (a tech LEF plus a pad LEF plus a custom LEF, say). Only a
 corner's own `qrc_tech_file` is a single path, since that's what
 `create_rc_corner -qrc_tech_file` actually takes.
 
-### Metal stack (`lef`/`gds`/`qrc_techfiles` per named stack)
+### Metal stack (`lef`/`qrc_techfiles` per named stack)
 
-`lef`/`gds`/`qrc_techfiles` are physically tied to a **metal stack** --
-how many routing layers the design commits to, plus a top-metal routing
+`lef`/`qrc_techfiles` are physically tied to a **metal stack** -- how
+many routing layers the design commits to, plus a top-metal routing
 option (e.g. TSMC's `9lmT2` = 9 metal layers, top-metal option "T2").
 It's a real, independent design axis: the *same* track/vth cells can be
 implemented against any of several stacks, and switching stacks (even
 just to try two for the same design) should be as simple as changing one
-field, not re-declaring the whole vth.
+field, not re-declaring the whole vth. A cell's own LEF (pin layers,
+blockages) and its QRC extraction captable (BEOL parasitics) genuinely
+depend on which stack you're routing against -- confirmed by diffing
+real LEF files across stacks (different `PITCH`, different via rules).
 
-Instead of a flat list, declare each of `lef`/`gds`/`qrc_techfiles` as a
-mapping of stack name to its file list (as in the example above). All
-three that are present must declare the *same* set of stack names --
-WOLF rejects a vth where `lef` has `{9lmT2, 7lmT1}` but `gds` only has
-`{9lmT2}`, rather than silently resolving an inconsistent pair. A vth
-with only one stack can still use a flat list (no selection needed,
+`gds` is *not* stack-keyed, even though it may look like it should be by
+analogy: a cell's own GDS geometry (its transistors, local interconnect,
+pin shapes) lives on the lower metal layers shared by every stack
+option, so the same GDS file serves every stack a track/vth is built
+against. It's declared the same way as `verilog_models`/`spice_models`
+-- always a flat list, never a per-stack mapping. (A package written
+before this distinction existed, with `gds` as a `{stack: [...]}`
+mapping, still resolves -- the selected `metal_stack`'s entry is used --
+but `wolf pdk menu` flattens it to the new shape automatically the
+moment you open that vth.)
+
+Instead of a flat list, declare each of `lef`/`qrc_techfiles` as a
+mapping of stack name to its file list (as in the example above). Both
+that are present must declare the *same* set of stack names -- WOLF
+rejects a vth where `lef` has `{9lmT2, 7lmT1}` but `qrc_techfiles` only
+has `{9lmT2}`, rather than silently resolving an inconsistent pair. A
+vth with only one stack can still use a flat list (no selection needed,
 exactly like a single-corner technology).
 
 An environment picks the stack via `technology.metal_stack`:
@@ -209,10 +225,10 @@ license, full track/vth/corner breakdown, and -- when present --
 
 For a tracked package, `wolf pdk info` also breaks each declared metal
 stack down by where it's actually used -- every track/vth combo that
-populates it, and which of lef/gds/qrc_techfiles each one has files for
-(`9lmT2: 9T/lvt (lef+gds), 7T/rvt (lef)`) -- the same "where is this
-stack really used" view `wolf pdk menu`'s own clone flow needs you to
-already have in your head, surfaced without opening the menu.
+populates it, and which of lef/qrc_techfiles each one has files for
+(`9lmT2: 9T/lvt (lef+qrc_techfiles), 7T/rvt (lef)`) -- the same "where
+is this stack really used" view `wolf pdk menu`'s own clone flow needs
+you to already have in your head, surfaced without opening the menu.
 
 Those three are plain top-level yaml fields (siblings of `schema_version`/
 `kind`/`name`), not under `metadata`, and `wolf pdk menu` stamps them
@@ -231,10 +247,10 @@ package's local filesystem root.
 
 Two ways to get to the same data:
 
-**Tracks** → a track's vths → a vth's corners, metal stacks (LEF/GDS/QRC
-techfiles together, one named stack at a time), and flat Verilog/SPICE
-model lists → a corner's own libraries, format, and optional QRC tech
-file. This is the structural view: pick track/vth first, then what to
+**Tracks** → a track's vths → a vth's corners, metal stacks (LEF/QRC
+techfiles together, one named stack at a time), and flat GDS/Verilog/
+SPICE model lists → a corner's own libraries, format, and optional QRC
+tech file. This is the structural view: pick track/vth first, then what to
 declare for it.
 
 **Front-End** / **Back-End** mirror the real library layout instead:
@@ -245,12 +261,13 @@ to this format, but every existing corner shows regardless of its own
 format -- this is the same corner list Tracks shows for that vth, not a
 filtered view of it) -- the same corner editor Tracks would open, just
 reached by "what kind of file is this" instead of "which track/vth
-first". Front-End → Verilog,
-and Back-End → GDS / LEF / LEF → Techfiles / SPICE, work the same way --
-pick/create/delete a track and vth, then (for GDS/LEF/Techfiles) a metal
-stack, then edit that one file list directly. Nothing about the
-underlying data differs between the two paths; pick whichever matches
-how you're currently thinking about the library.
+first". Front-End → Verilog, and Back-End → GDS / SPICE work the same
+way -- pick/create/delete a track and vth, then edit that one flat file
+list directly. Back-End → LEF / LEF → Techfiles add one more step: a
+metal stack (LEF and QRC techfiles are stack-dependent; GDS isn't, so it
+skips straight to the file list like Verilog/SPICE do). Nothing about
+the underlying data differs between the two paths; pick whichever
+matches how you're currently thinking about the library.
 
 Every picker along either path shows the full path so far at the top
 (`tsmc65 / Front-End / Timing-Power / ECSM / 9T / lvt`, say), and `esc`
@@ -278,10 +295,14 @@ stack is picked, both paths: the Tracks path's own tracks/track/metal-
 stacks screens, and the Front-End/Back-End track/vth/metal-stack pickers
 (`_PickCreateDeleteScreen`) -- the same underlying `c` on whichever
 screen you're on, regardless of which path got you there. Cloning a
-metal stack always clones the whole stack (LEF + GDS + QRC techfiles
-together), even if you reached it through Back-End → GDS specifically,
+metal stack always clones the whole stack (LEF + QRC techfiles
+together), even if you reached it through Back-End → LEF specifically,
 to stay consistent with what cloning the same stack from the Tracks
-path's metal-stacks screen does.
+path's metal-stacks screen does. GDS isn't part of a metal stack (see
+[Metal stack](#metal-stack-lefqrc_techfiles-per-named-stack) above), so
+cloning a vth or track still carries its GDS list along -- there's just
+no separate "clone the stack's GDS" step, since there's no per-stack GDS
+to begin with.
 
 You're asked for the new name, then land on a screen for building the
 substitution list itself: `a` adds one (find regex, then replace) pair,

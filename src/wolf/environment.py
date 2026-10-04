@@ -375,14 +375,20 @@ _FLAT_TECHNOLOGY_FIELDS = {"name", "timing", "physical", "synthesis", "setup_yam
 _TRACKED_TECHNOLOGY_FIELDS = {"name", "tracks", "generic", "synthesis", "setup_yaml_fragment"}
 
 
-_STACK_KEYED_FIELDS = ("lef", "gds", "qrc_techfiles")
+# gds is deliberately not here: a cell's own GDS geometry lives on the
+# metal layers shared by every stack option, so (unlike lef and
+# qrc_techfiles, both genuinely tied to the chosen stack) it doesn't vary
+# by metal_stack -- see _resolve_gds_field for the one remaining place
+# a legacy per-stack gds mapping is still tolerated, for packages that
+# declared it that way before this stopped being a real axis for gds.
+_STACK_KEYED_FIELDS = ("lef", "qrc_techfiles")
 
 
 def _vth_metal_stacks(data: Mapping[str, Any], field: str) -> Optional[tuple[str, ...]]:
-    """If this vth declares lef/gds/qrc_techfiles per named metal stack (a
+    """If this vth declares lef/qrc_techfiles per named metal stack (a
     mapping) rather than one flat list, return the shared stack names --
     every stack-keyed field that's present must declare the exact same
-    set, so lef/gds/qrc_techfiles can never silently disagree about which
+    set, so lef/qrc_techfiles can never silently disagree about which
     stack is which. Returns None when none of them use the mapping form
     at all (a single-stack vth, unchanged from before this existed).
     """
@@ -527,6 +533,37 @@ def _build_catalog(
     return tuple(library_sets), tuple(lef_files), tuple(gds_files)
 
 
+def _resolve_gds_field(
+    root: Path, data: Mapping[str, Any], reference: Optional[ComponentReference], field: str,
+    metal_stack: Optional[str],
+) -> tuple[Path, ...]:
+    """gds is always a flat list going forward -- a cell's own GDS
+    geometry lives on metal layers shared by every stack option, unlike
+    lef/qrc_techfiles. A legacy per-stack mapping (from before this
+    stopped being a real axis for gds) still resolves rather than
+    erroring: `metal_stack` (the one lef/qrc_techfiles already resolved
+    to, if any) is tried first, falling back to this field's own
+    default_metal_stack or its one declared stack if there's only one --
+    the same tolerance the rest of this module extends to a package
+    that's mid-migration, not fully consistent yet.
+    """
+    value = data.get("gds", [])
+    if isinstance(value, list):
+        return _paths_under(root, value, f"{field}.gds")
+    if not isinstance(value, dict):
+        raise ValueError(f"technology.{field}.gds must be a list of paths")
+    stack = metal_stack or (reference.metal_stack if reference else None) or data.get("default_metal_stack")
+    if stack is None and len(value) == 1:
+        stack = next(iter(value))
+    if stack is None or stack not in value:
+        raise ValueError(
+            f"technology.{field}.gds is declared per metal stack (a legacy shape gds no longer "
+            "needs), but no stack could be selected for it -- set technology.metal_stack, add "
+            f"{field}.default_metal_stack, or flatten gds to a single list"
+        )
+    return _paths_under(root, value[stack], f"{field}.gds.{stack}")
+
+
 def _technology_variant(
     root: Path, track: str, vth: str, data: Any, reference: Optional[ComponentReference],
 ) -> tuple[
@@ -535,13 +572,17 @@ def _technology_variant(
 ]:
     """Parse one tracks.<track>.vths.<vth> entry: corners, lef, gds, verilog, spice, qrc.
 
-    lef/gds/qrc_techfiles are physically tied to a metal stack (routing
-    layer count plus top-metal option, e.g. 9lmT2) -- a real design axis,
-    not a detail to just pick one file for and forget: the same track/vth
-    can legitimately be built against several stacks (cloning an
-    environment and only changing technology.metal_stack is meant to just
-    work). See _vth_metal_stacks/_select_metal_stack for how the stack
-    actually gets picked.
+    lef/qrc_techfiles are physically tied to a metal stack (routing layer
+    count plus top-metal option, e.g. 9lmT2) -- a real design axis, not a
+    detail to just pick one file for and forget: the same track/vth can
+    legitimately be built against several stacks (cloning an environment
+    and only changing technology.metal_stack is meant to just work). See
+    _vth_metal_stacks/_select_metal_stack for how the stack actually gets
+    picked. gds does not share that axis -- a cell's own GDS geometry
+    lives on metal layers shared by every stack option -- so it's always
+    a flat list (see _resolve_gds_field for the one remaining tolerance:
+    a legacy per-stack mapping, from before this stopped being a real
+    axis for gds, still resolves rather than erroring).
     """
     field = f"tracks.{track}.vths.{vth}"
     if not isinstance(data, dict):
@@ -560,7 +601,6 @@ def _technology_variant(
             )
         metal_stack = None
         lef = _paths_under(root, data.get("lef", []), f"{field}.lef")
-        gds = _paths_under(root, data.get("gds", []), f"{field}.gds")
         qrc_techfiles = _paths_under(root, data.get("qrc_techfiles", []), f"{field}.qrc_techfiles")
     else:
         metal_stack = _select_metal_stack(stack_names, data, reference, field)
@@ -571,9 +611,9 @@ def _technology_variant(
                 return ()
             return _paths_under(root, value[metal_stack], f"{field}.{key}.{metal_stack}")
         lef = stack_paths("lef")
-        gds = stack_paths("gds")
         qrc_techfiles = stack_paths("qrc_techfiles")
 
+    gds = _resolve_gds_field(root, data, reference, field, metal_stack)
     verilog_models = _paths_under(root, data.get("verilog_models", []), f"{field}.verilog_models")
     spice_models = _paths_under(root, data.get("spice_models", []), f"{field}.spice_models")
     return (

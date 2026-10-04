@@ -316,19 +316,16 @@ class PdkMenuEndToEndTests(unittest.TestCase):
         self.assertEqual(resolved.metal_stack, "9lmT2")
         self.assertEqual([p.name for p in resolved.technology_lefs], ["9lmT2.lef"])
 
-    def test_back_end_metal_stack_picker_supports_clone_too(self):
-        """The metal-stack picker reached via Back-End -> GDS -> track ->
-        vth is a different screen class (_PickCreateDeleteScreen) than the
-        Tracks path's own metal-stacks screen -- clone has to be wired
-        into both, not just one, or it silently only works from Tracks."""
+    def test_back_end_gds_navigation_is_flat_not_metal_stack_keyed(self):
+        """Unlike LEF, GDS -> track -> vth lands directly on a flat file
+        list -- no metal-stack picker in between -- since a cell's own
+        GDS geometry doesn't vary by metal stack."""
         gds_dir = self.root / "libroot" / "gds"
         gds_dir.mkdir()
-        (gds_dir / "9t_hvt_9lmT2.gds").write_text("x", encoding="utf-8")
-        (gds_dir / "9t_hvt_7lmT1.gds").write_text("x", encoding="utf-8")
+        (gds_dir / "x.gds").write_text("-- gds --\n", encoding="utf-8")
         data = _default_document("smoketest", str(self.root / "libroot"))
-        data["metadata"]["technology"]["tracks"] = {"9T": {"vths": {"hvt": {
+        data["metadata"]["technology"]["tracks"] = {"9T": {"vths": {"lvt": {
             "timing": {"corners": {"typical": {"libraries": ["lib/typical.lib"]}}},
-            "gds": {"9lmT2": ["gds/9t_hvt_9lmT2.gds"]},
         }}}}
 
         async def drive():
@@ -339,6 +336,105 @@ class PdkMenuEndToEndTests(unittest.TestCase):
                 await pilot.press("enter")
                 await pilot.pause()
                 self._select(app.screen.query_one(OptionList), "GDS")
+                await pilot.press("enter")
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "9T")
+                await pilot.press("enter")
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "lvt")
+                await pilot.press("enter")
+                await pilot.pause()
+                # Straight onto the flat GDS-files _FileListScreen -- no
+                # "pick/create a metal stack" screen in between.
+                await pilot.press("a")
+                await pilot.pause()
+                await pilot.press("down")  # into gds/ (the only child)
+                await pilot.pause()
+                await pilot.press("enter")  # expand
+                await pilot.pause()
+                await pilot.press("down")
+                await pilot.pause()
+                await pilot.press("a")  # add x.gds
+                await pilot.pause()
+                await pilot.press("escape")  # done browsing
+                await pilot.pause()
+                while len(app.screen_stack) > 1:
+                    await pilot.press("escape")
+                    await pilot.pause()
+                await pilot.press("s")
+                await pilot.pause()
+
+        asyncio.run(drive())
+
+        document = yaml.safe_load(self.manifest_path.read_text(encoding="utf-8"))
+        gds = document["metadata"]["technology"]["tracks"]["9T"]["vths"]["lvt"]["gds"]
+        self.assertEqual(gds, ["gds/x.gds"])
+
+    def test_opening_a_vth_migrates_legacy_per_stack_gds_to_a_flat_list(self):
+        """A vth saved before gds stopped being stack-keyed still has its
+        old {stack: [...]} shape on disk -- opening it (either path)
+        flattens it automatically instead of leaving stale, now-unreadable
+        data sitting there untouched."""
+        data = _default_document("smoketest", str(self.root / "libroot"))
+        data["metadata"]["technology"]["tracks"] = {"9T": {"vths": {"lvt": {
+            "timing": {"corners": {"typical": {"libraries": ["lib/typical.lib"]}}},
+            "gds": {"9lmT2": ["gds/a.gds"], "7lmT1": ["gds/b.gds"]},
+            "default_metal_stack": "7lmT1",
+        }}}}
+
+        async def drive():
+            app = PdkMenuApp("smoketest", self.manifest_path, data, is_new=True)
+            async with app.run_test() as pilot:
+                main_list = app.query_one(OptionList)
+                self._select(main_list, "Tracks (1 track/vth group(s))")
+                await pilot.press("enter")
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "9T (1 vth(s))")
+                await pilot.press("enter")
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "lvt (1 corner(s))")
+                await pilot.press("enter")  # opening the vth triggers migration
+                await pilot.pause()
+                while len(app.screen_stack) > 1:
+                    await pilot.press("escape")
+                    await pilot.pause()
+                await pilot.press("s")
+                await pilot.pause()
+
+        asyncio.run(drive())
+
+        document = yaml.safe_load(self.manifest_path.read_text(encoding="utf-8"))
+        gds = document["metadata"]["technology"]["tracks"]["9T"]["vths"]["lvt"]["gds"]
+        # default_metal_stack ("7lmT1") wins the migration pick.
+        self.assertEqual(gds, ["gds/b.gds"])
+
+    def test_back_end_metal_stack_picker_supports_clone_too(self):
+        """The metal-stack picker reached via Back-End -> LEF -> LEF
+        files -> track -> vth is a different screen class
+        (_PickCreateDeleteScreen) than the Tracks path's own
+        metal-stacks screen -- clone has to be wired into both, not just
+        one, or it silently only works from Tracks."""
+        lef_dir = self.root / "libroot" / "lef"
+        lef_dir.mkdir()
+        (lef_dir / "9t_hvt_9lmT2.lef").write_text("x", encoding="utf-8")
+        (lef_dir / "9t_hvt_7lmT1.lef").write_text("x", encoding="utf-8")
+        data = _default_document("smoketest", str(self.root / "libroot"))
+        data["metadata"]["technology"]["tracks"] = {"9T": {"vths": {"hvt": {
+            "timing": {"corners": {"typical": {"libraries": ["lib/typical.lib"]}}},
+            "lef": {"9lmT2": ["lef/9t_hvt_9lmT2.lef"]},
+        }}}}
+
+        async def drive():
+            app = PdkMenuApp("smoketest", self.manifest_path, data, is_new=True)
+            async with app.run_test() as pilot:
+                main_list = app.query_one(OptionList)
+                self._select(main_list, "Back-End (LEF, GDS, techfiles, SPICE)")
+                await pilot.press("enter")
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "LEF")
+                await pilot.press("enter")
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "LEF files")
                 await pilot.press("enter")
                 await pilot.pause()
                 self._select(app.screen.query_one(OptionList), "9T")
@@ -386,10 +482,10 @@ class PdkMenuEndToEndTests(unittest.TestCase):
         asyncio.run(drive())
 
         document = yaml.safe_load(self.manifest_path.read_text(encoding="utf-8"))
-        gds = document["metadata"]["technology"]["tracks"]["9T"]["vths"]["hvt"]["gds"]
-        self.assertEqual(gds["7lmT1"], ["gds/9t_hvt_7lmT1.gds"])
+        lef = document["metadata"]["technology"]["tracks"]["9T"]["vths"]["hvt"]["lef"]
+        self.assertEqual(lef["7lmT1"], ["lef/9t_hvt_7lmT1.lef"])
         # The source stack is untouched by cloning it.
-        self.assertEqual(gds["9lmT2"], ["gds/9t_hvt_9lmT2.gds"])
+        self.assertEqual(lef["9lmT2"], ["lef/9t_hvt_9lmT2.lef"])
 
     def test_front_end_corner_picker_deletes_an_entry_in_place(self):
         """A legacy corner (renamed away from, e.g. PVT_1P08V_25C once its
@@ -639,7 +735,7 @@ class PdkMenuEndToEndTests(unittest.TestCase):
 
     def test_clone_metal_stack_regex_substitutes_paths(self):
         """Promoting clone to metal stacks: cloning 9lmT2 -> 7lmT1 applies
-        a regex substitution across that stack's lef/gds/qrc_techfiles."""
+        a regex substitution across that stack's lef/qrc_techfiles."""
         lib_dir = self.root / "libroot" / "lef"
         lib_dir.mkdir(parents=True)
         (lib_dir / "9t_lvt_9lmT2.lef").write_text("x", encoding="utf-8")
@@ -663,7 +759,7 @@ class PdkMenuEndToEndTests(unittest.TestCase):
                 self._select(app.screen.query_one(OptionList), "lvt (1 corner(s))")
                 await pilot.press("enter")
                 await pilot.pause()
-                self._select(app.screen.query_one(OptionList), "Metal stacks (1): LEF/GDS/QRC techfiles")
+                self._select(app.screen.query_one(OptionList), "Metal stacks (1): LEF/QRC techfiles")
                 await pilot.press("enter")
                 await pilot.pause()
                 # "9lmT2" is the only (and highlighted) stack.

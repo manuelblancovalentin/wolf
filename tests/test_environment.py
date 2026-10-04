@@ -640,11 +640,11 @@ class MetalStackTests(DeclarativeEnvironmentTests):
         self._package("pdk", "tsmc65-mismatch", "pdk-rev", {"technology": {
             "name": "tsmc65-mismatch", "tracks": {"9T": {"vths": {"lvt": {
                 "lef": {"9lmT2": ["lef/x.lef"]},
-                "gds": {"7lmT1": ["gds/x.gds"]},
+                "qrc_techfiles": {"7lmT1": ["qrc/x.captable"]},
                 "timing": {"corners": {"typical": {"libraries": ["lib/x.lib"]}}},
             }}}},
         }})
-        for relative in ("lef/x.lef", "gds/x.gds", "lib/x.lib"):
+        for relative in ("lef/x.lef", "qrc/x.captable", "lib/x.lib"):
             self._write_file(relative, package="tsmc65-mismatch")
         text = self._complete_yaml().replace("package: pdk/asap7", "package: pdk/tsmc65-mismatch")
         with self.assertRaisesRegex(ValueError, "doesn't match"):
@@ -652,6 +652,53 @@ class MetalStackTests(DeclarativeEnvironmentTests):
                 load_environment(self._write(text, "mismatch.yaml")),
                 state_root=self.state, environment_directory=self.environment,
             )
+
+    def test_gds_is_flat_and_independent_of_the_stack_axis(self):
+        """A cell's own GDS geometry lives on metal layers shared by every
+        stack option, unlike lef/qrc_techfiles -- gds is just a flat list,
+        and lef/qrc_techfiles disagreeing about stack names (gds isn't
+        even declared per-stack here) is never gds's problem."""
+        self._package("pdk", "tsmc65-flatgds", "pdk-rev", {"technology": {
+            "name": "tsmc65-flatgds", "tracks": {"9T": {"vths": {"lvt": {
+                "lef": {"9lmT2": ["lef/x.lef"], "7lmT1": ["lef/y.lef"]},
+                "gds": ["gds/x.gds"],
+                "timing": {"corners": {"typical": {"libraries": ["lib/x.lib"]}}},
+            }}}},
+        }})
+        for relative in ("lef/x.lef", "lef/y.lef", "gds/x.gds", "lib/x.lib"):
+            self._write_file(relative, package="tsmc65-flatgds")
+        text = self._complete_yaml().replace(
+            "package: pdk/asap7", "package: pdk/tsmc65-flatgds\n  metal_stack: 7lmT1",
+        )
+        context = resolve_declarative_environment(
+            load_environment(self._write(text, "flatgds.yaml")),
+            state_root=self.state, environment_directory=self.environment,
+        )
+        self.assertEqual(context.technology.metal_stack, "7lmT1")
+        self.assertEqual([p.name for p in context.technology.gds_files], ["x.gds"])
+
+    def test_legacy_per_stack_gds_still_resolves(self):
+        """A package that declared gds per metal stack before that stopped
+        being a real axis for gds still resolves -- the selected
+        metal_stack's own entry is used, rather than erroring out on
+        every PDK manifest written before this changed."""
+        self._package("pdk", "tsmc65-legacygds", "pdk-rev", {"technology": {
+            "name": "tsmc65-legacygds", "tracks": {"9T": {"vths": {"lvt": {
+                "lef": {"9lmT2": ["lef/x.lef"], "7lmT1": ["lef/y.lef"]},
+                "gds": {"9lmT2": ["gds/a.gds"], "7lmT1": ["gds/b.gds"]},
+                "timing": {"corners": {"typical": {"libraries": ["lib/x.lib"]}}},
+            }}}},
+        }})
+        for relative in ("lef/x.lef", "lef/y.lef", "gds/a.gds", "gds/b.gds", "lib/x.lib"):
+            self._write_file(relative, package="tsmc65-legacygds")
+        text = self._complete_yaml().replace(
+            "package: pdk/asap7", "package: pdk/tsmc65-legacygds\n  metal_stack: 7lmT1",
+        )
+        context = resolve_declarative_environment(
+            load_environment(self._write(text, "legacygds.yaml")),
+            state_root=self.state, environment_directory=self.environment,
+        )
+        self.assertEqual([p.name for p in context.technology.gds_files], ["b.gds"])
 
     def test_single_stack_still_requires_no_selection(self):
         self._package("pdk", "tsmc65-onestack", "pdk-rev", {"technology": {

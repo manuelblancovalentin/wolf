@@ -696,18 +696,48 @@ class _CornersScreen(ModalScreen[Optional[dict]]):
 
 
 _VTH_FILE_FIELDS = (
+    ("gds", "GDS files"),
     ("verilog_models", "Verilog models"),
     ("spice_models", "SPICE models"),
 )
 
 
 # Must match wolf.environment's own _STACK_KEYED_FIELDS -- these are the
-# fields a vth may declare per named metal stack instead of as a flat list.
-_STACK_KEYED_FIELDS = ("lef", "gds", "qrc_techfiles")
+# fields a vth may declare per named metal stack instead of as a flat
+# list. gds is deliberately not here -- see wolf.environment's own
+# comment by the same name: a cell's own GDS geometry lives on metal
+# layers shared by every stack option, unlike lef and qrc_techfiles.
+_STACK_KEYED_FIELDS = ("lef", "qrc_techfiles")
+
+
+def _migrate_legacy_gds(app: App, vth_data: dict) -> None:
+    """GDS used to be declared per metal stack, the same as lef and
+    qrc_techfiles -- but a cell's own GDS geometry lives on metal layers
+    shared by every stack option, so it no longer needs that axis.
+    Auto-flatten an old per-stack gds dict the moment this vth is opened:
+    its own default_metal_stack if set, else its only declared stack if
+    there's just one, else the first one sorted -- and notify either way,
+    since this picks one stack's files and drops the others (usually the
+    same files anyway; if they genuinely weren't, that's exactly what the
+    notification is for)."""
+    value = vth_data.get("gds")
+    if not isinstance(value, dict):
+        return
+    stack = vth_data.get("default_metal_stack")
+    if stack not in value:
+        stack = next(iter(sorted(value)), None)
+    files = list(value.get(stack, [])) if stack else []
+    vth_data["gds"] = files
+    app.notify(
+        f"gds no longer varies by metal stack -- flattened to {stack!r}'s {len(files)} "
+        "file(s); review and re-save." if stack else
+        "gds no longer varies by metal stack -- flattened to an empty list; review and re-save.",
+        severity="warning",
+    )
 
 
 def _normalize_stacks(vth_data: dict) -> dict:
-    """Read a vth's lef/gds/qrc_techfiles into {stack_name: {field: [...]}}
+    """Read a vth's lef/qrc_techfiles into {stack_name: {field: [...]}}
     regardless of which shape they're currently declared in.
 
     A flat list (or no stack-keyed field at all) is one implicit stack --
@@ -738,7 +768,7 @@ def _normalize_stacks(vth_data: dict) -> dict:
 
 
 def _write_stacks(vth_data: dict, stacks: dict) -> None:
-    """Write {stack_name: {field: [...]}} back into a vth's lef/gds/
+    """Write {stack_name: {field: [...]}} back into a vth's lef/
     qrc_techfiles -- always as the mapping form (even a single stack),
     which resolves identically to a flat list (auto-selected). A field
     with no files in any stack is omitted entirely, matching what
@@ -764,8 +794,8 @@ def _apply_clone(
 ) -> tuple[dict, list[dict]]:
     """Apply an ordered list of regex substitutions (see _substitute_all)
     across every file path a vth carries (corners' libraries and
-    qrc_tech_file, flat verilog/spice models, and every metal stack's
-    lef/gds/qrc_techfiles), producing both the resulting vth dict and a
+    qrc_tech_file, flat gds/verilog/spice model lists, and every metal
+    stack's lef/qrc_techfiles), producing both the resulting vth dict and a
     flat list of preview rows describing what changed and whether each
     new path actually exists on disk. Both the confirmation screen and
     the real write are driven off this same computation so they can
@@ -874,7 +904,7 @@ def _apply_clone_stack(
     stack_data: dict, substitutions: list[tuple[re.Pattern, str]], root: Path,
 ) -> tuple[dict, list[dict]]:
     """Clone one metal stack: apply the same ordered regex substitutions
-    (see _substitute_all) across its lef/gds/qrc_techfiles lists -- the
+    (see _substitute_all) across its lef/qrc_techfiles lists -- the
     simplest of the three clone shapes, since a stack has no further
     nesting (no corners, no sub-vths)."""
     def exists(value: str) -> bool:
@@ -1083,8 +1113,16 @@ def _run_clone_flow(app: App, source_label: str, apply_fn, on_confirmed) -> None
     app.push_screen(_RegexPairsScreen(f"Substitutions for cloning {source_label}"), handle_pairs)
 
 
+# Display labels for _STACK_KEYED_FIELDS -- a dict, not zip(), so a field
+# being added or removed from that tuple can never silently mispair with
+# the wrong label (zip() truncates/misaligns silently; a missing key
+# here raises instead).
+_STACK_FIELD_LABELS = {"lef": "LEF files", "qrc_techfiles": "QRC techfiles"}
+
+
 class _StackEditScreen(ModalScreen[Optional[dict]]):
-    """Edit one named metal stack's LEF/GDS/QRC-techfile lists."""
+    """Edit one named metal stack's LEF/QRC-techfile lists -- not GDS,
+    which doesn't vary by metal stack (see _STACK_KEYED_FIELDS)."""
 
     BINDINGS = [("escape", "done", "Done")]
 
@@ -1102,8 +1140,8 @@ class _StackEditScreen(ModalScreen[Optional[dict]]):
 
     def _options(self) -> list[Option]:
         return [
-            Option(f"{label} ({len(self._data.get(key, []))} file(s))", id=key)
-            for key, label in zip(_STACK_KEYED_FIELDS, ("LEF files", "GDS files", "QRC techfiles"))
+            Option(f"{_STACK_FIELD_LABELS[key]} ({len(self._data.get(key, []))} file(s))", id=key)
+            for key in _STACK_KEYED_FIELDS
         ]
 
     def _refresh(self) -> None:
@@ -1115,15 +1153,15 @@ class _StackEditScreen(ModalScreen[Optional[dict]]):
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
         event.stop()
         key = event.option_id
-        labels = dict(zip(_STACK_KEYED_FIELDS, ("LEF files", "GDS files", "QRC techfiles")))
-        if key in labels:
+        if key in _STACK_FIELD_LABELS:
             def handle(values: Optional[list]) -> None:
                 if values is not None:
                     self._data[key] = values
                     self._refresh()
             self.app.push_screen(
                 _FileListScreen(
-                    f"{labels[key]} for stack {self._name}", self._root, self._data.get(key, []),
+                    f"{_STACK_FIELD_LABELS[key]} for stack {self._name}", self._root,
+                    self._data.get(key, []),
                 ),
                 handle,
             )
@@ -1134,8 +1172,9 @@ class _StackEditScreen(ModalScreen[Optional[dict]]):
 
 class _MetalStacksScreen(ModalScreen[Optional[dict]]):
     """Edit the named metal stacks declared for one vth (each stack: its
-    own LEF/GDS/QRC-techfile lists) -- the multi-stack equivalent of
-    _CornersScreen, since the same "named, then edited" shape applies."""
+    own LEF/QRC-techfile lists -- not GDS, which doesn't vary by metal
+    stack) -- the multi-stack equivalent of _CornersScreen, since the
+    same "named, then edited" shape applies."""
 
     BINDINGS = [
         ("a", "add", "Add stack"),
@@ -1160,7 +1199,10 @@ class _MetalStacksScreen(ModalScreen[Optional[dict]]):
         if not self._stacks:
             return [Option("(none yet -- press a to add)", id="__empty__", disabled=True)]
         return [
-            Option(f"{name} (lef={len(data['lef'])} gds={len(data['gds'])} qrc={len(data['qrc_techfiles'])})", id=name)
+            Option(
+                f"{name} ({', '.join(f'{key}={len(data[key])}' for key in _STACK_KEYED_FIELDS)})",
+                id=name,
+            )
             for name, data in self._stacks.items()
         ]
 
@@ -1406,6 +1448,7 @@ def _navigate_to_vth(app: App, technology: dict, root: Path, breadcrumb: str, on
 
         def do_vth(vth_name: str, resume_vth) -> None:
             vth_data = vths.setdefault(vth_name, {})
+            _migrate_legacy_gds(app, vth_data)
             on_vth(track_name, vth_name, vth_data, f"{track_crumb} / {vth_name}", resume_vth)
 
         def delete_vth(vth_name: str) -> None:
@@ -1569,8 +1612,8 @@ def _enter_stack_field(
 
 
 class _VthScreen(ModalScreen[Optional[dict]]):
-    """Edit one vth's corners, metal stacks (LEF/GDS/QRC techfiles), and
-    flat behavioral-model file lists."""
+    """Edit one vth's corners, metal stacks (LEF/QRC techfiles), and flat
+    per-vth file lists (gds, verilog models, spice models)."""
 
     BINDINGS = [("escape", "done", "Done")]
 
@@ -1592,7 +1635,7 @@ class _VthScreen(ModalScreen[Optional[dict]]):
         default_stack = self._data.get("default_metal_stack") or "not set (auto-select if only one)"
         options = [
             Option(f"Liberty corners ({len(corners)})", id="corners"),
-            Option(f"Metal stacks ({len(stacks)}): LEF/GDS/QRC techfiles", id="stacks"),
+            Option(f"Metal stacks ({len(stacks)}): LEF/QRC techfiles", id="stacks"),
             Option(f"Default metal stack: {default_stack}", id="default_metal_stack"),
         ]
         for key, label in _VTH_FILE_FIELDS:
@@ -1699,13 +1742,14 @@ class _TrackScreen(ModalScreen[Optional[dict]]):
         self.query_one("#dialog-hint", Static).update(self._hint())
 
     def _edit(self, name: str) -> None:
+        vth_data = self._vths().get(name, {})
+        _migrate_legacy_gds(self.app, vth_data)
+
         def handle(data: Optional[dict]) -> None:
             if data is not None:
                 self._vths()[name] = data
                 self._refresh()
-        self.app.push_screen(
-            _VthScreen(f"{self._track}/{name}", self._root, self._vths().get(name, {})), handle,
-        )
+        self.app.push_screen(_VthScreen(f"{self._track}/{name}", self._root, vth_data), handle)
 
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
         event.stop()
@@ -2129,13 +2173,16 @@ class PdkMenuApp(App[None]):
         ], do_format, on_return)
 
     def _edit_back_end(self) -> None:
-        """Mirrors Back_End/{gds,lef,spice} (lef/techfiles share one
-        metal-stack axis, same as the real lef/<family>/techfiles/
-        subdirectory living inside lef/<family>/, not beside it). Loops
-        the same way _edit_front_end does."""
+        """Mirrors Back_End/{gds,lef,spice}. lef/techfiles share one
+        metal-stack axis (same as the real lef/<family>/techfiles/
+        subdirectory living inside lef/<family>/, not beside it); gds
+        doesn't -- a cell's own GDS geometry lives on metal layers shared
+        by every stack option -- so it's a flat per-vth list like
+        verilog/spice, not a per-stack one. Loops the same way
+        _edit_front_end does."""
         def do_category(choice: str, resume_category) -> None:
             if choice == "gds":
-                _enter_stack_field(
+                _enter_flat_category(
                     self, self._technology, self._root, f"{self._name} / Back-End", "gds",
                     "GDS files", resume_category, on_done=self._refresh,
                 )

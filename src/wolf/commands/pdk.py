@@ -51,7 +51,11 @@ def command_list(_args: argparse.Namespace) -> int:
     return 0
 
 
-_STACK_FIELDS = ("lef", "gds", "qrc_techfiles")
+# gds is deliberately not here: a cell's own GDS geometry lives on metal
+# layers shared by every stack option, unlike lef and qrc_techfiles, so
+# it's always a flat per-vth list -- must match wolf.environment's and
+# wolf.pdk_menu's own _STACK_KEYED_FIELDS.
+_STACK_FIELDS = ("lef", "qrc_techfiles")
 
 
 def _vth_stacks(vth_data: dict) -> set:
@@ -64,7 +68,7 @@ def _vth_stacks(vth_data: dict) -> set:
 
 
 def _vth_stack_fields(vth_data: dict) -> dict:
-    """Which stack-keyed fields (lef/gds/qrc_techfiles) each named metal
+    """Which stack-keyed fields (lef/qrc_techfiles) each named metal
     stack actually has files for, on one vth -- a stack can be declared
     with, say, lef but no gds yet, mid-edit."""
     fields: dict = {}
@@ -82,7 +86,7 @@ def _tracked_summary(tracks: dict) -> dict:
     reports, by walking the manifest -- tracks, vths per track, every
     corner name and library format seen, every metal stack declared, and
     which track/vth combos actually populate each stack and with what
-    (lef/gds/qrc_techfiles) -- the same "where is this stack really used"
+    (lef/qrc_techfiles) -- the same "where is this stack really used"
     view wolf pdk menu's own clone flow needs you to already know."""
     vths_by_track: dict = {}
     all_corners: dict = {}
@@ -156,7 +160,7 @@ def command_info(args: argparse.Namespace) -> int:
             f"({', '.join(summary['corner_names']) or 'none'})",
         )
         ui.key_value("Library formats", ", ".join(summary["formats"]) or "liberty (default)")
-        ui.key_value("Metal stacks", ", ".join(summary["stacks"]) or "none declared (flat lef/gds)")
+        ui.key_value("Metal stacks", ", ".join(summary["stacks"]) or "none declared (flat lef)")
         for stack in summary["stacks"]:
             ui.key_value(f"  {stack}", ", ".join(summary["stack_usage"].get(stack, [])) or "none")
     else:
