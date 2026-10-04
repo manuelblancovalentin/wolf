@@ -1038,6 +1038,37 @@ class PdkMenuEndToEndTests(unittest.TestCase):
         self.assertEqual(second["creation-date"], created)
         self.assertIn("last-modified-date", second)
 
+    def test_ctrl_s_saves_from_deep_inside_a_modal_with_a_focused_input(self):
+        """ctrl+s must save from anywhere in the TUI -- not just the top
+        level "s" already covers -- including several modal screens deep
+        with an Input actively focused (typing a new track name, say),
+        the exact situation where a plain, non-priority binding would
+        never even reach the App (the focused Input's own screen stays
+        on top; nothing closes or loses its in-progress text)."""
+        data = _default_document("smoketest", str(self.root / "libroot"))
+
+        async def drive():
+            app = PdkMenuApp("smoketest", self.manifest_path, data, is_new=True)
+            async with app.run_test() as pilot:
+                main_list = app.query_one(OptionList)
+                main_list.highlighted = 3  # "Tracks"
+                await pilot.press("enter")
+                await pilot.pause()
+                await pilot.press("a")  # "+ Create new..." track -- opens a text Input
+                await pilot.pause()
+                self.assertIsInstance(app.focused, Input)
+                depth_before = len(app.screen_stack)
+                app.screen.query_one(Input).value = "9T"
+                await pilot.press("ctrl+s")
+                await pilot.pause()
+                # Saving in place doesn't close or disturb the in-progress
+                # Input screen.
+                self.assertEqual(len(app.screen_stack), depth_before)
+                self.assertEqual(app.screen.query_one(Input).value, "9T")
+
+        asyncio.run(drive())
+        self.assertTrue(self.manifest_path.exists())
+
 
 class BrowseFilesScreenNavigationTests(unittest.TestCase):
     """The actual bug report: a browser rooted at the last directory used

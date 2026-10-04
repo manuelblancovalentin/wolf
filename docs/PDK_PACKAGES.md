@@ -386,5 +386,6 @@ directory (`tcbn65lpbc1d11d32_ecsm.lib`, `tcbn65lpwc1d08m40_ecsm.lib`,
 `bc1d11` to find just the `bc` corner at that voltage, say -- instead of
 scanning the whole directory by eye.
 
-`q`/`escape` quits without saving; `s` saves in place without closing;
-the Save button saves and closes.
+`q`/`escape` quits without saving; `s` (or `ctrl+s`, from anywhere in the
+menu -- any modal screen, even with a text field actively focused) saves
+in place without closing; the Save button saves and closes.

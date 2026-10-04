@@ -48,6 +48,7 @@ from typing import Any, Optional
 
 import yaml
 from textual.app import App, ComposeResult
+from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, DirectoryTree, Footer, Header, Input, OptionList, Static
@@ -2211,6 +2212,11 @@ class PdkMenuApp(App[None]):
         ("q", "quit", "Quit"),
         ("escape", "quit", "Quit"),
         ("s", "save_in_place", "Save"),
+        # priority=True so this fires from anywhere in the TUI -- any
+        # modal screen, any focused Input mid-edit -- the same way "s"
+        # already does at the top level, without needing every screen to
+        # declare its own copy of this binding.
+        Binding("ctrl+s", "save_in_place", "Save", priority=True),
     ]
     TITLE = "WOLF PDK setup"
 
