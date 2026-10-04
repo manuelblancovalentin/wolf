@@ -443,7 +443,15 @@ class PdkCommandTests(unittest.TestCase):
     def _write_manifest(self, name, *, tracked=False):
         technology = {"name": name}
         if tracked:
-            technology["tracks"] = {"9T": {"vths": {"lvt": {}, "rvt": {}}}}
+            technology["tracks"] = {"9T": {"vths": {
+                "lvt": {
+                    "lef": {"9lmT2": ["lef/x.lef"], "7lmT1": ["lef/y.lef"]},
+                    "timing": {"corners": {
+                        "typical": {}, "worst_case": {"format": "ecsm"},
+                    }},
+                },
+                "rvt": {"timing": {"corners": {"typical": {}}}},
+            }}}
         else:
             technology["timing"] = {"corners": {"typical": {}, "worst_case": {}}}
         (self.registry / "pdk" / f"{name}.yaml").write_text(yaml.safe_dump({
@@ -481,8 +489,12 @@ class PdkCommandTests(unittest.TestCase):
         self._write_manifest("trackedpdk", tracked=True)
         result = self.wolf("pdk", "info", "trackedpdk")
         self.assert_success(result)
-        self.assertIn("Track 9T/lvt", result.stdout)
-        self.assertIn("Track 9T/rvt", result.stdout)
+        self.assertIn("Tracks: 9T", result.stdout)
+        self.assertIn("9T vths: lvt, rvt", result.stdout)
+        self.assertIn("3 declared across all track/vth combos", result.stdout)
+        self.assertIn("typical, worst_case", result.stdout)
+        self.assertIn("Library formats: ecsm, liberty", result.stdout)
+        self.assertIn("Metal stacks: 7lmT1, 9lmT2", result.stdout)
 
     def test_info_for_unknown_package_fails_clearly(self):
         result = self.wolf("pdk", "info", "does-not-exist")

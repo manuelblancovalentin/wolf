@@ -51,6 +51,50 @@ def command_list(_args: argparse.Namespace) -> int:
     return 0
 
 
+_STACK_FIELDS = ("lef", "gds", "qrc_techfiles")
+
+
+def _vth_stacks(vth_data: dict) -> set:
+    stacks: set = set()
+    for key in _STACK_FIELDS:
+        value = vth_data.get(key)
+        if isinstance(value, dict):
+            stacks.update(value)
+    return stacks
+
+
+def _tracked_summary(tracks: dict) -> dict:
+    """Collect the same shape of facts your README's 'Table of features'
+    reports, by walking the manifest -- tracks, vths per track, every
+    corner name and library format seen, every metal stack declared."""
+    vths_by_track: dict = {}
+    all_corners: dict = {}
+    all_formats: set = set()
+    all_stacks: set = set()
+    corner_counts = 0
+    for track, track_data in tracks.items():
+        vths = track_data.get("vths", {}) if isinstance(track_data, dict) else {}
+        vths_by_track[track] = sorted(vths)
+        for vth, vth_data in vths.items():
+            if not isinstance(vth_data, dict):
+                continue
+            all_stacks.update(_vth_stacks(vth_data))
+            corners = vth_data.get("timing", {}).get("corners", {})
+            if isinstance(corners, dict):
+                corner_counts += len(corners)
+                for name, data in corners.items():
+                    all_corners[name] = True
+                    if isinstance(data, dict):
+                        all_formats.add(data.get("format", "liberty"))
+    return {
+        "vths_by_track": vths_by_track,
+        "corner_names": sorted(all_corners),
+        "corner_count": corner_counts,
+        "formats": sorted(all_formats),
+        "stacks": sorted(all_stacks),
+    }
+
+
 def command_info(args: argparse.Namespace) -> int:
     from wolf.package.registry import PackageRegistry
     from wolf.package.store import PackageStore
@@ -74,12 +118,18 @@ def command_info(args: argparse.Namespace) -> int:
     technology = technology if isinstance(technology, dict) else {}
     tracks = technology.get("tracks")
     if isinstance(tracks, dict) and tracks:
-        for track, track_data in tracks.items():
-            vths = track_data.get("vths", {}) if isinstance(track_data, dict) else {}
-            for vth, vth_data in vths.items():
-                corners = vth_data.get("timing", {}).get("corners", {}) \
-                    if isinstance(vth_data, dict) else {}
-                ui.key_value(f"Track {track}/{vth}", f"{len(corners)} corner(s): " + ", ".join(corners))
+        summary = _tracked_summary(tracks)
+        ui.key_value("Tracks", ", ".join(sorted(tracks)) or "none")
+        for track in sorted(tracks):
+            vths = summary["vths_by_track"].get(track, [])
+            ui.key_value(f"  {track} vths", ", ".join(vths) or "none")
+        ui.key_value(
+            "Corners",
+            f"{summary['corner_count']} declared across all track/vth combos "
+            f"({', '.join(summary['corner_names']) or 'none'})",
+        )
+        ui.key_value("Library formats", ", ".join(summary["formats"]) or "liberty (default)")
+        ui.key_value("Metal stacks", ", ".join(summary["stacks"]) or "none declared (flat lef/gds)")
     else:
         timing = technology.get("timing", {})
         corners = timing.get("corners", {}) if isinstance(timing, dict) else {}
