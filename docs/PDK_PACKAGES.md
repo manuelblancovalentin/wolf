@@ -359,12 +359,9 @@ leaves the source completely untouched.
 `c` is also available one level further in, on a metal stack's own
 rc-corner editor (`wolf pdk menu` → Back-End → LEF → Techfiles → track →
 vth → stack, or the equivalent spot via Tracks → metal stacks → edit a
-stack → QRC techfiles) -- but there it rewrites every currently-declared
-rc-corner's file paths in place, with no new name to pick, since you're
-not cloning a *new* rc-corner into existence, just rewriting paths across
-the ones already there (moving a whole qrc_techfiles tree to a new
-directory, say). Same substitution-pairs screen and preview, just applied
-to the whole rc-corner set at once instead of one named entry.
+stack → QRC techfiles) -- the same highlighted-entry → new-name → regex
+shape as cloning a whole track/vth/metal stack: clone `rcbest` into a new
+`rcworst`, say, leaving the source rc-corner's own files untouched.
 
 `a` adds (browsing the filesystem for file lists, typed text for names
 and cell-glob lists), `d` deletes the highlighted entry, `enter` opens

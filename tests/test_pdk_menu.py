@@ -523,8 +523,9 @@ class PdkMenuEndToEndTests(unittest.TestCase):
         the rc-corner editor (_QrcCornersScreen), a different screen again
         from both the metal-stacks picker and the generic
         _PickCreateDeleteScreen -- clone has to be wired in there too,
-        rewriting every declared rc-corner's own file paths in place
-        (no new name needed, unlike cloning a whole metal stack)."""
+        the same highlighted-entry -> new-name -> regex shape as cloning
+        a whole metal stack: the source rc-corner is left untouched and
+        a new, separately named rc-corner is created from it."""
         qrc_dir = self.root / "libroot" / "qrc"
         qrc_dir.mkdir()
         (qrc_dir / "9t_rvt_6lmT1_cbest.captable").write_text("x", encoding="utf-8")
@@ -557,10 +558,13 @@ class PdkMenuEndToEndTests(unittest.TestCase):
                 self._select(app.screen.query_one(OptionList), "6lmT1")
                 await pilot.press("enter")
                 await pilot.pause()
-                # Now on _QrcCornersScreen, listing "cbest".
+                # Now on _QrcCornersScreen, listing "cbest" (highlighted).
                 hint = app.screen.query_one("#dialog-hint", Static).content
-                self.assertIn("c: clone", hint)
+                self.assertIn("c: clone highlighted", hint)
                 await pilot.press("c")
+                await pilot.pause()
+                app.screen.query_one(Input).value = "cworst"  # new rc-corner name
+                await pilot.press("enter")
                 await pilot.pause()
                 await pilot.press("a")  # one substitution pair
                 await pilot.pause()
@@ -586,7 +590,9 @@ class PdkMenuEndToEndTests(unittest.TestCase):
 
         document = yaml.safe_load(self.manifest_path.read_text(encoding="utf-8"))
         qrc = document["metadata"]["technology"]["tracks"]["9T"]["vths"]["rvt"]["qrc_techfiles"]
-        self.assertEqual(qrc["6lmT1"]["cbest"], ["qrc/9t_rvt_6lmT1_cworst.captable"])
+        self.assertEqual(qrc["6lmT1"]["cworst"], ["qrc/9t_rvt_6lmT1_cworst.captable"])
+        # The source rc-corner is untouched by cloning it.
+        self.assertEqual(qrc["6lmT1"]["cbest"], ["qrc/9t_rvt_6lmT1_cbest.captable"])
 
     def test_front_end_corner_picker_deletes_an_entry_in_place(self):
         """A legacy corner (renamed away from, e.g. PVT_1P08V_25C once its

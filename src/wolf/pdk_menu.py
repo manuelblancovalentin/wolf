@@ -944,29 +944,44 @@ def _apply_clone_stack(
     return new_data, all_rows
 
 
-def _apply_clone_qrc_corners(
-    corners: dict, substitutions: list[tuple[re.Pattern, str]], root: Path,
-) -> tuple[dict, list[dict]]:
-    """Clone just one stack's named RC-extraction corners (the level
-    reached via Back-End / QRC techfiles / <track> / <vth> / <stack>):
-    apply the same ordered regex substitutions across every rc-corner's
-    own file list. Shares its per-corner logic with _apply_clone_stack,
-    which calls this same shape inline for the stack-level clone."""
+def _apply_clone_file_list(
+    files: list, substitutions: list[tuple[re.Pattern, str]], root: Path, location: str,
+) -> tuple[list, list[dict]]:
+    """Apply an ordered list of regex substitutions across one flat file
+    list, dropping any resulting path that doesn't actually exist on
+    disk -- the single-list building block every clone flavor (a whole
+    stack's lef, one rc-corner's own files, ...) reduces to."""
     def exists(value: str) -> bool:
         candidate = Path(value)
         return (candidate if candidate.is_absolute() else root / candidate).exists()
 
+    kept: list = []
+    rows: list[dict] = []
+    for old in files:
+        new = _substitute_all(old, substitutions)
+        ok = exists(new)
+        rows.append({"location": location, "old": old, "new": new, "exists": ok})
+        if ok:
+            kept.append(new)
+    return kept, rows
+
+
+def _apply_clone_qrc_corners(
+    corners: dict, substitutions: list[tuple[re.Pattern, str]], root: Path,
+) -> tuple[dict, list[dict]]:
+    """Clone a whole stack's named RC-extraction corners at once (the
+    level reached via Back-End / QRC techfiles / <track> / <vth> /
+    <stack>): apply the same ordered regex substitutions across every
+    rc-corner's own file list, in place -- used when cloning the stack
+    itself (_apply_clone_stack), not the per-corner clone on
+    _QrcCornersScreen, which clones one highlighted corner to a new name
+    instead (see _apply_clone_file_list)."""
     new_corners: dict = {}
     all_rows: list[dict] = []
     for corner_name, files in corners.items():
-        kept: list = []
-        for old in files:
-            new = _substitute_all(old, substitutions)
-            ok = exists(new)
-            all_rows.append({"location": f"qrc_techfiles: {corner_name}", "old": old, "new": new, "exists": ok})
-            if ok:
-                kept.append(new)
+        kept, rows = _apply_clone_file_list(files, substitutions, root, f"qrc_techfiles: {corner_name}")
         new_corners[corner_name] = kept
+        all_rows.extend(rows)
     return new_corners, all_rows
 
 
@@ -1220,7 +1235,7 @@ class _QrcCornersScreen(ModalScreen[Optional[dict]]):
     def _hint(self) -> str:
         return (
             f"{len(self._corners)} rc-corner(s) — enter: edit — a: add — "
-            f"d: delete highlighted — c: clone — esc: done"
+            f"c: clone highlighted — d: delete highlighted — esc: done"
         )
 
     def _refresh(self) -> None:
@@ -1266,13 +1281,30 @@ class _QrcCornersScreen(ModalScreen[Optional[dict]]):
         self._refresh()
 
     def action_clone(self) -> None:
-        def apply_fn(substitutions: list[tuple[re.Pattern, str]]) -> tuple[dict, list[dict]]:
-            return _apply_clone_qrc_corners(self._corners, substitutions, self._root)
+        option_list = self.query_one(OptionList)
+        if option_list.highlighted is None or not self._corners:
+            return
+        source_name = list(self._corners)[option_list.highlighted]
+        source_files = self._corners[source_name]
 
-        def on_confirmed(new_corners: dict) -> None:
-            self._corners = new_corners
-            self._refresh()
-        _run_clone_flow(self.app, self._title, apply_fn, on_confirmed)
+        def handle_name(new_name: Optional[str]) -> None:
+            if not new_name:
+                return
+            if new_name in self._corners:
+                self.app.notify(f"RC-corner {new_name!r} already exists.", severity="warning")
+                return
+
+            def on_confirmed(new_files: list) -> None:
+                self._corners[new_name] = new_files
+                self._refresh()
+            _run_clone_flow(
+                self.app, f"rc-corner {source_name} -> {new_name}",
+                lambda substitutions: _apply_clone_file_list(
+                    source_files, substitutions, self._root, f"qrc_techfiles: {new_name}",
+                ),
+                on_confirmed,
+            )
+        self.app.push_screen(_TextScreen(f"New rc-corner name (cloned from {source_name})"), handle_name)
 
     def action_done(self) -> None:
         self.dismiss(self._corners)
