@@ -47,7 +47,7 @@ from typing import Any, Optional
 
 import yaml
 from textual.app import App, ComposeResult
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, DirectoryTree, Footer, Header, Input, OptionList, Static
 from textual.widgets.option_list import Option
@@ -749,6 +749,124 @@ def _write_stacks(vth_data: dict, stacks: dict) -> None:
         vth_data[key] = {name: data.get(key, []) for name, data in stacks.items()}
 
 
+def _apply_clone(vth_data: dict, pattern: re.Pattern, replace: str, root: Path) -> tuple[dict, list[dict]]:
+    """Apply one regex substitution across every file path a vth carries
+    (corners' libraries and qrc_tech_file, flat verilog/spice models, and
+    every metal stack's lef/gds/qrc_techfiles), producing both the
+    resulting vth dict and a flat list of preview rows describing what
+    changed and whether each new path actually exists on disk. Both the
+    confirmation screen and the real write are driven off this same
+    computation so they can never drift apart. A path that doesn't exist
+    after substitution is simply dropped from the result -- cloning a
+    vth that only has 5 of a track's 7 corners' worth of files on disk is
+    normal, not an error to block on."""
+    def exists(value: str) -> bool:
+        candidate = Path(value)
+        return (candidate if candidate.is_absolute() else root / candidate).exists()
+
+    def substitute(value: str) -> str:
+        return pattern.sub(replace, value)
+
+    def clone_list(values: list) -> tuple[list, list[dict]]:
+        kept: list = []
+        rows: list[dict] = []
+        for old in values:
+            new = substitute(old)
+            ok = exists(new)
+            rows.append({"old": old, "new": new, "exists": ok})
+            if ok:
+                kept.append(new)
+        return kept, rows
+
+    new_data: dict = {}
+    all_rows: list[dict] = []
+
+    corners = vth_data.get("timing", {}).get("corners", {})
+    new_corners: dict = {}
+    for name, corner in corners.items():
+        if not isinstance(corner, dict):
+            continue
+        new_corner = dict(corner)
+        libraries, rows = clone_list(corner.get("libraries", []))
+        for row in rows:
+            row["location"] = f"corner {name}: libraries"
+        all_rows.extend(rows)
+        new_corner["libraries"] = libraries
+        qrc = corner.get("qrc_tech_file")
+        if qrc:
+            new_qrc = substitute(qrc)
+            ok = exists(new_qrc)
+            all_rows.append({"location": f"corner {name}: qrc_tech_file", "old": qrc, "new": new_qrc, "exists": ok})
+            if ok:
+                new_corner["qrc_tech_file"] = new_qrc
+            else:
+                new_corner.pop("qrc_tech_file", None)
+        new_corners[name] = new_corner
+    if new_corners:
+        new_data["timing"] = {"corners": new_corners}
+
+    for field, label in _VTH_FILE_FIELDS:
+        values, rows = clone_list(vth_data.get(field, []))
+        for row in rows:
+            row["location"] = label
+        all_rows.extend(rows)
+        if values:
+            new_data[field] = values
+
+    stacks = _normalize_stacks(vth_data)
+    new_stacks: dict = {}
+    for stack_name, entry in stacks.items():
+        new_entry: dict = {}
+        for field in _STACK_KEYED_FIELDS:
+            values, rows = clone_list(entry.get(field, []))
+            for row in rows:
+                row["location"] = f"stack {stack_name}: {field}"
+            all_rows.extend(rows)
+            new_entry[field] = values
+        new_stacks[stack_name] = new_entry
+    _write_stacks(new_data, new_stacks)
+
+    default_stack = vth_data.get("default_metal_stack")
+    if default_stack and default_stack in new_stacks:
+        new_data["default_metal_stack"] = default_stack
+
+    return new_data, all_rows
+
+
+class _ClonePreviewScreen(ModalScreen[bool]):
+    """Shows every path a clone would produce (old -> new) before
+    committing, with a green OK if the new path exists on disk and a red
+    MISSING if it doesn't. Confirming drops every MISSING row from the
+    cloned vth -- it's a preview of exactly what _apply_clone already
+    computed, not a separate judgment call."""
+
+    BINDINGS = [("c", "confirm", "Confirm"), ("escape", "cancel", "Cancel")]
+
+    def __init__(self, title: str, rows: list[dict]):
+        super().__init__()
+        self._title = title
+        self._rows = rows
+
+    def compose(self) -> ComposeResult:
+        missing = sum(1 for row in self._rows if not row["exists"])
+        with VerticalScroll(id="dialog"):
+            yield Static(self._title, id="dialog-title")
+            for row in self._rows:
+                mark = "[green]OK[/green]" if row["exists"] else "[red]MISSING[/red]"
+                yield Static(f"{mark}  {row['location']}\n   {row['old']}\n-> {row['new']}")
+            yield Static(
+                f"{len(self._rows)} path(s), {missing} missing (dropped on confirm) -- "
+                f"c: confirm -- esc: cancel",
+                id="dialog-hint",
+            )
+
+    def action_confirm(self) -> None:
+        self.dismiss(True)
+
+    def action_cancel(self) -> None:
+        self.dismiss(False)
+
+
 class _StackEditScreen(ModalScreen[Optional[dict]]):
     """Edit one named metal stack's LEF/GDS/QRC-techfile lists."""
 
@@ -1227,6 +1345,7 @@ class _TrackScreen(ModalScreen[Optional[dict]]):
 
     BINDINGS = [
         ("a", "add", "Add vth"),
+        ("c", "clone", "Clone vth"),
         ("d", "delete", "Delete vth"),
         ("escape", "done", "Done"),
     ]
@@ -1256,7 +1375,10 @@ class _TrackScreen(ModalScreen[Optional[dict]]):
         ]
 
     def _hint(self) -> str:
-        return f"{len(self._vths())} vth(s) — enter: edit — a: add — d: delete highlighted — esc: done"
+        return (
+            f"{len(self._vths())} vth(s) — enter: edit — a: add — "
+            f"c: clone highlighted — d: delete highlighted — esc: done"
+        )
 
     def _refresh(self) -> None:
         option_list = self.query_one(OptionList)
@@ -1290,6 +1412,61 @@ class _TrackScreen(ModalScreen[Optional[dict]]):
             self._refresh()
             self._edit(name)
         self.app.push_screen(_TextScreen("vth name (e.g. lvt, rvt, hvt)"), handle)
+
+    def action_clone(self) -> None:
+        option_list = self.query_one(OptionList)
+        if option_list.highlighted is None or not self._vths():
+            return
+        source_name = list(self._vths())[option_list.highlighted]
+        source_data = self._vths()[source_name]
+
+        def handle_name(new_name: Optional[str]) -> None:
+            if not new_name:
+                return
+            if new_name in self._vths():
+                self.app.notify(f"vth {new_name!r} already exists on {self._track}.", severity="warning")
+                return
+
+            def handle_find(find: Optional[str]) -> None:
+                if not find:
+                    return
+                try:
+                    pattern = re.compile(find)
+                except re.error as error:
+                    self.app.notify(f"Invalid regex: {error}", severity="error")
+                    return
+
+                def handle_replace(replace: Optional[str]) -> None:
+                    if replace is None:
+                        return
+                    new_data, rows = _apply_clone(source_data, pattern, replace, self._root)
+                    if not rows:
+                        self.app.notify(f"{source_name!r} has no file paths to clone.", severity="warning")
+                        return
+
+                    def handle_confirm(confirmed: bool) -> None:
+                        if not confirmed:
+                            return
+                        self._vths()[new_name] = new_data
+                        self._refresh()
+                        self._edit(new_name)
+                    self.app.push_screen(
+                        _ClonePreviewScreen(
+                            f"Clone {self._track}/{source_name} -> {self._track}/{new_name}\n"
+                            f"/{find}/ -> {replace!r}",
+                            rows,
+                        ),
+                        handle_confirm,
+                    )
+                self.app.push_screen(
+                    _TextScreen(f"Replace with (matches /{find}/ in {source_name}'s paths)"), handle_replace,
+                )
+            self.app.push_screen(
+                _TextScreen(f"Regex to find in {source_name}'s paths"), handle_find,
+            )
+        self.app.push_screen(
+            _TextScreen(f"New vth name (cloned from {source_name})"), handle_name,
+        )
 
     def action_delete(self) -> None:
         option_list = self.query_one(OptionList)

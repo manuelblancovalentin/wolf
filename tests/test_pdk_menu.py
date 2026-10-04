@@ -384,6 +384,71 @@ class PdkMenuEndToEndTests(unittest.TestCase):
         corners = document["metadata"]["technology"]["tracks"]["9T"]["vths"]["lvt"]["timing"]["corners"]
         self.assertEqual(corners, {})
 
+    def test_clone_vth_regex_substitutes_paths_and_drops_missing_ones(self):
+        """Populating a second vth (lvt) by cloning an already-populated one
+        (rvt) and regex-substituting its paths is the fast way to fill in a
+        new vth's corners -- a path that doesn't exist after substitution is
+        dropped rather than left pointing at nothing."""
+        lib_dir = self.root / "libroot" / "lib"
+        (lib_dir / "9t_rvt_typical.lib").write_text("-- typical rvt --\n", encoding="utf-8")
+        (lib_dir / "9t_rvt_worst.lib").write_text("-- worst rvt --\n", encoding="utf-8")
+        # Only the "typical" lvt file actually exists on disk -- "worst"
+        # should be dropped from the clone, not written pointing at nothing.
+        (lib_dir / "9t_lvt_typical.lib").write_text("-- typical lvt --\n", encoding="utf-8")
+        data = _default_document("smoketest", str(self.root / "libroot"))
+        data["metadata"]["technology"]["tracks"] = {"9T": {"vths": {"rvt": {
+            "timing": {"corners": {
+                "typical": {"libraries": ["lib/9t_rvt_typical.lib"], "format": "liberty"},
+                "worst": {"libraries": ["lib/9t_rvt_worst.lib"], "format": "liberty"},
+            }},
+        }}}}
+
+        async def drive():
+            app = PdkMenuApp("smoketest", self.manifest_path, data, is_new=True)
+            async with app.run_test() as pilot:
+                main_list = app.query_one(OptionList)
+                self._select(main_list, "Tracks (1 track/vth group(s))")
+                await pilot.press("enter")
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "9T (1 vth(s))")
+                await pilot.press("enter")
+                await pilot.pause()
+                # On the track screen, "rvt" is the only (and highlighted) vth.
+                await pilot.press("c")  # clone
+                await pilot.pause()
+                app.screen.query_one(Input).value = "lvt"
+                await pilot.press("enter")
+                await pilot.pause()
+                app.screen.query_one(Input).value = "rvt"
+                await pilot.press("enter")
+                await pilot.pause()
+                app.screen.query_one(Input).value = "lvt"
+                await pilot.press("enter")
+                await pilot.pause()
+                hint = app.screen.query_one("#dialog-hint", Static).content
+                self.assertIn("2 path(s), 1 missing", hint)
+                await pilot.press("c")  # confirm the clone
+                await pilot.pause()
+                # Lands on the new lvt's own screen -- back out and save.
+                await pilot.press("escape")
+                await pilot.pause()
+                await pilot.press("escape")
+                await pilot.pause()
+                await pilot.press("escape")
+                await pilot.pause()
+                self.assertEqual(len(app.screen_stack), 1)
+                await pilot.press("s")
+                await pilot.pause()
+
+        asyncio.run(drive())
+
+        document = yaml.safe_load(self.manifest_path.read_text(encoding="utf-8"))
+        vths = document["metadata"]["technology"]["tracks"]["9T"]["vths"]
+        self.assertEqual(set(vths), {"rvt", "lvt"})
+        lvt_corners = vths["lvt"]["timing"]["corners"]
+        self.assertEqual(lvt_corners["typical"]["libraries"], ["lib/9t_lvt_typical.lib"])
+        self.assertEqual(lvt_corners["worst"]["libraries"], [])
+
     def test_editing_an_existing_manifest_preserves_its_structure(self):
         data = _default_document("smoketest", str(self.root / "libroot"))
         data["source"]["revision"] = "V1"
