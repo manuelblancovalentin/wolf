@@ -207,6 +207,13 @@ count). `wolf pdk info <name>` shows one package's source, revision,
 license, full track/vth/corner breakdown, and -- when present --
 `author`/`creation-date`/`last-modified-date`.
 
+For a tracked package, `wolf pdk info` also breaks each declared metal
+stack down by where it's actually used -- every track/vth combo that
+populates it, and which of lef/gds/qrc_techfiles each one has files for
+(`9lmT2: 9T/lvt (lef+gds), 7T/rvt (lef)`) -- the same "where is this
+stack really used" view `wolf pdk menu`'s own clone flow needs you to
+already have in your head, surfaced without opening the menu.
+
 Those three are plain top-level yaml fields (siblings of `schema_version`/
 `kind`/`name`), not under `metadata`, and `wolf pdk menu` stamps them
 itself: `author` and `creation-date` are set once, the first time a new

@@ -63,14 +63,32 @@ def _vth_stacks(vth_data: dict) -> set:
     return stacks
 
 
+def _vth_stack_fields(vth_data: dict) -> dict:
+    """Which stack-keyed fields (lef/gds/qrc_techfiles) each named metal
+    stack actually has files for, on one vth -- a stack can be declared
+    with, say, lef but no gds yet, mid-edit."""
+    fields: dict = {}
+    for key in _STACK_FIELDS:
+        value = vth_data.get(key)
+        if isinstance(value, dict):
+            for stack, files in value.items():
+                if files:
+                    fields.setdefault(stack, set()).add(key)
+    return fields
+
+
 def _tracked_summary(tracks: dict) -> dict:
     """Collect the same shape of facts your README's 'Table of features'
     reports, by walking the manifest -- tracks, vths per track, every
-    corner name and library format seen, every metal stack declared."""
+    corner name and library format seen, every metal stack declared, and
+    which track/vth combos actually populate each stack and with what
+    (lef/gds/qrc_techfiles) -- the same "where is this stack really used"
+    view wolf pdk menu's own clone flow needs you to already know."""
     vths_by_track: dict = {}
     all_corners: dict = {}
     all_formats: set = set()
     all_stacks: set = set()
+    stack_usage: dict = {}
     corner_counts = 0
     for track, track_data in tracks.items():
         vths = track_data.get("vths", {}) if isinstance(track_data, dict) else {}
@@ -79,6 +97,8 @@ def _tracked_summary(tracks: dict) -> dict:
             if not isinstance(vth_data, dict):
                 continue
             all_stacks.update(_vth_stacks(vth_data))
+            for stack, fields in _vth_stack_fields(vth_data).items():
+                stack_usage.setdefault(stack, []).append(f"{track}/{vth} ({'+'.join(sorted(fields))})")
             corners = vth_data.get("timing", {}).get("corners", {})
             if isinstance(corners, dict):
                 corner_counts += len(corners)
@@ -92,6 +112,7 @@ def _tracked_summary(tracks: dict) -> dict:
         "corner_count": corner_counts,
         "formats": sorted(all_formats),
         "stacks": sorted(all_stacks),
+        "stack_usage": stack_usage,
     }
 
 
@@ -136,6 +157,8 @@ def command_info(args: argparse.Namespace) -> int:
         )
         ui.key_value("Library formats", ", ".join(summary["formats"]) or "liberty (default)")
         ui.key_value("Metal stacks", ", ".join(summary["stacks"]) or "none declared (flat lef/gds)")
+        for stack in summary["stacks"]:
+            ui.key_value(f"  {stack}", ", ".join(summary["stack_usage"].get(stack, [])) or "none")
     else:
         timing = technology.get("timing", {})
         corners = timing.get("corners", {}) if isinstance(timing, dict) else {}

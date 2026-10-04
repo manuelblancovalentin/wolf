@@ -509,6 +509,8 @@ class PdkCommandTests(unittest.TestCase):
         self.assertIn("typical, worst_case", result.stdout)
         self.assertIn("Library formats: ecsm, liberty", result.stdout)
         self.assertIn("Metal stacks: 7lmT1, 9lmT2", result.stdout)
+        self.assertIn("7lmT1: 9T/lvt (lef)", result.stdout)
+        self.assertIn("9lmT2: 9T/lvt (lef)", result.stdout)
 
     def test_info_for_unknown_package_fails_clearly(self):
         result = self.wolf("pdk", "info", "does-not-exist")
