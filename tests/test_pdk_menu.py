@@ -518,6 +518,76 @@ class PdkMenuEndToEndTests(unittest.TestCase):
         # The source stack is untouched by cloning it.
         self.assertEqual(lef["9lmT2"], ["lef/9t_hvt_9lmT2.lef"])
 
+    def test_qrc_corners_screen_supports_clone_too(self):
+        """Back-End -> LEF -> Techfiles -> track -> vth -> stack lands on
+        the rc-corner editor (_QrcCornersScreen), a different screen again
+        from both the metal-stacks picker and the generic
+        _PickCreateDeleteScreen -- clone has to be wired in there too,
+        rewriting every declared rc-corner's own file paths in place
+        (no new name needed, unlike cloning a whole metal stack)."""
+        qrc_dir = self.root / "libroot" / "qrc"
+        qrc_dir.mkdir()
+        (qrc_dir / "9t_rvt_6lmT1_cbest.captable").write_text("x", encoding="utf-8")
+        (qrc_dir / "9t_rvt_6lmT1_cworst.captable").write_text("x", encoding="utf-8")
+        data = _default_document("smoketest", str(self.root / "libroot"))
+        data["metadata"]["technology"]["tracks"] = {"9T": {"vths": {"rvt": {
+            "timing": {"corners": {"typical": {"libraries": ["lib/typical.lib"]}}},
+            "qrc_techfiles": {"6lmT1": {"cbest": ["qrc/9t_rvt_6lmT1_cbest.captable"]}},
+        }}}}
+
+        async def drive():
+            app = PdkMenuApp("smoketest", self.manifest_path, data, is_new=True)
+            async with app.run_test() as pilot:
+                main_list = app.query_one(OptionList)
+                self._select(main_list, "Back-End (LEF, GDS, techfiles, SPICE)")
+                await pilot.press("enter")
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "LEF")
+                await pilot.press("enter")
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "Techfiles (QRC captables)")
+                await pilot.press("enter")
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "9T")
+                await pilot.press("enter")
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "rvt")
+                await pilot.press("enter")
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "6lmT1")
+                await pilot.press("enter")
+                await pilot.pause()
+                # Now on _QrcCornersScreen, listing "cbest".
+                hint = app.screen.query_one("#dialog-hint", Static).content
+                self.assertIn("c: clone", hint)
+                await pilot.press("c")
+                await pilot.pause()
+                await pilot.press("a")  # one substitution pair
+                await pilot.pause()
+                app.screen.query_one(Input).value = "cbest"
+                await pilot.press("enter")
+                await pilot.pause()
+                app.screen.query_one(Input).value = "cworst"
+                await pilot.press("enter")
+                await pilot.pause()
+                await pilot.press("escape")  # done adding pairs -> preview
+                await pilot.pause()
+                preview_hint = app.screen.query_one("#dialog-hint", Static).content
+                self.assertIn("1 path(s), 0 missing", preview_hint)
+                await pilot.press("c")  # confirm
+                await pilot.pause()
+                while len(app.screen_stack) > 1:
+                    await pilot.press("escape")
+                    await pilot.pause()
+                await pilot.press("s")
+                await pilot.pause()
+
+        asyncio.run(drive())
+
+        document = yaml.safe_load(self.manifest_path.read_text(encoding="utf-8"))
+        qrc = document["metadata"]["technology"]["tracks"]["9T"]["vths"]["rvt"]["qrc_techfiles"]
+        self.assertEqual(qrc["6lmT1"]["cbest"], ["qrc/9t_rvt_6lmT1_cworst.captable"])
+
     def test_front_end_corner_picker_deletes_an_entry_in_place(self):
         """A legacy corner (renamed away from, e.g. PVT_1P08V_25C once its
         real PVT code is known) has no other way to be removed from the

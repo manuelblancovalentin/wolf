@@ -936,13 +936,38 @@ def _apply_clone_stack(
     new_data["lef"] = lef
     all_rows.extend(rows)
 
-    qrc_corners: dict = {}
-    for corner_name, files in _normalize_qrc_corners(stack_data.get("qrc_techfiles")).items():
-        values, rows = clone_list(files, f"qrc_techfiles: {corner_name}")
-        qrc_corners[corner_name] = values
-        all_rows.extend(rows)
+    qrc_corners, rows = _apply_clone_qrc_corners(
+        _normalize_qrc_corners(stack_data.get("qrc_techfiles")), substitutions, root,
+    )
     new_data["qrc_techfiles"] = qrc_corners
+    all_rows.extend(rows)
     return new_data, all_rows
+
+
+def _apply_clone_qrc_corners(
+    corners: dict, substitutions: list[tuple[re.Pattern, str]], root: Path,
+) -> tuple[dict, list[dict]]:
+    """Clone just one stack's named RC-extraction corners (the level
+    reached via Back-End / QRC techfiles / <track> / <vth> / <stack>):
+    apply the same ordered regex substitutions across every rc-corner's
+    own file list. Shares its per-corner logic with _apply_clone_stack,
+    which calls this same shape inline for the stack-level clone."""
+    def exists(value: str) -> bool:
+        candidate = Path(value)
+        return (candidate if candidate.is_absolute() else root / candidate).exists()
+
+    new_corners: dict = {}
+    all_rows: list[dict] = []
+    for corner_name, files in corners.items():
+        kept: list = []
+        for old in files:
+            new = _substitute_all(old, substitutions)
+            ok = exists(new)
+            all_rows.append({"location": f"qrc_techfiles: {corner_name}", "old": old, "new": new, "exists": ok})
+            if ok:
+                kept.append(new)
+        new_corners[corner_name] = kept
+    return new_corners, all_rows
 
 
 def _common_path_prefix(paths: list[str]) -> str:
@@ -1168,6 +1193,7 @@ class _QrcCornersScreen(ModalScreen[Optional[dict]]):
     BINDINGS = [
         ("a", "add", "Add rc-corner"),
         ("d", "delete", "Delete rc-corner"),
+        ("c", "clone", "Clone (regex)"),
         ("escape", "done", "Done"),
     ]
 
@@ -1194,7 +1220,7 @@ class _QrcCornersScreen(ModalScreen[Optional[dict]]):
     def _hint(self) -> str:
         return (
             f"{len(self._corners)} rc-corner(s) — enter: edit — a: add — "
-            f"d: delete highlighted — esc: done"
+            f"d: delete highlighted — c: clone — esc: done"
         )
 
     def _refresh(self) -> None:
@@ -1238,6 +1264,15 @@ class _QrcCornersScreen(ModalScreen[Optional[dict]]):
         name = list(self._corners)[option_list.highlighted]
         del self._corners[name]
         self._refresh()
+
+    def action_clone(self) -> None:
+        def apply_fn(substitutions: list[tuple[re.Pattern, str]]) -> tuple[dict, list[dict]]:
+            return _apply_clone_qrc_corners(self._corners, substitutions, self._root)
+
+        def on_confirmed(new_corners: dict) -> None:
+            self._corners = new_corners
+            self._refresh()
+        _run_clone_flow(self.app, self._title, apply_fn, on_confirmed)
 
     def action_done(self) -> None:
         self.dismiss(self._corners)
