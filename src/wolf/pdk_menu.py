@@ -833,6 +833,28 @@ def _apply_clone(vth_data: dict, pattern: re.Pattern, replace: str, root: Path) 
     return new_data, all_rows
 
 
+def _apply_clone_track(track_data: dict, pattern: re.Pattern, replace: str, root: Path) -> tuple[dict, list[dict]]:
+    """Clone a whole track: apply _apply_clone to every one of its vths,
+    prefixing each vth's own preview rows with its name so a multi-vth
+    preview still reads clearly. A vth that fails to clone to anything
+    meaningful still ends up in the result as an empty vth, same as
+    _apply_clone's own per-field tolerance -- only truly empty rows (a
+    vth with no file paths to clone at all) are left out of the rows list,
+    never silently dropped from the resulting track."""
+    vths = track_data.get("vths", {})
+    new_vths: dict = {}
+    all_rows: list[dict] = []
+    for vth_name, vth_data in vths.items():
+        if not isinstance(vth_data, dict):
+            continue
+        new_vth_data, rows = _apply_clone(vth_data, pattern, replace, root)
+        for row in rows:
+            row["location"] = f"{vth_name} / {row['location']}"
+        all_rows.extend(rows)
+        new_vths[vth_name] = new_vth_data
+    return {"vths": new_vths}, all_rows
+
+
 def _common_path_prefix(paths: list[str]) -> str:
     """The longest directory prefix shared by every path, or "" if there
     isn't one (mixed absolute/relative paths, or fewer than 2 distinct
@@ -1523,6 +1545,7 @@ class _TracksScreen(ModalScreen[Optional[dict]]):
 
     BINDINGS = [
         ("a", "add", "Add track"),
+        ("c", "clone", "Clone track"),
         ("d", "delete", "Delete track"),
         ("escape", "done", "Done"),
     ]
@@ -1547,7 +1570,10 @@ class _TracksScreen(ModalScreen[Optional[dict]]):
         ]
 
     def _hint(self) -> str:
-        return f"{len(self._tracks)} track(s) — enter: edit — a: add — d: delete highlighted — esc: done"
+        return (
+            f"{len(self._tracks)} track(s) — enter: edit — a: add — "
+            f"c: clone highlighted — d: delete highlighted — esc: done"
+        )
 
     def _refresh(self) -> None:
         option_list = self.query_one(OptionList)
@@ -1579,6 +1605,55 @@ class _TracksScreen(ModalScreen[Optional[dict]]):
             self._refresh()
             self._edit(name)
         self.app.push_screen(_TextScreen("Track name (e.g. 9T, 7T, 12T)"), handle)
+
+    def action_clone(self) -> None:
+        option_list = self.query_one(OptionList)
+        if option_list.highlighted is None or not self._tracks:
+            return
+        source_name = list(self._tracks)[option_list.highlighted]
+        source_data = self._tracks[source_name]
+
+        def handle_name(new_name: Optional[str]) -> None:
+            if not new_name:
+                return
+            if new_name in self._tracks:
+                self.app.notify(f"Track {new_name!r} already exists.", severity="warning")
+                return
+
+            def handle_find(find: Optional[str]) -> None:
+                if not find:
+                    return
+                try:
+                    pattern = re.compile(find)
+                except re.error as error:
+                    self.app.notify(f"Invalid regex: {error}", severity="error")
+                    return
+
+                def handle_replace(replace: Optional[str]) -> None:
+                    if replace is None:
+                        return
+                    new_data, rows = _apply_clone_track(source_data, pattern, replace, self._root)
+                    if not rows:
+                        self.app.notify(f"{source_name!r} has no file paths to clone.", severity="warning")
+                        return
+
+                    def handle_confirm(confirmed: bool) -> None:
+                        if not confirmed:
+                            return
+                        self._tracks[new_name] = new_data
+                        self._refresh()
+                        self._edit(new_name)
+                    self.app.push_screen(
+                        _ClonePreviewScreen(
+                            f"Clone track {source_name} -> {new_name}\n/{find}/ -> {replace!r}", rows,
+                        ),
+                        handle_confirm,
+                    )
+                self.app.push_screen(
+                    _TextScreen(f"Replace with (matches /{find}/ in {source_name}'s paths)"), handle_replace,
+                )
+            self.app.push_screen(_TextScreen(f"Regex to find in {source_name}'s paths"), handle_find)
+        self.app.push_screen(_TextScreen(f"New track name (cloned from {source_name})"), handle_name)
 
     def action_delete(self) -> None:
         option_list = self.query_one(OptionList)

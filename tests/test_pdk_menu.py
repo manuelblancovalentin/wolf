@@ -501,6 +501,58 @@ class PdkMenuEndToEndTests(unittest.TestCase):
         self.assertEqual(lvt_corners["typical"]["libraries"], ["lib/9t_lvt_typical.lib"])
         self.assertEqual(lvt_corners["worst"]["libraries"], [])
 
+    def test_clone_track_regex_substitutes_paths_across_every_vth(self):
+        """Promoting clone to tracks: cloning 9T -> 7T applies the same
+        regex substitution across every one of 9T's vths, not just one."""
+        lib_dir = self.root / "libroot" / "lib"
+        (lib_dir / "9t_rvt_typical.lib").write_text("x", encoding="utf-8")
+        (lib_dir / "7t_rvt_typical.lib").write_text("x", encoding="utf-8")
+        data = _default_document("smoketest", str(self.root / "libroot"))
+        data["metadata"]["technology"]["tracks"] = {"9T": {"vths": {"rvt": {
+            "timing": {"corners": {"typical": {"libraries": ["lib/9t_rvt_typical.lib"]}}},
+        }}}}
+
+        async def drive():
+            app = PdkMenuApp("smoketest", self.manifest_path, data, is_new=True)
+            async with app.run_test() as pilot:
+                main_list = app.query_one(OptionList)
+                self._select(main_list, "Tracks (1 track/vth group(s))")
+                await pilot.press("enter")
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "9T (1 vth(s))")
+                await pilot.press("c")  # clone track
+                await pilot.pause()
+                app.screen.query_one(Input).value = "7T"
+                await pilot.press("enter")
+                await pilot.pause()
+                app.screen.query_one(Input).value = "9t_"
+                await pilot.press("enter")
+                await pilot.pause()
+                app.screen.query_one(Input).value = "7t_"
+                await pilot.press("enter")
+                await pilot.pause()
+                hint = app.screen.query_one("#dialog-hint", Static).content
+                self.assertIn("1 path(s), 0 missing", hint)
+                await pilot.press("c")  # confirm
+                await pilot.pause()
+                await pilot.press("escape")  # 7T's own TrackScreen done
+                await pilot.pause()
+                await pilot.press("escape")  # TracksScreen done
+                await pilot.pause()
+                self.assertEqual(len(app.screen_stack), 1)
+                await pilot.press("s")
+                await pilot.pause()
+
+        asyncio.run(drive())
+
+        document = yaml.safe_load(self.manifest_path.read_text(encoding="utf-8"))
+        tracks = document["metadata"]["technology"]["tracks"]
+        self.assertEqual(set(tracks), {"9T", "7T"})
+        self.assertEqual(
+            tracks["7T"]["vths"]["rvt"]["timing"]["corners"]["typical"]["libraries"],
+            ["lib/7t_rvt_typical.lib"],
+        )
+
     def test_editing_an_existing_manifest_preserves_its_structure(self):
         data = _default_document("smoketest", str(self.root / "libroot"))
         data["source"]["revision"] = "V1"
