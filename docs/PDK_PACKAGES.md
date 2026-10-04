@@ -187,14 +187,31 @@ it's registered), or offers to create it -- asking which configured local
 registry to place it in if more than one is configured, then for the
 package's local filesystem root.
 
-The menu walks the same shape this document describes: Tracks → a
-track's vths → a vth's corners and file-category lists (LEF, GDS, Verilog
-models, SPICE models, QRC techfiles) → a corner's own libraries and
-optional QRC tech file. `a` adds (browsing the filesystem for file
-lists, typed text for names and cell-glob lists), `d` deletes the
-highlighted entry, `enter` opens whatever is highlighted, `esc` finishes
-a screen. `generic` is edited as raw YAML in `$EDITOR` rather than through
-dedicated fields, deliberately -- see the section above.
+Two ways to get to the same data:
+
+**Tracks** → a track's vths → a vth's corners, metal stacks (LEF/GDS/QRC
+techfiles together, one named stack at a time), and flat Verilog/SPICE
+model lists → a corner's own libraries, format, and optional QRC tech
+file. This is the structural view: pick track/vth first, then what to
+declare for it.
+
+**Front-End** / **Back-End** mirror the real library layout instead:
+Front-End → Timing/Power → a delay-model format (ECSM/NLDM/CCS, or type
+your own) lands you picking or creating a track, then a vth, then a
+corner already using that format (or a new one, pre-set to it) -- the
+same corner editor Tracks would open, just reached by "what kind of file
+is this" instead of "which track/vth first". Front-End → Verilog, and
+Back-End → GDS / LEF / LEF → Techfiles / SPICE, work the same way --
+pick/create a track and vth, then (for GDS/LEF/Techfiles) a metal stack,
+then edit that one file list directly. Nothing about the underlying data
+differs between the two paths; pick whichever matches how you're
+currently thinking about the library.
+
+`a` adds (browsing the filesystem for file lists, typed text for names
+and cell-glob lists), `d` deletes the highlighted entry, `enter` opens
+whatever is highlighted, `esc` finishes a screen. `generic` is edited as
+raw YAML in `$EDITOR` rather than through dedicated fields, deliberately
+-- see the section above.
 
 Every file/directory picker remembers the last directory it was used in
 for the rest of the session and starts there next time, rather than

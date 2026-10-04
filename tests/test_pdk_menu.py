@@ -125,6 +125,161 @@ class PdkMenuEndToEndTests(unittest.TestCase):
         self.assertEqual(resolved.timing_corners[0].name, "typical")
         self.assertEqual(resolved.timing_corners[0].format, "ecsm")
 
+    def _select(self, option_list, label):
+        options = [o.prompt for o in option_list.options]
+        option_list.highlighted = options.index(label)
+
+    def test_front_end_timing_power_navigation_creates_track_vth_corner(self):
+        """Front-End -> Timing/Power -> ECSM should land you on the same
+        real corner editor as the Tracks path, having lazily created the
+        track/vth/corner along the way -- the library-shaped entry point
+        this message's whole redesign is about."""
+        data = _default_document("smoketest", str(self.root / "libroot"))
+
+        async def drive():
+            app = PdkMenuApp("smoketest", self.manifest_path, data, is_new=True)
+            async with app.run_test() as pilot:
+                main_list = app.query_one(OptionList)
+                self._select(main_list, "Front-End (timing/power, verilog)")
+                await pilot.press("enter")
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "Timing / Power (lib: ECSM/NLDM/CCS)")
+                await pilot.press("enter")
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "ECSM")
+                await pilot.press("enter")
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "+ Create new...")  # track
+                await pilot.press("enter")
+                await pilot.pause()
+                app.screen.query_one(Input).value = "9T"
+                await pilot.press("enter")
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "+ Create new...")  # vth
+                await pilot.press("enter")
+                await pilot.pause()
+                app.screen.query_one(Input).value = "lvt"
+                await pilot.press("enter")
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "+ Create new...")  # corner
+                await pilot.press("enter")
+                await pilot.pause()
+                app.screen.query_one(Input).value = "typical"
+                await pilot.press("enter")
+                await pilot.pause()
+                # Now on _CornerEditScreen, with format pre-set to ecsm.
+                self._select(app.screen.query_one(OptionList), "Libraries (0 file(s))")
+                await pilot.press("enter")
+                await pilot.pause()
+                await pilot.press("a")
+                await pilot.pause()
+                await pilot.press("down")  # into lib/
+                await pilot.pause()
+                await pilot.press("enter")  # expand
+                await pilot.pause()
+                await pilot.press("down")
+                await pilot.pause()
+                await pilot.press("a")  # add first file
+                await pilot.pause()
+                await pilot.press("escape")  # done browsing -> back to FileListScreen
+                await pilot.pause()
+                await pilot.press("escape")  # FileListScreen done -> back to CornerEditScreen
+                await pilot.pause()
+                await pilot.press("escape")  # CornerEditScreen done -> back to the main menu
+                await pilot.pause()
+                self.assertEqual(len(app.screen_stack), 1)  # every _PickScreen already popped itself
+                await pilot.press("s")
+                await pilot.pause()
+
+        asyncio.run(drive())
+
+        document = yaml.safe_load(self.manifest_path.read_text(encoding="utf-8"))
+        corner = document["metadata"]["technology"]["tracks"]["9T"]["vths"]["lvt"] \
+            ["timing"]["corners"]["typical"]
+        self.assertEqual(corner["format"], "ecsm")
+        self.assertEqual(len(corner["libraries"]), 1)
+
+        manifest = load_manifest(self.manifest_path)
+
+        class FakeInstalled:
+            content_path = self.root / "libroot"
+        resolved = _technology_inputs(manifest, FakeInstalled())
+        self.assertEqual((resolved.track, resolved.vth), ("9T", "lvt"))
+        self.assertEqual(resolved.timing_corners[0].format, "ecsm")
+
+    def test_back_end_lef_navigation_creates_a_named_metal_stack(self):
+        """Back-End -> LEF -> LEF files should land you picking/creating a
+        metal stack for an existing track/vth, writing lef as a
+        {stack: [...]} mapping -- the multi-stack shape plain flat lists
+        can't express."""
+        lef_dir = self.root / "libroot" / "lef"
+        lef_dir.mkdir()
+        (lef_dir / "9lmT2.lef").write_text("-- lef --\n", encoding="utf-8")
+        data = _default_document("smoketest", str(self.root / "libroot"))
+        data["metadata"]["technology"]["tracks"] = {"9T": {"vths": {"lvt": {
+            "timing": {"corners": {"typical": {"libraries": ["lib/typical.lib"]}}},
+        }}}}
+
+        async def drive():
+            app = PdkMenuApp("smoketest", self.manifest_path, data, is_new=True)
+            async with app.run_test() as pilot:
+                main_list = app.query_one(OptionList)
+                self._select(main_list, "Back-End (LEF, GDS, techfiles, SPICE)")
+                await pilot.press("enter")
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "LEF")
+                await pilot.press("enter")
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "LEF files")
+                await pilot.press("enter")
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "9T")  # existing track
+                await pilot.press("enter")
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "lvt")  # existing vth
+                await pilot.press("enter")
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "+ Create new...")  # stack
+                await pilot.press("enter")
+                await pilot.pause()
+                app.screen.query_one(Input).value = "9lmT2"
+                await pilot.press("enter")
+                await pilot.pause()
+                # Now directly on the LEF-files _FileListScreen for that stack.
+                await pilot.press("a")
+                await pilot.pause()
+                await pilot.press("down")  # into lef/ (the only child)
+                await pilot.pause()
+                await pilot.press("enter")  # expand
+                await pilot.pause()
+                await pilot.press("down")
+                await pilot.pause()
+                await pilot.press("a")  # add 9lmT2.lef
+                await pilot.pause()
+                await pilot.press("escape")  # done browsing -> back to FileListScreen
+                await pilot.pause()
+                await pilot.press("escape")  # FileListScreen done -> back to the main menu
+                await pilot.pause()
+                await pilot.press("s")
+                await pilot.pause()
+
+        asyncio.run(drive())
+
+        document = yaml.safe_load(self.manifest_path.read_text(encoding="utf-8"))
+        lef = document["metadata"]["technology"]["tracks"]["9T"]["vths"]["lvt"]["lef"]
+        self.assertEqual(lef, {"9lmT2": ["lef/9lmT2.lef"]})
+
+        manifest = load_manifest(self.manifest_path)
+        from wolf.environment import ComponentReference
+
+        class FakeInstalled:
+            content_path = self.root / "libroot"
+        resolved = _technology_inputs(
+            manifest, FakeInstalled(), ComponentReference(track="9T", vth="lvt", metal_stack="9lmT2"),
+        )
+        self.assertEqual(resolved.metal_stack, "9lmT2")
+        self.assertEqual([p.name for p in resolved.technology_lefs], ["9lmT2.lef"])
+
     def test_editing_an_existing_manifest_preserves_its_structure(self):
         data = _default_document("smoketest", str(self.root / "libroot"))
         data["source"]["revision"] = "V1"

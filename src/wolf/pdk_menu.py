@@ -604,16 +604,324 @@ class _CornersScreen(ModalScreen[Optional[dict]]):
 
 
 _VTH_FILE_FIELDS = (
-    ("lef", "LEF files"),
-    ("gds", "GDS files"),
     ("verilog_models", "Verilog models"),
     ("spice_models", "SPICE models"),
-    ("qrc_techfiles", "QRC techfiles"),
 )
 
 
+# Must match wolf.environment's own _STACK_KEYED_FIELDS -- these are the
+# fields a vth may declare per named metal stack instead of as a flat list.
+_STACK_KEYED_FIELDS = ("lef", "gds", "qrc_techfiles")
+
+
+def _normalize_stacks(vth_data: dict) -> dict:
+    """Read a vth's lef/gds/qrc_techfiles into {stack_name: {field: [...]}}
+    regardless of which shape they're currently declared in.
+
+    A flat list (or no stack-keyed field at all) is one implicit stack --
+    named after the vth's own default_metal_stack if it has one, else
+    "default" -- so a single-stack vth still opens into this same editor
+    with nothing to migrate by hand.
+    """
+    stacks: dict = {}
+    has_dict_form = any(isinstance(vth_data.get(key), dict) for key in _STACK_KEYED_FIELDS)
+    if has_dict_form:
+        for key in _STACK_KEYED_FIELDS:
+            value = vth_data.get(key)
+            if isinstance(value, dict):
+                for stack, files in value.items():
+                    stacks.setdefault(stack, {field: [] for field in _STACK_KEYED_FIELDS})[key] = list(files)
+    else:
+        name = vth_data.get("default_metal_stack") or "default"
+        entry = {field: [] for field in _STACK_KEYED_FIELDS}
+        any_present = False
+        for key in _STACK_KEYED_FIELDS:
+            value = vth_data.get(key)
+            if isinstance(value, list) and value:
+                entry[key] = list(value)
+                any_present = True
+        if any_present:
+            stacks[name] = entry
+    return stacks
+
+
+def _write_stacks(vth_data: dict, stacks: dict) -> None:
+    """Write {stack_name: {field: [...]}} back into a vth's lef/gds/
+    qrc_techfiles -- always as the mapping form (even a single stack),
+    which resolves identically to a flat list (auto-selected). A field
+    with no files in any stack is omitted entirely, matching what
+    wolf.environment's _vth_metal_stacks requires."""
+    for key in _STACK_KEYED_FIELDS:
+        if not any(data.get(key) for data in stacks.values()):
+            vth_data.pop(key, None)
+            continue
+        vth_data[key] = {name: data.get(key, []) for name, data in stacks.items()}
+
+
+class _StackEditScreen(ModalScreen[Optional[dict]]):
+    """Edit one named metal stack's LEF/GDS/QRC-techfile lists."""
+
+    BINDINGS = [("escape", "done", "Done")]
+
+    def __init__(self, name: str, root: Path, data: dict):
+        super().__init__()
+        self._name = name
+        self._root = root
+        self._data = dict(data)
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="dialog"):
+            yield Static(f"Metal stack: {self._name}", id="dialog-title")
+            yield OptionList(*self._options())
+            yield Static("enter: edit — esc: done", id="dialog-hint")
+
+    def _options(self) -> list[Option]:
+        return [
+            Option(f"{label} ({len(self._data.get(key, []))} file(s))", id=key)
+            for key, label in zip(_STACK_KEYED_FIELDS, ("LEF files", "GDS files", "QRC techfiles"))
+        ]
+
+    def _refresh(self) -> None:
+        option_list = self.query_one(OptionList)
+        option_list.clear_options()
+        for option in self._options():
+            option_list.add_option(option)
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        event.stop()
+        key = event.option_id
+        labels = dict(zip(_STACK_KEYED_FIELDS, ("LEF files", "GDS files", "QRC techfiles")))
+        if key in labels:
+            def handle(values: Optional[list]) -> None:
+                if values is not None:
+                    self._data[key] = values
+                    self._refresh()
+            self.app.push_screen(
+                _FileListScreen(
+                    f"{labels[key]} for stack {self._name}", self._root, self._data.get(key, []),
+                ),
+                handle,
+            )
+
+    def action_done(self) -> None:
+        self.dismiss(self._data)
+
+
+class _MetalStacksScreen(ModalScreen[Optional[dict]]):
+    """Edit the named metal stacks declared for one vth (each stack: its
+    own LEF/GDS/QRC-techfile lists) -- the multi-stack equivalent of
+    _CornersScreen, since the same "named, then edited" shape applies."""
+
+    BINDINGS = [
+        ("a", "add", "Add stack"),
+        ("d", "delete", "Delete stack"),
+        ("escape", "done", "Done"),
+    ]
+
+    def __init__(self, title: str, root: Path, vth_data: dict):
+        super().__init__()
+        self._title = title
+        self._root = root
+        self._stacks = _normalize_stacks(vth_data)
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="dialog"):
+            yield Static(self._title, id="dialog-title")
+            yield OptionList(*self._options())
+            yield Static(self._hint(), id="dialog-hint")
+
+    def _options(self) -> list[Option]:
+        if not self._stacks:
+            return [Option("(none yet -- press a to add)", id="__empty__", disabled=True)]
+        return [
+            Option(f"{name} (lef={len(data['lef'])} gds={len(data['gds'])} qrc={len(data['qrc_techfiles'])})", id=name)
+            for name, data in self._stacks.items()
+        ]
+
+    def _hint(self) -> str:
+        return f"{len(self._stacks)} stack(s) — enter: edit — a: add — d: delete highlighted — esc: done"
+
+    def _refresh(self) -> None:
+        option_list = self.query_one(OptionList)
+        option_list.clear_options()
+        for option in self._options():
+            option_list.add_option(option)
+        self.query_one("#dialog-hint", Static).update(self._hint())
+
+    def _edit(self, name: str) -> None:
+        def handle(data: Optional[dict]) -> None:
+            if data is not None:
+                self._stacks[name] = data
+                self._refresh()
+        self.app.push_screen(_StackEditScreen(name, self._root, self._stacks.get(name, {})), handle)
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        event.stop()
+        if event.option_id and event.option_id != "__empty__":
+            self._edit(event.option_id)
+
+    def action_add(self) -> None:
+        def handle(name: Optional[str]) -> None:
+            if not name:
+                return
+            if name in self._stacks:
+                self.app.notify(f"Metal stack {name!r} already exists.", severity="warning")
+                return
+            self._stacks[name] = {field: [] for field in _STACK_KEYED_FIELDS}
+            self._refresh()
+            self._edit(name)
+        self.app.push_screen(_TextScreen("Metal stack name (e.g. 9lmT2, 7lmT1)"), handle)
+
+    def action_delete(self) -> None:
+        option_list = self.query_one(OptionList)
+        if option_list.highlighted is None or not self._stacks:
+            return
+        name = list(self._stacks)[option_list.highlighted]
+        del self._stacks[name]
+        self._refresh()
+
+    def action_done(self) -> None:
+        self.dismiss(self._stacks)
+
+
+def _pick_or_create_name(app: App, title: str, existing: list[str], create_prompt: str, on_done) -> None:
+    """Pick one of `existing`, or create a new name -- the shared shape
+    behind picking/creating a track, a vth, a format-matching corner, or
+    a metal stack from one of the library-shaped (Front-End/Back-End)
+    navigation entry points below. Calls on_done(name_or_None)."""
+    choices = [(name, name) for name in existing] + [("+ Create new...", "__new__")]
+
+    def handle(value: Optional[str]) -> None:
+        if value is None:
+            on_done(None)
+        elif value == "__new__":
+            def handle_name(name: Optional[str]) -> None:
+                on_done(name or None)
+            app.push_screen(_TextScreen(create_prompt), handle_name)
+        else:
+            on_done(value)
+    app.push_screen(_PickScreen(title, choices), handle)
+
+
+def _navigate_to_vth(app: App, technology: dict, on_vth) -> None:
+    """Pick or create a track, then a vth under it -- the common first
+    step of every library-shaped (Front-End/Back-End) navigation entry
+    point, since every one of them ends up at "some vth's data" before
+    branching into a format, a flat category, or a metal stack.
+    Calls on_vth(track_name, vth_name, vth_data).
+    """
+    tracks = technology.setdefault("tracks", {})
+
+    def handle_track(track_name: Optional[str]) -> None:
+        if not track_name:
+            return
+        track_data = tracks.setdefault(track_name, {"vths": {}})
+        vths = track_data.setdefault("vths", {})
+
+        def handle_vth(vth_name: Optional[str]) -> None:
+            if not vth_name:
+                return
+            vth_data = vths.setdefault(vth_name, {})
+            on_vth(track_name, vth_name, vth_data)
+        _pick_or_create_name(
+            app, f"Pick/create a vth under track {track_name}", sorted(vths),
+            "vth name (e.g. lvt, rvt, hvt)", handle_vth,
+        )
+    _pick_or_create_name(
+        app, "Pick/create a track", sorted(tracks), "Track name (e.g. 9T, 7T, 12T)", handle_track,
+    )
+
+
+def _enter_timing_format(
+    app: App, technology: dict, root: Path, format_name: str, on_done=lambda: None,
+) -> None:
+    """Front-End -> Timing/Power -> <format>: pick/create a track/vth,
+    then a corner already using this format (or create one), then open
+    its real corner editor -- mirrors browsing to
+    Front_End/timing_power_noise/<FORMAT>/<family>/ in the real tree.
+    on_done() fires only once something was actually saved, so the caller
+    can refresh its own menu at the right time -- not immediately, since
+    everything here is asynchronous (several screens may still be open).
+    """
+    def on_vth(track_name: str, vth_name: str, vth_data: dict) -> None:
+        corners = vth_data.setdefault("timing", {}).setdefault("corners", {})
+        matching = sorted(
+            name for name, data in corners.items()
+            if isinstance(data, dict) and data.get("format", "liberty") == format_name
+        )
+
+        def handle_corner(corner_name: Optional[str]) -> None:
+            if not corner_name:
+                return
+            data = corners.setdefault(corner_name, {"libraries": []})
+            data.setdefault("format", format_name)
+
+            def handle_result(result: Optional[dict]) -> None:
+                if result is not None:
+                    corners[corner_name] = result
+                    on_done()
+            app.push_screen(
+                _CornerEditScreen(f"{track_name}/{vth_name}/{corner_name}", root, data), handle_result,
+            )
+        _pick_or_create_name(
+            app, f"Pick/create a {format_name} corner ({track_name}/{vth_name})", matching,
+            f"Corner name (format={format_name}, e.g. typical, worst_case)", handle_corner,
+        )
+    _navigate_to_vth(app, technology, on_vth)
+
+
+def _enter_flat_category(
+    app: App, technology: dict, root: Path, category: str, label: str, on_done=lambda: None,
+) -> None:
+    """Front-End -> Verilog, or Back-End -> SPICE: pick/create a track/vth,
+    then edit that one flat (not stack- or corner-keyed) file list."""
+    def on_vth(track_name: str, vth_name: str, vth_data: dict) -> None:
+        def handle_result(values: Optional[list]) -> None:
+            if values is not None:
+                vth_data[category] = values
+                on_done()
+        app.push_screen(
+            _FileListScreen(f"{label} for {track_name}/{vth_name}", root, vth_data.get(category, [])),
+            handle_result,
+        )
+    _navigate_to_vth(app, technology, on_vth)
+
+
+def _enter_stack_field(
+    app: App, technology: dict, root: Path, field: str, label: str, on_done=lambda: None,
+) -> None:
+    """Back-End -> GDS / LEF / Techfiles: pick/create a track/vth, then a
+    metal stack, then edit just that one field for that stack -- without
+    needing to open the full per-stack editor for the other two fields."""
+    def on_vth(track_name: str, vth_name: str, vth_data: dict) -> None:
+        stacks = _normalize_stacks(vth_data)
+
+        def handle_stack(stack_name: Optional[str]) -> None:
+            if not stack_name:
+                return
+            entry = stacks.setdefault(stack_name, {key: [] for key in _STACK_KEYED_FIELDS})
+
+            def handle_result(values: Optional[list]) -> None:
+                if values is not None:
+                    entry[field] = values
+                    _write_stacks(vth_data, stacks)
+                    on_done()
+            app.push_screen(
+                _FileListScreen(
+                    f"{label} for {track_name}/{vth_name}/{stack_name}", root, entry.get(field, []),
+                ),
+                handle_result,
+            )
+        _pick_or_create_name(
+            app, f"Pick/create a metal stack ({track_name}/{vth_name})", sorted(stacks),
+            "Metal stack name (e.g. 9lmT2, 7lmT1)", handle_stack,
+        )
+    _navigate_to_vth(app, technology, on_vth)
+
+
 class _VthScreen(ModalScreen[Optional[dict]]):
-    """Edit one vth's corners plus its physical/behavioral file lists."""
+    """Edit one vth's corners, metal stacks (LEF/GDS/QRC techfiles), and
+    flat behavioral-model file lists."""
 
     BINDINGS = [("escape", "done", "Done")]
 
@@ -631,7 +939,13 @@ class _VthScreen(ModalScreen[Optional[dict]]):
 
     def _options(self) -> list[Option]:
         corners = self._data.get("timing", {}).get("corners", {})
-        options = [Option(f"Liberty corners ({len(corners)})", id="corners")]
+        stacks = _normalize_stacks(self._data)
+        default_stack = self._data.get("default_metal_stack") or "not set (auto-select if only one)"
+        options = [
+            Option(f"Liberty corners ({len(corners)})", id="corners"),
+            Option(f"Metal stacks ({len(stacks)}): LEF/GDS/QRC techfiles", id="stacks"),
+            Option(f"Default metal stack: {default_stack}", id="default_metal_stack"),
+        ]
         for key, label in _VTH_FILE_FIELDS:
             count = len(self._data.get(key, []))
             options.append(Option(f"{label} ({count} file(s))", id=key))
@@ -653,6 +967,25 @@ class _VthScreen(ModalScreen[Optional[dict]]):
                     self._refresh()
             corners = self._data.get("timing", {}).get("corners", {})
             self.app.push_screen(_CornersScreen(self._title, self._root, corners), handle)
+        elif key == "stacks":
+            def handle(stacks: Optional[dict]) -> None:
+                if stacks is not None:
+                    _write_stacks(self._data, stacks)
+                    self._refresh()
+            self.app.push_screen(
+                _MetalStacksScreen(f"Metal stacks for {self._title}", self._root, self._data), handle,
+            )
+        elif key == "default_metal_stack":
+            def handle(value: Optional[str]) -> None:
+                if value is not None:
+                    if value:
+                        self._data["default_metal_stack"] = value
+                    else:
+                        self._data.pop("default_metal_stack", None)
+                    self._refresh()
+            self.app.push_screen(
+                _TextScreen("Default metal stack", self._data.get("default_metal_stack", "")), handle,
+            )
         elif key in dict(_VTH_FILE_FIELDS):
             label = dict(_VTH_FILE_FIELDS)[key]
 
@@ -958,6 +1291,8 @@ class PdkMenuApp(App[None]):
             options.append(Option(f"Source: {source.get('type', 'unknown')} (not editable here)", id="source_info"))
         options.extend([
             Option(f"Tracks ({len(tracks)} track/vth group(s))", id="tracks"),
+            Option("Front-End (timing/power, verilog)", id="front_end"),
+            Option("Back-End (LEF, GDS, techfiles, SPICE)", id="back_end"),
             Option(f"Generic / other fields ({len(generic)} key(s), edit as YAML)", id="generic"),
             Option(f"Synthesis dont_use cells ({len(dont_use)})", id="dont_use"),
         ])
@@ -984,6 +1319,10 @@ class PdkMenuApp(App[None]):
             self._edit_source_root()
         elif choice == "tracks":
             self._edit_tracks()
+        elif choice == "front_end":
+            self._edit_front_end()
+        elif choice == "back_end":
+            self._edit_back_end()
         elif choice == "generic":
             self._edit_generic()
         elif choice == "dont_use":
@@ -1027,6 +1366,75 @@ class PdkMenuApp(App[None]):
                 self._technology["tracks"] = tracks
                 self._refresh()
         self.push_screen(_TracksScreen(self._root, self._technology.get("tracks", {})), handle)
+
+    def _edit_front_end(self) -> None:
+        """Mirrors Front_End/{timing_power_noise,verilog} in the real tree:
+        pick a category, then (lazily, creating track/vth/corner as
+        needed) land on the real leaf editor -- the same data _edit_tracks
+        edits, just entered from "what kind of file is this" instead of
+        "which track/vth first"."""
+        def handle(choice: Optional[str]) -> None:
+            if choice == "timing":
+                self._edit_timing_format()
+            elif choice == "verilog":
+                _enter_flat_category(
+                    self, self._technology, self._root, "verilog_models", "Verilog models",
+                    on_done=self._refresh,
+                )
+        self.push_screen(_PickScreen("Front-End", [
+            ("Timing / Power (lib: ECSM/NLDM/CCS)", "timing"),
+            ("Verilog", "verilog"),
+        ]), handle)
+
+    def _edit_timing_format(self) -> None:
+        def handle(choice: Optional[str]) -> None:
+            if choice == "__custom__":
+                def handle_name(name: Optional[str]) -> None:
+                    if name:
+                        _enter_timing_format(
+                            self, self._technology, self._root, name, on_done=self._refresh,
+                        )
+                self.push_screen(_TextScreen("Custom delay-model format name"), handle_name)
+            elif choice:
+                _enter_timing_format(self, self._technology, self._root, choice, on_done=self._refresh)
+        self.push_screen(_PickScreen("Timing / Power -- pick a delay-model format", [
+            ("ECSM", "ecsm"), ("NLDM", "nldm"), ("CCS", "ccs"), ("Other / custom format...", "__custom__"),
+        ]), handle)
+
+    def _edit_back_end(self) -> None:
+        """Mirrors Back_End/{gds,lef,spice} (lef/techfiles share one
+        metal-stack axis, same as the real lef/<family>/techfiles/
+        subdirectory living inside lef/<family>/, not beside it)."""
+        def handle(choice: Optional[str]) -> None:
+            if choice == "gds":
+                _enter_stack_field(
+                    self, self._technology, self._root, "gds", "GDS files", on_done=self._refresh,
+                )
+            elif choice == "lef":
+                self._edit_lef_menu()
+            elif choice == "spice":
+                _enter_flat_category(
+                    self, self._technology, self._root, "spice_models", "SPICE models",
+                    on_done=self._refresh,
+                )
+        self.push_screen(_PickScreen("Back-End", [
+            ("GDS", "gds"), ("LEF", "lef"), ("SPICE", "spice"),
+        ]), handle)
+
+    def _edit_lef_menu(self) -> None:
+        def handle(choice: Optional[str]) -> None:
+            if choice == "lef":
+                _enter_stack_field(
+                    self, self._technology, self._root, "lef", "LEF files", on_done=self._refresh,
+                )
+            elif choice == "techfiles":
+                _enter_stack_field(
+                    self, self._technology, self._root, "qrc_techfiles", "QRC techfiles",
+                    on_done=self._refresh,
+                )
+        self.push_screen(_PickScreen("LEF", [
+            ("LEF files", "lef"), ("Techfiles (QRC captables)", "techfiles"),
+        ]), handle)
 
     def _edit_dont_use(self) -> None:
         synthesis = self._technology.setdefault("synthesis", {})
@@ -1145,7 +1553,7 @@ class _PdkPickerApp(App[Optional[str]]):
         self.push_screen(_PickScreen("Pick a PDK package to edit", choices), handle)
 
 
-def _pick_or_create_name() -> Optional[str]:
+def _pick_or_create_package_name() -> Optional[str]:
     """No NAME given: pick an existing pdk/* package, or name a new one."""
     chosen = _PdkPickerApp(_existing_pdk_names()).run()
     if chosen is None:
@@ -1167,7 +1575,7 @@ def open_pdk_menu(name: Optional[str] = None) -> None:
     registry for a brand new one) stays separate from the editor itself.
     """
     if name is None:
-        name = _pick_or_create_name()
+        name = _pick_or_create_package_name()
         if name is None:
             return
 
