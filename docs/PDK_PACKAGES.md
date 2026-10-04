@@ -259,22 +259,30 @@ without closing the picker -- the same way to remove a corner you no
 longer want (a legacy name you've since renamed away from, say) as `d`
 already works in the Tracks path's own corner/track/vth list editors.
 
-### Cloning a vth
+### Cloning a track, vth, or metal stack
 
-Once one vth under a track is fully populated, `c` on the Tracks path's
-track screen clones the highlighted vth to a new name, rewriting every
-path it carries (every corner's libraries and `qrc_tech_file`, flat
-Verilog/SPICE model lists, and every metal stack's LEF/GDS/QRC
-techfiles) with one regex substitution -- the fast way to populate a
-second vth (`rvt` → `lvt`, say) once the first one's corners, formats,
-and metal stacks are already right, rather than re-declaring all of that
-by hand. You're asked for the new vth's name, a regex to find in the
-source vth's paths, and what to replace it with; a preview screen then
-shows every resulting path with a green OK or red MISSING depending on
-whether it actually exists on disk, before anything is written. `c`
-confirms -- paths that don't exist are silently dropped (a corner with
-no file left for the new vth is still created, just empty, rather than
-written pointing at nothing); `esc` cancels without changing anything.
+Once one is fully populated, `c` on the highlighted entry clones it to a
+new name -- on the Tracks path's tracks screen (clones every vth the
+track has), a track screen (clones one vth), or a vth's metal-stacks
+screen (clones one stack's LEF/GDS/QRC-techfile lists) -- rewriting
+every path it carries with one or more regex substitutions. The fast
+way to populate a second vth (`rvt` → `lvt`, say), a second track, or a
+second metal stack once the first one's corners, formats, and files are
+already right, rather than re-declaring all of that by hand.
+
+You're asked for the new name, then land on a screen for building the
+substitution list itself: `a` adds one (find regex, then replace) pair,
+`enter` edits the highlighted pair, `d` deletes it, `esc` finishes with
+however many pairs you've built. More than one pair is for a path that
+needs more than one rewrite (the track token and the vth token both
+changing, say) -- they apply in the order you added them, left to right.
+A preview screen then shows every resulting path with a green OK or red
+MISSING depending on whether it actually exists on disk, before
+anything is written. `c` confirms -- paths that don't exist are
+silently dropped (a corner with no file left for the clone is still
+created, just empty, rather than written pointing at nothing); `esc` at
+any point (no substitution pairs added, or cancelling the preview)
+leaves the source completely untouched.
 
 `a` adds (browsing the filesystem for file lists, typed text for names
 and cell-glob lists), `d` deletes the highlighted entry, `enter` opens

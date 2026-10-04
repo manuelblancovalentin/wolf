@@ -471,11 +471,16 @@ class PdkMenuEndToEndTests(unittest.TestCase):
                 app.screen.query_one(Input).value = "lvt"
                 await pilot.press("enter")
                 await pilot.pause()
+                # On the regex-pairs screen: add one (find, replace) pair.
+                await pilot.press("a")
+                await pilot.pause()
                 app.screen.query_one(Input).value = "rvt"
                 await pilot.press("enter")
                 await pilot.pause()
                 app.screen.query_one(Input).value = "lvt"
                 await pilot.press("enter")
+                await pilot.pause()
+                await pilot.press("escape")  # done adding pairs -> on to the preview
                 await pilot.pause()
                 hint = app.screen.query_one("#dialog-hint", Static).content
                 self.assertIn("2 path(s), 1 missing", hint)
@@ -525,11 +530,15 @@ class PdkMenuEndToEndTests(unittest.TestCase):
                 app.screen.query_one(Input).value = "7T"
                 await pilot.press("enter")
                 await pilot.pause()
+                await pilot.press("a")  # add one (find, replace) pair
+                await pilot.pause()
                 app.screen.query_one(Input).value = "9t_"
                 await pilot.press("enter")
                 await pilot.pause()
                 app.screen.query_one(Input).value = "7t_"
                 await pilot.press("enter")
+                await pilot.pause()
+                await pilot.press("escape")  # done adding pairs -> on to the preview
                 await pilot.pause()
                 hint = app.screen.query_one("#dialog-hint", Static).content
                 self.assertIn("1 path(s), 0 missing", hint)
@@ -552,6 +561,148 @@ class PdkMenuEndToEndTests(unittest.TestCase):
             tracks["7T"]["vths"]["rvt"]["timing"]["corners"]["typical"]["libraries"],
             ["lib/7t_rvt_typical.lib"],
         )
+
+    def test_clone_metal_stack_regex_substitutes_paths(self):
+        """Promoting clone to metal stacks: cloning 9lmT2 -> 7lmT1 applies
+        a regex substitution across that stack's lef/gds/qrc_techfiles."""
+        lib_dir = self.root / "libroot" / "lef"
+        lib_dir.mkdir(parents=True)
+        (lib_dir / "9t_lvt_9lmT2.lef").write_text("x", encoding="utf-8")
+        (lib_dir / "9t_lvt_7lmT1.lef").write_text("x", encoding="utf-8")
+        data = _default_document("smoketest", str(self.root / "libroot"))
+        data["metadata"]["technology"]["tracks"] = {"9T": {"vths": {"lvt": {
+            "timing": {"corners": {"typical": {"libraries": ["lib/typical.lib"]}}},
+            "lef": {"9lmT2": ["lef/9t_lvt_9lmT2.lef"]},
+        }}}}
+
+        async def drive():
+            app = PdkMenuApp("smoketest", self.manifest_path, data, is_new=True)
+            async with app.run_test() as pilot:
+                main_list = app.query_one(OptionList)
+                self._select(main_list, "Tracks (1 track/vth group(s))")
+                await pilot.press("enter")
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "9T (1 vth(s))")
+                await pilot.press("enter")
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "lvt (1 corner(s))")
+                await pilot.press("enter")
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "Metal stacks (1): LEF/GDS/QRC techfiles")
+                await pilot.press("enter")
+                await pilot.pause()
+                # "9lmT2" is the only (and highlighted) stack.
+                await pilot.press("c")  # clone stack
+                await pilot.pause()
+                app.screen.query_one(Input).value = "7lmT1"
+                await pilot.press("enter")
+                await pilot.pause()
+                await pilot.press("a")  # one substitution pair
+                await pilot.pause()
+                app.screen.query_one(Input).value = "9lmT2"
+                await pilot.press("enter")
+                await pilot.pause()
+                app.screen.query_one(Input).value = "7lmT1"
+                await pilot.press("enter")
+                await pilot.pause()
+                await pilot.press("escape")  # done adding pairs -> preview
+                await pilot.pause()
+                hint = app.screen.query_one("#dialog-hint", Static).content
+                self.assertIn("1 path(s), 0 missing", hint)
+                await pilot.press("c")  # confirm
+                await pilot.pause()
+                await pilot.press("escape")  # 7lmT1's own StackEditScreen done
+                await pilot.pause()
+                await pilot.press("escape")  # MetalStacksScreen done
+                await pilot.pause()
+                await pilot.press("escape")  # VthScreen done
+                await pilot.pause()
+                await pilot.press("escape")  # TrackScreen done
+                await pilot.pause()
+                await pilot.press("escape")  # TracksScreen done
+                await pilot.pause()
+                self.assertEqual(len(app.screen_stack), 1)
+                await pilot.press("s")
+                await pilot.pause()
+
+        asyncio.run(drive())
+
+        document = yaml.safe_load(self.manifest_path.read_text(encoding="utf-8"))
+        lef = document["metadata"]["technology"]["tracks"]["9T"]["vths"]["lvt"]["lef"]
+        self.assertEqual(set(lef), {"9lmT2", "7lmT1"})
+        self.assertEqual(lef["7lmT1"], ["lef/9t_lvt_7lmT1.lef"])
+
+    def test_clone_with_multiple_regex_pairs_applies_them_in_order(self):
+        """Some paths need more than one rewrite -- both pairs apply, in
+        the order they were added."""
+        lib_dir = self.root / "libroot" / "lib"
+        (lib_dir / "9t_rvt_typical.lib").write_text("x", encoding="utf-8")
+        (lib_dir / "7t_lvt_typical.lib").write_text("x", encoding="utf-8")
+        data = _default_document("smoketest", str(self.root / "libroot"))
+        data["metadata"]["technology"]["tracks"] = {"9T": {"vths": {"rvt": {
+            "timing": {"corners": {"typical": {"libraries": ["lib/9t_rvt_typical.lib"]}}},
+        }}}}
+
+        async def drive():
+            app = PdkMenuApp("smoketest", self.manifest_path, data, is_new=True)
+            async with app.run_test() as pilot:
+                main_list = app.query_one(OptionList)
+                self._select(main_list, "Tracks (1 track/vth group(s))")
+                await pilot.press("enter")
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "9T (1 vth(s))")
+                await pilot.press("enter")
+                await pilot.pause()
+                # On the track screen, "rvt" is the only (and highlighted) vth.
+                await pilot.press("c")  # clone vth
+                await pilot.pause()
+                app.screen.query_one(Input).value = "lvt"
+                await pilot.press("enter")
+                await pilot.pause()
+                # First pair: swap the track token.
+                await pilot.press("a")
+                await pilot.pause()
+                app.screen.query_one(Input).value = "9t_"
+                await pilot.press("enter")
+                await pilot.pause()
+                app.screen.query_one(Input).value = "7t_"
+                await pilot.press("enter")
+                await pilot.pause()
+                # Second pair: swap the vth token.
+                await pilot.press("a")
+                await pilot.pause()
+                app.screen.query_one(Input).value = "rvt"
+                await pilot.press("enter")
+                await pilot.pause()
+                app.screen.query_one(Input).value = "lvt"
+                await pilot.press("enter")
+                await pilot.pause()
+                pairs_list = app.screen.query_one(OptionList)
+                self.assertEqual(
+                    [o.prompt for o in pairs_list.options], ["/9t_/ -> '7t_'", "/rvt/ -> 'lvt'"],
+                )
+                await pilot.press("escape")  # done adding pairs -> preview
+                await pilot.pause()
+                hint = app.screen.query_one("#dialog-hint", Static).content
+                self.assertIn("1 path(s), 0 missing", hint)
+                await pilot.press("c")  # confirm
+                await pilot.pause()
+                await pilot.press("escape")
+                await pilot.pause()
+                await pilot.press("escape")
+                await pilot.pause()
+                await pilot.press("escape")
+                await pilot.pause()
+                self.assertEqual(len(app.screen_stack), 1)
+                await pilot.press("s")
+                await pilot.pause()
+
+        asyncio.run(drive())
+
+        document = yaml.safe_load(self.manifest_path.read_text(encoding="utf-8"))
+        lvt_corners = document["metadata"]["technology"]["tracks"]["9T"]["vths"]["lvt"] \
+            ["timing"]["corners"]
+        self.assertEqual(lvt_corners["typical"]["libraries"], ["lib/7t_lvt_typical.lib"])
 
     def test_editing_an_existing_manifest_preserves_its_structure(self):
         data = _default_document("smoketest", str(self.root / "libroot"))
