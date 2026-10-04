@@ -408,6 +408,37 @@ class PdkMenuEndToEndTests(unittest.TestCase):
         # default_metal_stack ("7lmT1") wins the migration pick.
         self.assertEqual(gds, ["gds/b.gds"])
 
+    def test_dotted_name_quick_jump_also_migrates_legacy_gds(self):
+        """The migration used to be called at each of three separate call
+        sites by hand, and this one (PdkMenuApp's own initial_track/
+        initial_vth -- what `wolf pdk menu tsmc65.9T.lvt` resolves to)
+        was missed. Now _VthScreen does it itself, so every path that
+        reaches a vth screen migrates it, including this one."""
+        data = _default_document("smoketest", str(self.root / "libroot"))
+        data["metadata"]["technology"]["tracks"] = {"9T": {"vths": {"lvt": {
+            "timing": {"corners": {"typical": {"libraries": ["lib/typical.lib"]}}},
+            "gds": {"9lmT2": ["gds/a.gds"]},
+        }}}}
+
+        async def drive():
+            app = PdkMenuApp(
+                "smoketest", self.manifest_path, data, is_new=True,
+                initial_track="9T", initial_vth="lvt",
+            )
+            async with app.run_test() as pilot:
+                await pilot.pause()  # on_mount jumps straight to the vth screen
+                while len(app.screen_stack) > 1:
+                    await pilot.press("escape")
+                    await pilot.pause()
+                await pilot.press("s")
+                await pilot.pause()
+
+        asyncio.run(drive())
+
+        document = yaml.safe_load(self.manifest_path.read_text(encoding="utf-8"))
+        gds = document["metadata"]["technology"]["tracks"]["9T"]["vths"]["lvt"]["gds"]
+        self.assertEqual(gds, ["gds/a.gds"])
+
     def test_back_end_metal_stack_picker_supports_clone_too(self):
         """The metal-stack picker reached via Back-End -> LEF -> LEF
         files -> track -> vth is a different screen class

@@ -710,30 +710,28 @@ _VTH_FILE_FIELDS = (
 _STACK_KEYED_FIELDS = ("lef", "qrc_techfiles")
 
 
-def _migrate_legacy_gds(app: App, vth_data: dict) -> None:
+def _flatten_legacy_gds(vth_data: dict) -> Optional[tuple[Optional[str], int]]:
     """GDS used to be declared per metal stack, the same as lef and
     qrc_techfiles -- but a cell's own GDS geometry lives on metal layers
     shared by every stack option, so it no longer needs that axis.
-    Auto-flatten an old per-stack gds dict the moment this vth is opened:
-    its own default_metal_stack if set, else its only declared stack if
-    there's just one, else the first one sorted -- and notify either way,
-    since this picks one stack's files and drops the others (usually the
-    same files anyway; if they genuinely weren't, that's exactly what the
-    notification is for)."""
+    Mutates an old per-stack gds dict into the new flat list in place:
+    the vth's own default_metal_stack if set, else its only declared
+    stack if there's just one, else the first one sorted. Returns
+    (stack_name_or_None, file_count) if gds actually was a legacy dict
+    (so a caller can notify what happened -- this picks one stack's
+    files and drops the others, usually the same files anyway), or None
+    if there was nothing to migrate. Pure data mutation, no App reference
+    needed, so it's safe to call from __init__, before a screen is
+    actually mounted."""
     value = vth_data.get("gds")
     if not isinstance(value, dict):
-        return
+        return None
     stack = vth_data.get("default_metal_stack")
     if stack not in value:
         stack = next(iter(sorted(value)), None)
     files = list(value.get(stack, [])) if stack else []
     vth_data["gds"] = files
-    app.notify(
-        f"gds no longer varies by metal stack -- flattened to {stack!r}'s {len(files)} "
-        "file(s); review and re-save." if stack else
-        "gds no longer varies by metal stack -- flattened to an empty list; review and re-save.",
-        severity="warning",
-    )
+    return (stack, len(files))
 
 
 def _normalize_stacks(vth_data: dict) -> dict:
@@ -1448,7 +1446,18 @@ def _navigate_to_vth(app: App, technology: dict, root: Path, breadcrumb: str, on
 
         def do_vth(vth_name: str, resume_vth) -> None:
             vth_data = vths.setdefault(vth_name, {})
-            _migrate_legacy_gds(app, vth_data)
+            migration = _flatten_legacy_gds(vth_data)
+            if migration is not None:
+                stack, count = migration
+                app.notify(
+                    (
+                        f"gds no longer varies by metal stack -- flattened to {stack!r}'s "
+                        f"{count} file(s); review and re-save."
+                    ) if stack else
+                    "gds no longer varies by metal stack -- flattened to an empty list; "
+                    "review and re-save.",
+                    severity="warning",
+                )
             on_vth(track_name, vth_name, vth_data, f"{track_crumb} / {vth_name}", resume_vth)
 
         def delete_vth(vth_name: str) -> None:
@@ -1622,6 +1631,26 @@ class _VthScreen(ModalScreen[Optional[dict]]):
         self._title = title
         self._root = root
         self._data = dict(data)
+        # Pure mutation, safe before mount -- see _flatten_legacy_gds.
+        # Flattening here (not at each place that used to call it ad hoc)
+        # means opening a vth through *any* path -- Tracks, Front-End/
+        # Back-End, or the dotted-name quick-jump straight to
+        # tsmc65.<track>.<vth> -- always migrates it, not just some of
+        # them.
+        self._gds_migration = _flatten_legacy_gds(self._data)
+
+    def on_mount(self) -> None:
+        if self._gds_migration is None:
+            return
+        stack, count = self._gds_migration
+        self.notify(
+            (
+                f"gds no longer varies by metal stack -- flattened to {stack!r}'s {count} "
+                "file(s); review and re-save."
+            ) if stack else
+            "gds no longer varies by metal stack -- flattened to an empty list; review and re-save.",
+            severity="warning",
+        )
 
     def compose(self) -> ComposeResult:
         with Vertical(id="dialog"):
@@ -1742,8 +1771,9 @@ class _TrackScreen(ModalScreen[Optional[dict]]):
         self.query_one("#dialog-hint", Static).update(self._hint())
 
     def _edit(self, name: str) -> None:
+        # _VthScreen itself handles the legacy-gds migration (see
+        # _flatten_legacy_gds) now, regardless of how it's reached.
         vth_data = self._vths().get(name, {})
-        _migrate_legacy_gds(self.app, vth_data)
 
         def handle(data: Optional[dict]) -> None:
             if data is not None:
