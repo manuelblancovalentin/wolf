@@ -503,14 +503,35 @@ class PdkCommandTests(unittest.TestCase):
         self._write_manifest("trackedpdk", tracked=True)
         result = self.wolf("pdk", "info", "trackedpdk")
         self.assert_success(result)
-        self.assertIn("Tracks: 9T", result.stdout)
-        self.assertIn("9T vths: lvt, rvt", result.stdout)
+        self.assertIn("Tracks", result.stdout)
+        self.assertIn("9T", result.stdout)
+        self.assertIn("lvt, rvt", result.stdout)
         self.assertIn("3 declared across all track/vth combos", result.stdout)
         self.assertIn("typical, worst_case", result.stdout)
         self.assertIn("Library formats: ecsm, liberty", result.stdout)
-        self.assertIn("Metal stacks: 7lmT1, 9lmT2", result.stdout)
-        self.assertIn("7lmT1: 9T/lvt (lef)", result.stdout)
-        self.assertIn("9lmT2: 9T/lvt (lef)", result.stdout)
+        self.assertIn("Metal stacks", result.stdout)
+        self.assertIn("7lmT1", result.stdout)
+        self.assertIn("9lmT2", result.stdout)
+        self.assertIn("9T/lvt", result.stdout)
+
+    def test_info_shows_rc_extraction_corners_per_stack(self):
+        technology = {"name": "rcpdk", "tracks": {"9T": {"vths": {"rvt": {
+            "qrc_techfiles": {
+                "9lmT2": {"rcbest": ["qrc/a.captable"], "rcworst": ["qrc/b.captable"]},
+            },
+            "timing": {"corners": {"typical": {}}},
+        }}}}}
+        (self.registry / "pdk" / "rcpdk.yaml").write_text(yaml.safe_dump({
+            "schema_version": 1, "kind": "pdk", "name": "rcpdk", "description": "rcpdk package",
+            "source": {"type": "local-path", "root": str(self.root), "revision": "V1"},
+            "validation": {"required_paths": []},
+            "metadata": {"technology": technology},
+        }), encoding="utf-8")
+        result = self.wolf("pdk", "info", "rcpdk")
+        self.assert_success(result)
+        self.assertIn("9lmT2", result.stdout)
+        self.assertIn("qrc_techfiles", result.stdout)
+        self.assertIn("rcbest, rcworst", result.stdout)
 
     def test_info_for_unknown_package_fails_clearly(self):
         result = self.wolf("pdk", "info", "does-not-exist")

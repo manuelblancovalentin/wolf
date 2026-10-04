@@ -69,8 +69,14 @@ metadata:
               7lmT1: [lef/9t_lvt_7lmT1.lef]
             gds: [gds/9t_lvt.gds]
             qrc_techfiles:
-              9lmT2: [qrc/9t_lvt_9lmT2.captable]
-              7lmT1: [qrc/9t_lvt_7lmT1.captable]
+              9lmT2:
+                rcbest: [qrc/9t_lvt_9lmT2_rcbest.captable]
+                rcworst: [qrc/9t_lvt_9lmT2_rcworst.captable]
+                typical: [qrc/9t_lvt_9lmT2_typical.captable]
+              7lmT1:
+                rcbest: [qrc/9t_lvt_7lmT1_rcbest.captable]
+                rcworst: [qrc/9t_lvt_7lmT1_rcworst.captable]
+                typical: [qrc/9t_lvt_7lmT1_typical.captable]
             verilog_models: [verilog/9t_lvt.v]
             spice_models: [spice/9t_lvt.spi]
             timing:
@@ -86,12 +92,14 @@ metadata:
           rvt: {...}
 ```
 
-Every file-list field (`lef`, `gds`, `verilog_models`, `spice_models`,
-`qrc_techfiles`, a corner's `libraries`) is a list, even when there's only
-one entry -- almost everything in a real library tree can legitimately be
-several files (a tech LEF plus a pad LEF plus a custom LEF, say). Only a
-corner's own `qrc_tech_file` is a single path, since that's what
-`create_rc_corner -qrc_tech_file` actually takes.
+Every file-list field (`lef`, `gds`, `verilog_models`, `spice_models`, a
+corner's `libraries`) is a list, even when there's only one entry --
+almost everything in a real library tree can legitimately be several
+files (a tech LEF plus a pad LEF plus a custom LEF, say). Only a corner's
+own `qrc_tech_file` is a single path, since that's what `create_rc_corner
+-qrc_tech_file` actually takes. `qrc_techfiles` nests one level deeper
+than that -- see [RC extraction corners](#rc-extraction-corners-qrc_techfiles-per-named-corner)
+below.
 
 ### Metal stack (`lef`/`qrc_techfiles` per named stack)
 
@@ -148,6 +156,35 @@ Genus/Innovus auto-detect Liberty-family content regardless, so this
 isn't interpreted by WOLF today; it exists so the information isn't lost
 at declaration time, the same declared-but-not-yet-consumed boundary as
 `generic` below.
+
+### RC extraction corners (`qrc_techfiles` per named corner)
+
+Unlike `lef`, a stack's `qrc_techfiles` is not itself a flat file list --
+it's a mapping of **RC extraction corner** name (e.g. `rcbest`, `rcworst`,
+`typical`) to that corner's file list, one level deeper than `lef`:
+
+```yaml
+qrc_techfiles:
+  9lmT2:
+    rcbest: [qrc/9t_lvt_9lmT2_rcbest.captable]
+    rcworst: [qrc/9t_lvt_9lmT2_rcworst.captable]
+```
+
+This is a real, independent axis from both the metal stack above and the
+PVT timing corners declared under `timing.corners` -- a captable
+characterizes *BEOL* (metal/via) process variation across a stack, not
+*FEOL* transistor skew, confirmed by real captable filenames that encode
+metal-layer count, top-metal option, and RC corner all at once (e.g.
+`..._Vp9m+alrdl_top2_rcworst.captable`). An RC corner name has no fixed
+relationship to a PVT corner name (`bc`/`lt`/`tc`/`wc`/...) -- pairing one
+of each for a given analysis (fast silicon + best-case RC for hold, slow
+silicon + worst-case RC for setup) is a signoff methodology decision, not
+a PDK fact, so WOLF doesn't encode that pairing here.
+
+A legacy flat `qrc_techfiles: {stack: [files]}` (no named RC corners,
+predating this axis) still resolves -- every file in it is available, just
+with no corner name attached -- and `wolf pdk menu` lets you add named RC
+corners to it at any time without losing the existing files.
 
 An environment picks which (track, vth) a run uses via `technology.track`/
 `technology.vth` in its own `wolf.yaml`:
@@ -223,12 +260,13 @@ count). `wolf pdk info <name>` shows one package's source, revision,
 license, full track/vth/corner breakdown, and -- when present --
 `author`/`creation-date`/`last-modified-date`.
 
-For a tracked package, `wolf pdk info` also breaks each declared metal
-stack down by where it's actually used -- every track/vth combo that
-populates it, and which of lef/qrc_techfiles each one has files for
-(`9lmT2: 9T/lvt (lef+qrc_techfiles), 7T/rvt (lef)`) -- the same "where
-is this stack really used" view `wolf pdk menu`'s own clone flow needs
-you to already have in your head, surfaced without opening the menu.
+For a tracked package, `wolf pdk info` also prints a table breaking each
+declared metal stack down by where it's actually used -- one row per
+(stack, track/vth) combo, which of lef/qrc_techfiles that combo has files
+for, and which named RC extraction corners (rcbest/rcworst/typical, ...)
+its qrc_techfiles declares, if any -- the same "where is this stack
+really used" view `wolf pdk menu`'s own clone flow needs you to already
+have in your head, surfaced without opening the menu.
 
 Those three are plain top-level yaml fields (siblings of `schema_version`/
 `kind`/`name`), not under `metadata`, and `wolf pdk menu` stamps them

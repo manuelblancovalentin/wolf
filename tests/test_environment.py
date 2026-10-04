@@ -653,6 +653,74 @@ class MetalStackTests(DeclarativeEnvironmentTests):
                 state_root=self.state, environment_directory=self.environment,
             )
 
+    def test_qrc_techfiles_are_keyed_by_stack_and_named_rc_corner(self):
+        """Unlike gds, a real captable is named per metal stack AND per
+        rc-corner (confirmed filename: ..._Vp9m+alrdl_top2_rcworst.captable)
+        -- qrc_techfiles keeps its full nesting, one level deeper than lef,
+        resolved per named rc-corner (ResolvedQrcCorner) for the selected
+        stack, plus the flat union across every rc-corner."""
+        self._package("pdk", "tsmc65-rccorners", "pdk-rev", {"technology": {
+            "name": "tsmc65-rccorners", "tracks": {"9T": {"vths": {"lvt": {
+                "lef": {"9lmT2": ["lef/x.lef"], "7lmT1": ["lef/y.lef"]},
+                "qrc_techfiles": {
+                    "9lmT2": {
+                        "rcbest": ["qrc/9lmT2_rcbest.captable"],
+                        "rcworst": ["qrc/9lmT2_rcworst.captable"],
+                        "typical": ["qrc/9lmT2_typical.captable"],
+                    },
+                    "7lmT1": {
+                        "rcbest": ["qrc/7lmT1_rcbest.captable"],
+                        "rcworst": ["qrc/7lmT1_rcworst.captable"],
+                    },
+                },
+                "timing": {"corners": {"typical": {"libraries": ["lib/x.lib"]}}},
+            }}}},
+        }})
+        for relative in (
+            "lef/x.lef", "lef/y.lef", "lib/x.lib",
+            "qrc/9lmT2_rcbest.captable", "qrc/9lmT2_rcworst.captable", "qrc/9lmT2_typical.captable",
+            "qrc/7lmT1_rcbest.captable", "qrc/7lmT1_rcworst.captable",
+        ):
+            self._write_file(relative, package="tsmc65-rccorners")
+        text = self._complete_yaml().replace(
+            "package: pdk/asap7", "package: pdk/tsmc65-rccorners\n  metal_stack: 9lmT2",
+        )
+        context = resolve_declarative_environment(
+            load_environment(self._write(text, "rccorners.yaml")),
+            state_root=self.state, environment_directory=self.environment,
+        )
+        qrc_by_name = {corner.name: corner for corner in context.technology.qrc_corners}
+        self.assertEqual(set(qrc_by_name), {"rcbest", "rcworst", "typical"})
+        self.assertEqual(
+            [p.name for p in qrc_by_name["rcworst"].qrc_techfiles], ["9lmT2_rcworst.captable"],
+        )
+        # The flat union covers every rc-corner's files for the selected stack.
+        self.assertEqual(
+            {p.name for p in context.technology.qrc_techfiles},
+            {"9lmT2_rcbest.captable", "9lmT2_rcworst.captable", "9lmT2_typical.captable"},
+        )
+
+    def test_legacy_flat_qrc_techfiles_per_stack_still_resolves_with_no_named_corners(self):
+        """A vth that declared qrc_techfiles per stack before rc-corners
+        were broken out by name (just {stack: [files]}) still resolves --
+        no ResolvedQrcCorner entries, but the flat file list is there."""
+        self._package("pdk", "tsmc65-flatqrc", "pdk-rev", {"technology": {
+            "name": "tsmc65-flatqrc", "tracks": {"9T": {"vths": {"lvt": {
+                "lef": {"9lmT2": ["lef/x.lef"]},
+                "qrc_techfiles": {"9lmT2": ["qrc/x.captable"]},
+                "timing": {"corners": {"typical": {"libraries": ["lib/x.lib"]}}},
+            }}}},
+        }})
+        for relative in ("lef/x.lef", "lib/x.lib", "qrc/x.captable"):
+            self._write_file(relative, package="tsmc65-flatqrc")
+        text = self._complete_yaml().replace("package: pdk/asap7", "package: pdk/tsmc65-flatqrc")
+        context = resolve_declarative_environment(
+            load_environment(self._write(text, "flatqrc.yaml")),
+            state_root=self.state, environment_directory=self.environment,
+        )
+        self.assertEqual(context.technology.qrc_corners, ())
+        self.assertEqual([p.name for p in context.technology.qrc_techfiles], ["x.captable"])
+
     def test_gds_is_flat_and_independent_of_the_stack_axis(self):
         """A cell's own GDS geometry lives on metal layers shared by every
         stack option, unlike lef/qrc_techfiles -- gds is just a flat list,

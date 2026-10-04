@@ -15,8 +15,8 @@ from typing import Any, Mapping, Optional
 import yaml
 
 from wolf.context import (
-    CatalogFileList, CatalogLibrarySet, ResolvedContext, ResolvedSource, ResolvedTechnology,
-    ResolvedTimingCorner, resolve_stored_path,
+    CatalogFileList, CatalogLibrarySet, ResolvedContext, ResolvedQrcCorner, ResolvedSource,
+    ResolvedTechnology, ResolvedTimingCorner, resolve_stored_path,
 )
 from wolf.package.model import PackageId
 from wolf.package.registry import PackageRegistry
@@ -564,11 +564,59 @@ def _resolve_gds_field(
     return _paths_under(root, value[stack], f"{field}.gds.{stack}")
 
 
+def _resolve_qrc_techfiles(
+    root: Path, data: Mapping[str, Any], field: str, metal_stack: Optional[str],
+) -> tuple[tuple[ResolvedQrcCorner, ...], tuple[Path, ...]]:
+    """qrc_techfiles for the selected metal_stack, broken down by named
+    rc-corner (see ResolvedQrcCorner) -- plus the flat union of every
+    rc-corner's own files, for simple existence/checksum tracking (the
+    same relationship timing_libraries already has to timing_corners).
+
+    Real captables are named per metal stack AND per rc-corner (confirmed
+    filenames like `..._Vp9m+alrdl_top2_rcworst.captable`), so unlike
+    gds, qrc_techfiles keeps its full per-stack nesting, just one level
+    deeper. Either level still being a flat list (no stack axis at all,
+    or one stack's own entry not yet broken out by rc-corner) is
+    tolerated as "no named rc-corners declared yet" -- the same
+    leave-it-mid-edit tolerance the rest of this module already extends
+    to an axis nothing has been declared for yet.
+    """
+    value = data.get("qrc_techfiles")
+    if value is None:
+        return (), ()
+    if isinstance(value, list):
+        return (), _paths_under(root, value, f"{field}.qrc_techfiles")
+    if not isinstance(value, dict):
+        raise ValueError(f"technology.{field}.qrc_techfiles must be a list or a mapping")
+    if metal_stack is None or metal_stack not in value:
+        return (), ()
+    stack_value = value[metal_stack]
+    if isinstance(stack_value, list):
+        return (), _paths_under(root, stack_value, f"{field}.qrc_techfiles.{metal_stack}")
+    if not isinstance(stack_value, dict):
+        raise ValueError(
+            f"technology.{field}.qrc_techfiles.{metal_stack} must be a list of paths or a "
+            "mapping of rc-corner name to files"
+        )
+    qrc_corners = tuple(
+        ResolvedQrcCorner(
+            name=corner_name,
+            qrc_techfiles=_paths_under(
+                root, files_value, f"{field}.qrc_techfiles.{metal_stack}.{corner_name}",
+            ),
+        )
+        for corner_name, files_value in stack_value.items()
+    )
+    flat = tuple(dict.fromkeys(path for corner in qrc_corners for path in corner.qrc_techfiles))
+    return qrc_corners, flat
+
+
 def _technology_variant(
     root: Path, track: str, vth: str, data: Any, reference: Optional[ComponentReference],
 ) -> tuple[
     tuple[ResolvedTimingCorner, ...], tuple[Path, ...], tuple[Path, ...], tuple[Path, ...],
-    tuple[Path, ...], tuple[Path, ...], tuple[Path, ...], Optional[str],
+    tuple[Path, ...], tuple[Path, ...], tuple[Path, ...], tuple[ResolvedQrcCorner, ...],
+    Optional[str],
 ]:
     """Parse one tracks.<track>.vths.<vth> entry: corners, lef, gds, verilog, spice, qrc.
 
@@ -582,7 +630,11 @@ def _technology_variant(
     lives on metal layers shared by every stack option -- so it's always
     a flat list (see _resolve_gds_field for the one remaining tolerance:
     a legacy per-stack mapping, from before this stopped being a real
-    axis for gds, still resolves rather than erroring).
+    axis for gds, still resolves rather than erroring). qrc_techfiles
+    goes one level deeper than lef instead: per metal stack *and* per
+    named rc-corner (see _resolve_qrc_techfiles) -- a real, independent
+    axis from the PVT timing corners above (BEOL process variation, not
+    FEOL transistor skew).
     """
     field = f"tracks.{track}.vths.{vth}"
     if not isinstance(data, dict):
@@ -601,7 +653,6 @@ def _technology_variant(
             )
         metal_stack = None
         lef = _paths_under(root, data.get("lef", []), f"{field}.lef")
-        qrc_techfiles = _paths_under(root, data.get("qrc_techfiles", []), f"{field}.qrc_techfiles")
     else:
         metal_stack = _select_metal_stack(stack_names, data, reference, field)
 
@@ -611,14 +662,14 @@ def _technology_variant(
                 return ()
             return _paths_under(root, value[metal_stack], f"{field}.{key}.{metal_stack}")
         lef = stack_paths("lef")
-        qrc_techfiles = stack_paths("qrc_techfiles")
 
+    qrc_corners, qrc_techfiles = _resolve_qrc_techfiles(root, data, field, metal_stack)
     gds = _resolve_gds_field(root, data, reference, field, metal_stack)
     verilog_models = _paths_under(root, data.get("verilog_models", []), f"{field}.verilog_models")
     spice_models = _paths_under(root, data.get("spice_models", []), f"{field}.spice_models")
     return (
         corners, corner_qrc_files, lef, gds, verilog_models, spice_models, qrc_techfiles,
-        metal_stack,
+        qrc_corners, metal_stack,
     )
 
 
@@ -684,6 +735,7 @@ def _technology_inputs(
     verilog_models: tuple[Path, ...] = ()
     spice_models: tuple[Path, ...] = ()
     qrc_techfiles: tuple[Path, ...] = ()
+    qrc_corners: tuple[ResolvedQrcCorner, ...] = ()
 
     if "tracks" in metadata:
         unknown = set(metadata) - _TRACKED_TECHNOLOGY_FIELDS
@@ -694,7 +746,7 @@ def _technology_inputs(
             raise ValueError("technology.generic must be a mapping")
         track, vth, variant = _select_track_vth(metadata["tracks"], reference)
         timing_corners, corner_qrc_files, technology_lefs, gds_files, verilog_models, \
-            spice_models, qrc_techfiles, metal_stack = _technology_variant(
+            spice_models, qrc_techfiles, qrc_corners, metal_stack = _technology_variant(
                 root, track, vth, variant, reference,
             )
         cell_lefs: tuple[Path, ...] = ()
@@ -762,7 +814,7 @@ def _technology_inputs(
         timing_corners=timing_corners,
         technology_lefs=technology_lefs, cell_lefs=cell_lefs, rc_files=rc_files,
         gds_files=gds_files, verilog_models=verilog_models, spice_models=spice_models,
-        qrc_techfiles=qrc_techfiles, generic=generic,
+        qrc_techfiles=qrc_techfiles, qrc_corners=qrc_corners, generic=generic,
         checksums=checksums, dont_use_cells=tuple(dont_use),
         setup_yaml_fragment=setup_yaml_fragment,
         catalog_library_sets=catalog_library_sets, catalog_lef_files=catalog_lef_files,

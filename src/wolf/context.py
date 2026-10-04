@@ -74,6 +74,21 @@ class ResolvedTimingCorner:
 
 
 @dataclass(frozen=True)
+class ResolvedQrcCorner:
+    """One named RC extraction corner's own QRC techfiles, for the
+    selected metal stack -- a real, independent axis from the PVT timing
+    corners above: a captable characterizes BEOL (metal) process
+    variation (e.g. rcbest/rcworst/typical), not FEOL transistor skew.
+    Real captables are named per metal stack AND per rc-corner (confirmed
+    filenames like `..._Vp9m+alrdl_top2_rcworst.captable`), unlike GDS,
+    which doesn't vary by stack at all.
+    """
+
+    name: str
+    qrc_techfiles: tuple[Path, ...]
+
+
+@dataclass(frozen=True)
 class CatalogLibrarySet:
     """One (corner, track, vth)'s own library files -- the full cross
     product a tracked technology package declares, not just the one
@@ -132,6 +147,7 @@ class ResolvedTechnology:
     verilog_models: tuple[Path, ...] = ()
     spice_models: tuple[Path, ...] = ()
     qrc_techfiles: tuple[Path, ...] = ()
+    qrc_corners: tuple[ResolvedQrcCorner, ...] = ()
     generic: Mapping[str, Any] = field(default_factory=dict)
     checksums: Mapping[str, str] = field(default_factory=dict)
     dont_use_cells: tuple[str, ...] = ()

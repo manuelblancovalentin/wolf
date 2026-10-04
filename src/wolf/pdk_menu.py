@@ -734,6 +734,14 @@ def _flatten_legacy_gds(vth_data: dict) -> Optional[tuple[Optional[str], int]]:
     return (stack, len(files))
 
 
+def _copy_stack_entry(value: Any) -> Any:
+    """Copy one stack's value for one _STACK_KEYED_FIELDS field -- lef's
+    is always a flat file list, but qrc_techfiles' may be a flat list
+    (legacy) or a {rc_corner: [files]} mapping, so this has to stay
+    shape-aware rather than assuming list() is always the right copy."""
+    return dict(value) if isinstance(value, dict) else list(value)
+
+
 def _normalize_stacks(vth_data: dict) -> dict:
     """Read a vth's lef/qrc_techfiles into {stack_name: {field: [...]}}
     regardless of which shape they're currently declared in.
@@ -749,8 +757,10 @@ def _normalize_stacks(vth_data: dict) -> dict:
         for key in _STACK_KEYED_FIELDS:
             value = vth_data.get(key)
             if isinstance(value, dict):
-                for stack, files in value.items():
-                    stacks.setdefault(stack, {field: [] for field in _STACK_KEYED_FIELDS})[key] = list(files)
+                for stack, entry in value.items():
+                    stacks.setdefault(stack, {field: [] for field in _STACK_KEYED_FIELDS})[key] = (
+                        _copy_stack_entry(entry)
+                    )
     else:
         name = vth_data.get("default_metal_stack") or "default"
         entry = {field: [] for field in _STACK_KEYED_FIELDS}
@@ -857,13 +867,12 @@ def _apply_clone(
     stacks = _normalize_stacks(vth_data)
     new_stacks: dict = {}
     for stack_name, entry in stacks.items():
-        new_entry: dict = {}
-        for field in _STACK_KEYED_FIELDS:
-            values, rows = clone_list(entry.get(field, []))
-            for row in rows:
-                row["location"] = f"stack {stack_name}: {field}"
-            all_rows.extend(rows)
-            new_entry[field] = values
+        # Reuse _apply_clone_stack rather than duplicating its lef-vs-
+        # qrc_techfiles-rc-corners handling here.
+        new_entry, rows = _apply_clone_stack(entry, substitutions, root)
+        for row in rows:
+            row["location"] = f"stack {stack_name}: {row['location']}"
+        all_rows.extend(rows)
         new_stacks[stack_name] = new_entry
     _write_stacks(new_data, new_stacks)
 
@@ -902,24 +911,37 @@ def _apply_clone_stack(
     stack_data: dict, substitutions: list[tuple[re.Pattern, str]], root: Path,
 ) -> tuple[dict, list[dict]]:
     """Clone one metal stack: apply the same ordered regex substitutions
-    (see _substitute_all) across its lef/qrc_techfiles lists -- the
-    simplest of the three clone shapes, since a stack has no further
-    nesting (no corners, no sub-vths)."""
+    (see _substitute_all) across its lef files and every one of its
+    qrc_techfiles rc-corners' own file lists -- the simplest of the three
+    clone shapes otherwise, since a stack has no further nesting beyond
+    that (no PVT corners, no sub-vths)."""
     def exists(value: str) -> bool:
         candidate = Path(value)
         return (candidate if candidate.is_absolute() else root / candidate).exists()
 
-    new_data: dict = {}
-    all_rows: list[dict] = []
-    for field in _STACK_KEYED_FIELDS:
+    def clone_list(values: list, location: str) -> tuple[list, list[dict]]:
         kept: list = []
-        for old in stack_data.get(field, []):
+        rows: list[dict] = []
+        for old in values:
             new = _substitute_all(old, substitutions)
             ok = exists(new)
-            all_rows.append({"location": field, "old": old, "new": new, "exists": ok})
+            rows.append({"location": location, "old": old, "new": new, "exists": ok})
             if ok:
                 kept.append(new)
-        new_data[field] = kept
+        return kept, rows
+
+    new_data: dict = {}
+    all_rows: list[dict] = []
+    lef, rows = clone_list(stack_data.get("lef", []), "lef")
+    new_data["lef"] = lef
+    all_rows.extend(rows)
+
+    qrc_corners: dict = {}
+    for corner_name, files in _normalize_qrc_corners(stack_data.get("qrc_techfiles")).items():
+        values, rows = clone_list(files, f"qrc_techfiles: {corner_name}")
+        qrc_corners[corner_name] = values
+        all_rows.extend(rows)
+    new_data["qrc_techfiles"] = qrc_corners
     return new_data, all_rows
 
 
@@ -1118,9 +1140,115 @@ def _run_clone_flow(app: App, source_label: str, apply_fn, on_confirmed) -> None
 _STACK_FIELD_LABELS = {"lef": "LEF files", "qrc_techfiles": "QRC techfiles"}
 
 
+def _normalize_qrc_corners(value: Any) -> dict:
+    """A stack's qrc_techfiles value, normalized to {rc_corner: [files]}.
+    A flat list -- the shape before rc-corners were broken out by name --
+    becomes one bucket named "unnamed" so nothing already declared is
+    silently dropped; rename or split it via the RC-corners editor
+    itself. A real captable is named per metal stack AND per rc-corner
+    (confirmed filename: ..._Vp9m+alrdl_top2_rcworst.captable), unlike
+    gds, so qrc_techfiles keeps this one extra level lef doesn't need."""
+    if isinstance(value, dict):
+        return dict(value)
+    if isinstance(value, list) and value:
+        return {"unnamed": list(value)}
+    return {}
+
+
+class _QrcCornersScreen(ModalScreen[Optional[dict]]):
+    """Edit the named RC-extraction corners declared for one metal
+    stack's qrc_techfiles (e.g. rcbest/rcworst/typical) -- a real,
+    independent axis from the PVT timing corners (BEOL metal/via process
+    variation, not FEOL transistor skew): real captables are named per
+    rc-corner, the same way PVT corners are named, and (like those) the
+    same rc-corner names should be used everywhere once chosen for one
+    stack -- WOLF doesn't enforce that consistency, the same way it
+    doesn't for PVT corner names either."""
+
+    BINDINGS = [
+        ("a", "add", "Add rc-corner"),
+        ("d", "delete", "Delete rc-corner"),
+        ("escape", "done", "Done"),
+    ]
+
+    def __init__(self, title: str, root: Path, corners: dict):
+        super().__init__()
+        self._title = title
+        self._root = root
+        self._corners = dict(corners)
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="dialog"):
+            yield Static(self._title, id="dialog-title")
+            yield OptionList(*self._options())
+            yield Static(self._hint(), id="dialog-hint")
+
+    def _options(self) -> list[Option]:
+        if not self._corners:
+            return [Option("(none yet -- press a to add)", id="__empty__", disabled=True)]
+        return [
+            Option(f"{name} ({len(files)} file(s))", id=name)
+            for name, files in self._corners.items()
+        ]
+
+    def _hint(self) -> str:
+        return (
+            f"{len(self._corners)} rc-corner(s) — enter: edit — a: add — "
+            f"d: delete highlighted — esc: done"
+        )
+
+    def _refresh(self) -> None:
+        option_list = self.query_one(OptionList)
+        option_list.clear_options()
+        for option in self._options():
+            option_list.add_option(option)
+        self.query_one("#dialog-hint", Static).update(self._hint())
+
+    def _edit(self, name: str) -> None:
+        def handle(values: Optional[list]) -> None:
+            if values is not None:
+                self._corners[name] = values
+                self._refresh()
+        self.app.push_screen(
+            _FileListScreen(f"{self._title} / {name}", self._root, self._corners.get(name, [])),
+            handle,
+        )
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        event.stop()
+        if event.option_id and event.option_id != "__empty__":
+            self._edit(event.option_id)
+
+    def action_add(self) -> None:
+        def handle(name: Optional[str]) -> None:
+            if not name:
+                return
+            if name in self._corners:
+                self.app.notify(f"RC-corner {name!r} already exists.", severity="warning")
+                return
+            self._corners[name] = []
+            self._refresh()
+            self._edit(name)
+        self.app.push_screen(_TextScreen("RC-corner name (e.g. rcbest, rcworst, typical)"), handle)
+
+    def action_delete(self) -> None:
+        option_list = self.query_one(OptionList)
+        if option_list.highlighted is None or not self._corners:
+            return
+        name = list(self._corners)[option_list.highlighted]
+        del self._corners[name]
+        self._refresh()
+
+    def action_done(self) -> None:
+        self.dismiss(self._corners)
+
+
 class _StackEditScreen(ModalScreen[Optional[dict]]):
-    """Edit one named metal stack's LEF/QRC-techfile lists -- not GDS,
-    which doesn't vary by metal stack (see _STACK_KEYED_FIELDS)."""
+    """Edit one named metal stack's LEF files and QRC-techfile rc-corners
+    -- not GDS, which doesn't vary by metal stack (see
+    _STACK_KEYED_FIELDS). qrc_techfiles opens one level deeper than lef
+    (_QrcCornersScreen, not a flat file list) since a real captable is
+    named per rc-corner too, not just per stack."""
 
     BINDINGS = [("escape", "done", "Done")]
 
@@ -1137,10 +1265,15 @@ class _StackEditScreen(ModalScreen[Optional[dict]]):
             yield Static("enter: edit — esc: done", id="dialog-hint")
 
     def _options(self) -> list[Option]:
-        return [
-            Option(f"{_STACK_FIELD_LABELS[key]} ({len(self._data.get(key, []))} file(s))", id=key)
-            for key in _STACK_KEYED_FIELDS
-        ]
+        options = [Option(
+            f"{_STACK_FIELD_LABELS['lef']} ({len(self._data.get('lef', []))} file(s))", id="lef",
+        )]
+        corners = _normalize_qrc_corners(self._data.get("qrc_techfiles"))
+        options.append(Option(
+            f"{_STACK_FIELD_LABELS['qrc_techfiles']} ({len(corners)} rc-corner(s))",
+            id="qrc_techfiles",
+        ))
+        return options
 
     def _refresh(self) -> None:
         option_list = self.query_one(OptionList)
@@ -1151,17 +1284,29 @@ class _StackEditScreen(ModalScreen[Optional[dict]]):
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
         event.stop()
         key = event.option_id
-        if key in _STACK_FIELD_LABELS:
-            def handle(values: Optional[list]) -> None:
+        if key == "qrc_techfiles":
+            def handle_corners(corners: Optional[dict]) -> None:
+                if corners is not None:
+                    self._data["qrc_techfiles"] = corners
+                    self._refresh()
+            self.app.push_screen(
+                _QrcCornersScreen(
+                    f"RC corners for stack {self._name}", self._root,
+                    _normalize_qrc_corners(self._data.get("qrc_techfiles")),
+                ),
+                handle_corners,
+            )
+        elif key == "lef":
+            def handle_files(values: Optional[list]) -> None:
                 if values is not None:
-                    self._data[key] = values
+                    self._data["lef"] = values
                     self._refresh()
             self.app.push_screen(
                 _FileListScreen(
-                    f"{_STACK_FIELD_LABELS[key]} for stack {self._name}", self._root,
-                    self._data.get(key, []),
+                    f"{_STACK_FIELD_LABELS['lef']} for stack {self._name}", self._root,
+                    self._data.get("lef", []),
                 ),
-                handle,
+                handle_files,
             )
 
     def action_done(self) -> None:
@@ -1583,6 +1728,22 @@ def _enter_stack_field(
 
         def do_stack(stack_name: str, resume_stack) -> None:
             entry = stacks.setdefault(stack_name, {key: [] for key in _STACK_KEYED_FIELDS})
+
+            if field == "qrc_techfiles":
+                def handle_corners(corners: Optional[dict]) -> None:
+                    if corners is not None:
+                        entry[field] = corners
+                        _write_stacks(vth_data, stacks)
+                        on_done()
+                    resume_stack()
+                app.push_screen(
+                    _QrcCornersScreen(
+                        f"{vth_crumb} / {stack_name}\n{label}", root,
+                        _normalize_qrc_corners(entry.get(field)),
+                    ),
+                    handle_corners,
+                )
+                return
 
             def handle_result(values: Optional[list]) -> None:
                 if values is not None:

@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Optional
 
 from rich.console import Console
+from rich.table import Table
 from rich.text import Text
 
 
@@ -104,6 +105,19 @@ def key_value(key: object, value: object) -> None:
     line.append(": ")
     line.append(str(value))
     console.print(line, soft_wrap=True)
+
+
+def table(title: str, columns: list, rows: list) -> None:
+    """Print a compact bordered table -- the concise alternative to a long
+    run of key_value lines for data that's naturally rows/columns (e.g. one
+    row per metal stack / track-vth combo), instead of repeating the same
+    key prefix once per line."""
+    rendered = Table(title=title, title_style="bold blue", header_style="bold blue", border_style=WOLF_PURPLE)
+    for column in columns:
+        rendered.add_column(str(column))
+    for row in rows:
+        rendered.add_row(*(str(value) for value in row))
+    console.print(rendered)
 
 
 def section(title: str) -> None:

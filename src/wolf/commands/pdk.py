@@ -58,15 +58,6 @@ def command_list(_args: argparse.Namespace) -> int:
 _STACK_FIELDS = ("lef", "qrc_techfiles")
 
 
-def _vth_stacks(vth_data: dict) -> set:
-    stacks: set = set()
-    for key in _STACK_FIELDS:
-        value = vth_data.get(key)
-        if isinstance(value, dict):
-            stacks.update(value)
-    return stacks
-
-
 def _vth_stack_fields(vth_data: dict) -> dict:
     """Which stack-keyed fields (lef/qrc_techfiles) each named metal
     stack actually has files for, on one vth -- a stack can be declared
@@ -81,6 +72,24 @@ def _vth_stack_fields(vth_data: dict) -> dict:
     return fields
 
 
+def _vth_rc_corners(vth_data: dict) -> dict:
+    """Which named RC-extraction corners (rcbest/rcworst/typical, ...) each
+    metal stack's qrc_techfiles declares on one vth -- a real, independent
+    axis from the PVT timing corners above (BEOL metal/via process
+    variation, not FEOL transistor skew); "unnamed" marks a legacy flat
+    qrc_techfiles list that predates this axis."""
+    rc_corners: dict = {}
+    value = vth_data.get("qrc_techfiles")
+    if not isinstance(value, dict):
+        return rc_corners
+    for stack, corners in value.items():
+        if isinstance(corners, dict):
+            for rc_corner, files in corners.items():
+                if files:
+                    rc_corners.setdefault(stack, set()).add(rc_corner)
+    return rc_corners
+
+
 def _tracked_summary(tracks: dict) -> dict:
     """Collect the same shape of facts your README's 'Table of features'
     reports, by walking the manifest -- tracks, vths per track, every
@@ -91,8 +100,7 @@ def _tracked_summary(tracks: dict) -> dict:
     vths_by_track: dict = {}
     all_corners: dict = {}
     all_formats: set = set()
-    all_stacks: set = set()
-    stack_usage: dict = {}
+    stack_rows: list = []
     corner_counts = 0
     for track, track_data in tracks.items():
         vths = track_data.get("vths", {}) if isinstance(track_data, dict) else {}
@@ -100,9 +108,12 @@ def _tracked_summary(tracks: dict) -> dict:
         for vth, vth_data in vths.items():
             if not isinstance(vth_data, dict):
                 continue
-            all_stacks.update(_vth_stacks(vth_data))
+            rc_corners_by_stack = _vth_rc_corners(vth_data)
             for stack, fields in _vth_stack_fields(vth_data).items():
-                stack_usage.setdefault(stack, []).append(f"{track}/{vth} ({'+'.join(sorted(fields))})")
+                stack_rows.append((
+                    stack, f"{track}/{vth}", sorted(fields),
+                    sorted(rc_corners_by_stack.get(stack, ())),
+                ))
             corners = vth_data.get("timing", {}).get("corners", {})
             if isinstance(corners, dict):
                 corner_counts += len(corners)
@@ -110,13 +121,13 @@ def _tracked_summary(tracks: dict) -> dict:
                     all_corners[name] = True
                     if isinstance(data, dict):
                         all_formats.add(data.get("format", "liberty"))
+    stack_rows.sort(key=lambda row: (row[0], row[1]))
     return {
         "vths_by_track": vths_by_track,
         "corner_names": sorted(all_corners),
         "corner_count": corner_counts,
         "formats": sorted(all_formats),
-        "stacks": sorted(all_stacks),
-        "stack_usage": stack_usage,
+        "stack_rows": stack_rows,
     }
 
 
@@ -150,19 +161,26 @@ def command_info(args: argparse.Namespace) -> int:
     tracks = technology.get("tracks")
     if isinstance(tracks, dict) and tracks:
         summary = _tracked_summary(tracks)
-        ui.key_value("Tracks", ", ".join(sorted(tracks)) or "none")
-        for track in sorted(tracks):
-            vths = summary["vths_by_track"].get(track, [])
-            ui.key_value(f"  {track} vths", ", ".join(vths) or "none")
+        ui.table(
+            "Tracks", ["Track", "VTHs"],
+            [(track, ", ".join(summary["vths_by_track"].get(track, [])) or "none") for track in sorted(tracks)],
+        )
         ui.key_value(
             "Corners",
             f"{summary['corner_count']} declared across all track/vth combos "
             f"({', '.join(summary['corner_names']) or 'none'})",
         )
         ui.key_value("Library formats", ", ".join(summary["formats"]) or "liberty (default)")
-        ui.key_value("Metal stacks", ", ".join(summary["stacks"]) or "none declared (flat lef)")
-        for stack in summary["stacks"]:
-            ui.key_value(f"  {stack}", ", ".join(summary["stack_usage"].get(stack, [])) or "none")
+        if summary["stack_rows"]:
+            ui.table(
+                "Metal stacks", ["Stack", "Track/VTH", "Fields", "RC corners"],
+                [
+                    (stack, track_vth, "+".join(fields), ", ".join(rc_corners) or "-")
+                    for stack, track_vth, fields, rc_corners in summary["stack_rows"]
+                ],
+            )
+        else:
+            ui.key_value("Metal stacks", "none declared (flat lef)")
     else:
         timing = technology.get("timing", {})
         corners = timing.get("corners", {}) if isinstance(timing, dict) else {}
