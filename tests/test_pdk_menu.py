@@ -316,6 +316,81 @@ class PdkMenuEndToEndTests(unittest.TestCase):
         self.assertEqual(resolved.metal_stack, "9lmT2")
         self.assertEqual([p.name for p in resolved.technology_lefs], ["9lmT2.lef"])
 
+    def test_back_end_metal_stack_picker_supports_clone_too(self):
+        """The metal-stack picker reached via Back-End -> GDS -> track ->
+        vth is a different screen class (_PickCreateDeleteScreen) than the
+        Tracks path's own metal-stacks screen -- clone has to be wired
+        into both, not just one, or it silently only works from Tracks."""
+        gds_dir = self.root / "libroot" / "gds"
+        gds_dir.mkdir()
+        (gds_dir / "9t_hvt_9lmT2.gds").write_text("x", encoding="utf-8")
+        (gds_dir / "9t_hvt_7lmT1.gds").write_text("x", encoding="utf-8")
+        data = _default_document("smoketest", str(self.root / "libroot"))
+        data["metadata"]["technology"]["tracks"] = {"9T": {"vths": {"hvt": {
+            "timing": {"corners": {"typical": {"libraries": ["lib/typical.lib"]}}},
+            "gds": {"9lmT2": ["gds/9t_hvt_9lmT2.gds"]},
+        }}}}
+
+        async def drive():
+            app = PdkMenuApp("smoketest", self.manifest_path, data, is_new=True)
+            async with app.run_test() as pilot:
+                main_list = app.query_one(OptionList)
+                self._select(main_list, "Back-End (LEF, GDS, techfiles, SPICE)")
+                await pilot.press("enter")
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "GDS")
+                await pilot.press("enter")
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "9T")
+                await pilot.press("enter")
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "hvt")
+                await pilot.press("enter")
+                await pilot.pause()
+                # On the metal-stack picker: "c" should be offered, same as
+                # the Tracks path's own metal-stacks screen.
+                hint = app.screen.query_one("#dialog-hint", Static).content
+                self.assertIn("c: clone highlighted", hint)
+                self._select(app.screen.query_one(OptionList), "9lmT2")
+                await pilot.press("c")  # clone stack
+                await pilot.pause()
+                app.screen.query_one(Input).value = "7lmT1"
+                await pilot.press("enter")
+                await pilot.pause()
+                await pilot.press("a")
+                await pilot.pause()
+                app.screen.query_one(Input).value = "9lmT2"
+                await pilot.press("enter")
+                await pilot.pause()
+                app.screen.query_one(Input).value = "7lmT1"
+                await pilot.press("enter")
+                await pilot.pause()
+                await pilot.press("escape")  # done adding pairs -> preview
+                await pilot.pause()
+                preview_hint = app.screen.query_one("#dialog-hint", Static).content
+                self.assertIn("1 path(s), 0 missing", preview_hint)
+                await pilot.press("c")  # confirm
+                await pilot.pause()
+                # Back on the stack picker with both stacks now listed.
+                stacks = app.screen.query_one(OptionList)
+                self.assertEqual(
+                    sorted(o.prompt for o in stacks.options if o.prompt != "+ Create new..."),
+                    ["7lmT1", "9lmT2"],
+                )
+                while len(app.screen_stack) > 1:
+                    await pilot.press("escape")
+                    await pilot.pause()
+                await pilot.press("s")
+                await pilot.pause()
+
+        asyncio.run(drive())
+
+        document = yaml.safe_load(self.manifest_path.read_text(encoding="utf-8"))
+        gds = document["metadata"]["technology"]["tracks"]["9T"]["vths"]["hvt"]["gds"]
+        self.assertEqual(gds["7lmT1"], ["gds/9t_hvt_7lmT1.gds"])
+        # The source stack is untouched by cloning it.
+        self.assertEqual(gds["9lmT2"], ["gds/9t_hvt_9lmT2.gds"])
+
     def test_front_end_corner_picker_deletes_an_entry_in_place(self):
         """A legacy corner (renamed away from, e.g. PVT_1P08V_25C once its
         real PVT code is known) has no other way to be removed from the

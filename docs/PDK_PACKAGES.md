@@ -262,13 +262,19 @@ already works in the Tracks path's own corner/track/vth list editors.
 ### Cloning a track, vth, or metal stack
 
 Once one is fully populated, `c` on the highlighted entry clones it to a
-new name -- on the Tracks path's tracks screen (clones every vth the
-track has), a track screen (clones one vth), or a vth's metal-stacks
-screen (clones one stack's LEF/GDS/QRC-techfile lists) -- rewriting
-every path it carries with one or more regex substitutions. The fast
-way to populate a second vth (`rvt` → `lvt`, say), a second track, or a
-second metal stack once the first one's corners, formats, and files are
-already right, rather than re-declaring all of that by hand.
+new name -- rewriting every path it carries with one or more regex
+substitutions. The fast way to populate a second vth (`rvt` → `lvt`,
+say), a second track, or a second metal stack once the first one's
+corners, formats, and files are already right, rather than re-declaring
+all of that by hand. This works from every place a track, vth, or metal
+stack is picked, both paths: the Tracks path's own tracks/track/metal-
+stacks screens, and the Front-End/Back-End track/vth/metal-stack pickers
+(`_PickCreateDeleteScreen`) -- the same underlying `c` on whichever
+screen you're on, regardless of which path got you there. Cloning a
+metal stack always clones the whole stack (LEF + GDS + QRC techfiles
+together), even if you reached it through Back-End → GDS specifically,
+to stay consistent with what cloning the same stack from the Tracks
+path's metal-stacks screen does.
 
 You're asked for the new name, then land on a screen for building the
 substitution list itself: `a` adds one (find regex, then replace) pair,

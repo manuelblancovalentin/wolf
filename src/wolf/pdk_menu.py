@@ -1250,16 +1250,19 @@ class _PickCreateDeleteScreen(ModalScreen[Optional[str]]):
     than collapsing the whole chain back to the top (see _loop_named_level
     below, which is what actually loops this screen)."""
 
-    BINDINGS = [("d", "delete", "Delete")]
+    BINDINGS = [("c", "clone", "Clone"), ("d", "delete", "Delete")]
 
     def __init__(
         self, title: str, existing: list[str], create_prompt: str, on_delete: Optional[Any] = None,
+        on_clone: Optional[Any] = None, on_clone_commit: Optional[Any] = None,
     ):
         super().__init__()
         self._title = title
         self._existing = list(existing)
         self._create_prompt = create_prompt
         self._on_delete = on_delete
+        self._on_clone = on_clone
+        self._on_clone_commit = on_clone_commit
 
     def compose(self) -> ComposeResult:
         with Vertical(id="dialog"):
@@ -1273,8 +1276,9 @@ class _PickCreateDeleteScreen(ModalScreen[Optional[str]]):
         ]
 
     def _hint(self) -> str:
+        clone_hint = " — c: clone highlighted" if self._existing and self._on_clone else ""
         delete_hint = " — d: delete highlighted" if self._existing and self._on_delete else ""
-        return f"enter: choose{delete_hint} — esc: back"
+        return f"enter: choose{clone_hint}{delete_hint} — esc: back"
 
     def _refresh(self) -> None:
         option_list = self.query_one(OptionList)
@@ -1304,6 +1308,32 @@ class _PickCreateDeleteScreen(ModalScreen[Optional[str]]):
         self._existing.remove(name)
         self._refresh()
 
+    def action_clone(self) -> None:
+        if self._on_clone is None or not self._existing:
+            return
+        option_list = self.query_one(OptionList)
+        if option_list.highlighted is None or option_list.highlighted >= len(self._existing):
+            return
+        source_name = self._existing[option_list.highlighted]
+
+        def handle_name(new_name: Optional[str]) -> None:
+            if not new_name:
+                return
+            if new_name in self._existing:
+                self.app.notify(f"{new_name!r} already exists.", severity="warning")
+                return
+
+            def on_confirmed(new_data: dict) -> None:
+                self._on_clone_commit(new_name, new_data)
+                self._existing.append(new_name)
+                self._refresh()
+            _run_clone_flow(
+                self.app, f"{source_name} -> {new_name}",
+                lambda substitutions: self._on_clone(source_name, substitutions),
+                on_confirmed,
+            )
+        self.app.push_screen(_TextScreen(f"New name (cloned from {source_name})"), handle_name)
+
     def on_key(self, event) -> None:
         if event.key == "escape":
             event.stop()
@@ -1312,6 +1342,7 @@ class _PickCreateDeleteScreen(ModalScreen[Optional[str]]):
 
 def _loop_named_level(
     app: App, title: str, existing_fn, create_prompt: str, do_child, on_return, on_delete=None,
+    on_clone=None, on_clone_commit=None,
 ) -> None:
     """Show a pick/create/delete screen for one level of the hierarchy,
     looping back to itself (re-fetching `existing_fn` fresh each time) once
@@ -1321,10 +1352,15 @@ def _loop_named_level(
     outright with nothing chosen, which is the one and only point where
     control actually passes up to whoever called this level -- that's
     what makes escape move exactly one level at a time instead of
-    collapsing however many pick/create steps led here."""
+    collapsing however many pick/create steps led here. `on_clone`/
+    `on_clone_commit` are optional (see _PickCreateDeleteScreen.action_clone)
+    -- most levels don't support cloning."""
     def show() -> None:
         app.push_screen(
-            _PickCreateDeleteScreen(title, sorted(existing_fn()), create_prompt, on_delete=on_delete),
+            _PickCreateDeleteScreen(
+                title, sorted(existing_fn()), create_prompt, on_delete=on_delete,
+                on_clone=on_clone, on_clone_commit=on_clone_commit,
+            ),
             handle,
         )
     def handle(name: Optional[str]) -> None:
@@ -1349,17 +1385,17 @@ def _loop_fixed_choice(app: App, title: str, choices: list[tuple[str, str]], do_
     show()
 
 
-def _navigate_to_vth(app: App, technology: dict, breadcrumb: str, on_vth, on_return) -> None:
-    """Pick, create, or delete a track, then a vth under it -- the common
-    first step of every library-shaped (Front-End/Back-End) navigation
-    entry point, since every one of them ends up at "some vth's data"
-    before branching into a format, a flat category, or a metal stack.
-    Looping at both levels (see _loop_named_level) means finishing with
-    one vth -- or deleting it -- lands you back on the vth picker for the
-    same track, and escaping that lands you back on the track picker, not
-    at the top. Calls on_vth(track_name, vth_name, vth_data, vth_crumb,
-    resume_vth) once a vth is chosen; on_return() only once the track
-    picker itself is cancelled outright.
+def _navigate_to_vth(app: App, technology: dict, root: Path, breadcrumb: str, on_vth, on_return) -> None:
+    """Pick, create, delete, or clone a track, then a vth under it -- the
+    common first step of every library-shaped (Front-End/Back-End)
+    navigation entry point, since every one of them ends up at "some
+    vth's data" before branching into a format, a flat category, or a
+    metal stack. Looping at both levels (see _loop_named_level) means
+    finishing with one vth -- or deleting it -- lands you back on the
+    vth picker for the same track, and escaping that lands you back on
+    the track picker, not at the top. Calls on_vth(track_name, vth_name,
+    vth_data, vth_crumb, resume_vth) once a vth is chosen; on_return()
+    only once the track picker itself is cancelled outright.
     """
     tracks = technology.setdefault("tracks", {})
 
@@ -1375,17 +1411,31 @@ def _navigate_to_vth(app: App, technology: dict, breadcrumb: str, on_vth, on_ret
         def delete_vth(vth_name: str) -> None:
             vths.pop(vth_name, None)
 
+        def clone_vth(vth_name: str, substitutions) -> tuple[dict, list[dict]]:
+            return _apply_clone(vths[vth_name], substitutions, root)
+
+        def commit_vth(new_name: str, new_data: dict) -> None:
+            vths[new_name] = new_data
+
         _loop_named_level(
             app, f"{track_crumb}\nPick/create/delete a vth", lambda: vths,
             "vth name (e.g. lvt, rvt, hvt)", do_vth, resume_track, on_delete=delete_vth,
+            on_clone=clone_vth, on_clone_commit=commit_vth,
         )
 
     def delete_track(track_name: str) -> None:
         tracks.pop(track_name, None)
 
+    def clone_track(track_name: str, substitutions) -> tuple[dict, list[dict]]:
+        return _apply_clone_track(tracks[track_name], substitutions, root)
+
+    def commit_track(new_name: str, new_data: dict) -> None:
+        tracks[new_name] = new_data
+
     _loop_named_level(
         app, f"{breadcrumb}\nPick/create/delete a track", lambda: tracks,
         "Track name (e.g. 9T, 7T, 12T)", do_track, on_return, on_delete=delete_track,
+        on_clone=clone_track, on_clone_commit=commit_track,
     )
 
 
@@ -1439,7 +1489,7 @@ def _enter_timing_format(
             existing, f"Corner name (format={format_name}, e.g. typical, worst_case)",
             do_corner, resume_vth, on_delete=delete_corner,
         )
-    _navigate_to_vth(app, technology, full_breadcrumb, on_vth, on_return)
+    _navigate_to_vth(app, technology, root, full_breadcrumb, on_vth, on_return)
 
 
 def _enter_flat_category(
@@ -1462,7 +1512,7 @@ def _enter_flat_category(
         app.push_screen(
             _FileListScreen(f"{vth_crumb}\n{label}", root, vth_data.get(category, [])), handle_result,
         )
-    _navigate_to_vth(app, technology, full_breadcrumb, on_vth, on_return)
+    _navigate_to_vth(app, technology, root, full_breadcrumb, on_vth, on_return)
 
 
 def _enter_stack_field(
@@ -1498,11 +1548,24 @@ def _enter_stack_field(
             _write_stacks(vth_data, stacks)
             on_done()
 
+        def clone_stack(stack_name: str, substitutions) -> tuple[dict, list[dict]]:
+            # Clones the whole stack (lef+gds+qrc_techfiles), not just the
+            # one field this particular screen happens to be editing --
+            # matches what cloning the same stack via the Tracks path's
+            # metal-stacks screen does.
+            return _apply_clone_stack(stacks[stack_name], substitutions, root)
+
+        def commit_stack(new_name: str, new_data: dict) -> None:
+            stacks[new_name] = new_data
+            _write_stacks(vth_data, stacks)
+            on_done()
+
         _loop_named_level(
             app, f"{vth_crumb}\nPick/create/delete a metal stack", lambda: stacks,
             "Metal stack name (e.g. 9lmT2, 7lmT1)", do_stack, resume_vth, on_delete=delete_stack,
+            on_clone=clone_stack, on_clone_commit=commit_stack,
         )
-    _navigate_to_vth(app, technology, full_breadcrumb, on_vth, on_return)
+    _navigate_to_vth(app, technology, root, full_breadcrumb, on_vth, on_return)
 
 
 class _VthScreen(ModalScreen[Optional[dict]]):
