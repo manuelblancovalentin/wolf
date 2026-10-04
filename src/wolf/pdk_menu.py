@@ -88,6 +88,7 @@ class _TextScreen(ModalScreen[Optional[str]]):
 
     def on_key(self, event) -> None:
         if event.key == "escape":
+            event.stop()
             self.dismiss(None)
 
 
@@ -125,6 +126,7 @@ class _PickScreen(ModalScreen[Optional[str]]):
 
     def on_key(self, event) -> None:
         if event.key == "escape":
+            event.stop()
             self.dismiss(None)
 
 
@@ -480,6 +482,7 @@ class _SingleFileScreen(ModalScreen[Optional[str]]):
 
     def on_key(self, event) -> None:
         if event.key == "escape":
+            event.stop()
             self.dismiss(None)
 
 
@@ -872,75 +875,183 @@ class _MetalStacksScreen(ModalScreen[Optional[dict]]):
         self.dismiss(self._stacks)
 
 
-def _pick_or_create_name(app: App, title: str, existing: list[str], create_prompt: str, on_done) -> None:
-    """Pick one of `existing`, or create a new name -- the shared shape
-    behind picking/creating a track, a vth, a format-matching corner, or
-    a metal stack from one of the library-shaped (Front-End/Back-End)
-    navigation entry points below. Calls on_done(name_or_None)."""
-    choices = [(name, name) for name in existing] + [("+ Create new...", "__new__")]
+class _PickCreateDeleteScreen(ModalScreen[Optional[str]]):
+    """Pick an existing name, create a new one, or delete one in place --
+    the shared shape behind navigating to a track, vth, corner, or metal
+    stack from the library-mirroring (Front-End/Back-End) side of the PDK
+    menu. 'd' deletes the highlighted name without closing this screen,
+    so removing several in a row doesn't mean reopening the picker each
+    time. Dismisses with the chosen (existing or newly created) name, or
+    None if cancelled outright -- callers treat None as "done at this
+    level", which is what makes escape go up exactly one level rather
+    than collapsing the whole chain back to the top (see _loop_named_level
+    below, which is what actually loops this screen)."""
 
-    def handle(value: Optional[str]) -> None:
-        if value is None:
-            on_done(None)
-        elif value == "__new__":
+    BINDINGS = [("d", "delete", "Delete")]
+
+    def __init__(
+        self, title: str, existing: list[str], create_prompt: str, on_delete: Optional[Any] = None,
+    ):
+        super().__init__()
+        self._title = title
+        self._existing = list(existing)
+        self._create_prompt = create_prompt
+        self._on_delete = on_delete
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="dialog"):
+            yield Static(self._title, id="dialog-title")
+            yield OptionList(*self._options())
+            yield Static(self._hint(), id="dialog-hint")
+
+    def _options(self) -> list[Option]:
+        return [Option(name, id=name) for name in self._existing] + [
+            Option("+ Create new...", id="__new__"),
+        ]
+
+    def _hint(self) -> str:
+        delete_hint = " — d: delete highlighted" if self._existing and self._on_delete else ""
+        return f"enter: choose{delete_hint} — esc: back"
+
+    def _refresh(self) -> None:
+        option_list = self.query_one(OptionList)
+        option_list.clear_options()
+        for option in self._options():
+            option_list.add_option(option)
+        self.query_one("#dialog-hint", Static).update(self._hint())
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        event.stop()
+        if event.option_id == "__new__":
             def handle_name(name: Optional[str]) -> None:
-                on_done(name or None)
-            app.push_screen(_TextScreen(create_prompt), handle_name)
+                if name:
+                    self.dismiss(name)
+            self.app.push_screen(_TextScreen(self._create_prompt), handle_name)
         else:
-            on_done(value)
-    app.push_screen(_PickScreen(title, choices), handle)
+            self.dismiss(event.option_id)
+
+    def action_delete(self) -> None:
+        if self._on_delete is None or not self._existing:
+            return
+        option_list = self.query_one(OptionList)
+        if option_list.highlighted is None or option_list.highlighted >= len(self._existing):
+            return
+        name = self._existing[option_list.highlighted]
+        self._on_delete(name)
+        self._existing.remove(name)
+        self._refresh()
+
+    def on_key(self, event) -> None:
+        if event.key == "escape":
+            event.stop()
+            self.dismiss(None)
 
 
-def _navigate_to_vth(app: App, technology: dict, on_vth) -> None:
-    """Pick or create a track, then a vth under it -- the common first
-    step of every library-shaped (Front-End/Back-End) navigation entry
-    point, since every one of them ends up at "some vth's data" before
-    branching into a format, a flat category, or a metal stack.
-    Calls on_vth(track_name, vth_name, vth_data).
+def _loop_named_level(
+    app: App, title: str, existing_fn, create_prompt: str, do_child, on_return, on_delete=None,
+) -> None:
+    """Show a pick/create/delete screen for one level of the hierarchy,
+    looping back to itself (re-fetching `existing_fn` fresh each time) once
+    `do_child` is fully done with whatever it opened -- so finishing with
+    one item lands you back on the picker for this same level, not back
+    at the top. `on_return` fires only when this screen is cancelled
+    outright with nothing chosen, which is the one and only point where
+    control actually passes up to whoever called this level -- that's
+    what makes escape move exactly one level at a time instead of
+    collapsing however many pick/create steps led here."""
+    def show() -> None:
+        app.push_screen(
+            _PickCreateDeleteScreen(title, sorted(existing_fn()), create_prompt, on_delete=on_delete),
+            handle,
+        )
+    def handle(name: Optional[str]) -> None:
+        if name is None:
+            on_return()
+        else:
+            do_child(name, show)
+    show()
+
+
+def _loop_fixed_choice(app: App, title: str, choices: list[tuple[str, str]], do_child, on_return) -> None:
+    """Same looping shape as _loop_named_level, for a fixed menu of
+    choices (a delay-model format, a Front-End/Back-End category, ...)
+    rather than a growable/deletable list of names."""
+    def show() -> None:
+        app.push_screen(_PickScreen(title, choices), handle)
+    def handle(choice: Optional[str]) -> None:
+        if choice is None:
+            on_return()
+        else:
+            do_child(choice, show)
+    show()
+
+
+def _navigate_to_vth(app: App, technology: dict, breadcrumb: str, on_vth, on_return) -> None:
+    """Pick, create, or delete a track, then a vth under it -- the common
+    first step of every library-shaped (Front-End/Back-End) navigation
+    entry point, since every one of them ends up at "some vth's data"
+    before branching into a format, a flat category, or a metal stack.
+    Looping at both levels (see _loop_named_level) means finishing with
+    one vth -- or deleting it -- lands you back on the vth picker for the
+    same track, and escaping that lands you back on the track picker, not
+    at the top. Calls on_vth(track_name, vth_name, vth_data, vth_crumb,
+    resume_vth) once a vth is chosen; on_return() only once the track
+    picker itself is cancelled outright.
     """
     tracks = technology.setdefault("tracks", {})
 
-    def handle_track(track_name: Optional[str]) -> None:
-        if not track_name:
-            return
+    def do_track(track_name: str, resume_track) -> None:
         track_data = tracks.setdefault(track_name, {"vths": {}})
         vths = track_data.setdefault("vths", {})
+        track_crumb = f"{breadcrumb} / {track_name}"
 
-        def handle_vth(vth_name: Optional[str]) -> None:
-            if not vth_name:
-                return
+        def do_vth(vth_name: str, resume_vth) -> None:
             vth_data = vths.setdefault(vth_name, {})
-            on_vth(track_name, vth_name, vth_data)
-        _pick_or_create_name(
-            app, f"Pick/create a vth under track {track_name}", sorted(vths),
-            "vth name (e.g. lvt, rvt, hvt)", handle_vth,
+            on_vth(track_name, vth_name, vth_data, f"{track_crumb} / {vth_name}", resume_vth)
+
+        def delete_vth(vth_name: str) -> None:
+            vths.pop(vth_name, None)
+
+        _loop_named_level(
+            app, f"{track_crumb}\nPick/create/delete a vth", lambda: vths,
+            "vth name (e.g. lvt, rvt, hvt)", do_vth, resume_track, on_delete=delete_vth,
         )
-    _pick_or_create_name(
-        app, "Pick/create a track", sorted(tracks), "Track name (e.g. 9T, 7T, 12T)", handle_track,
+
+    def delete_track(track_name: str) -> None:
+        tracks.pop(track_name, None)
+
+    _loop_named_level(
+        app, f"{breadcrumb}\nPick/create/delete a track", lambda: tracks,
+        "Track name (e.g. 9T, 7T, 12T)", do_track, on_return, on_delete=delete_track,
     )
 
 
 def _enter_timing_format(
-    app: App, technology: dict, root: Path, format_name: str, on_done=lambda: None,
+    app: App, technology: dict, root: Path, breadcrumb: str, format_name: str, on_return,
+    on_done=lambda: None,
 ) -> None:
-    """Front-End -> Timing/Power -> <format>: pick/create a track/vth,
-    then a corner already using this format (or create one), then open
-    its real corner editor -- mirrors browsing to
+    """Front-End -> Timing/Power -> <format>: pick/create/delete a
+    track/vth, then a corner already using this format (or create one),
+    then open its real corner editor -- mirrors browsing to
     Front_End/timing_power_noise/<FORMAT>/<family>/ in the real tree.
-    on_done() fires only once something was actually saved, so the caller
-    can refresh its own menu at the right time -- not immediately, since
-    everything here is asynchronous (several screens may still be open).
+    Looping at every level means finishing one corner lands you back on
+    the corner picker for the same vth, not back at the top. on_done()
+    fires every time something is actually saved or deleted, so the
+    caller can refresh its own menu -- repeatedly, since this keeps
+    looping until the user backs all the way out on their own.
     """
-    def on_vth(track_name: str, vth_name: str, vth_data: dict) -> None:
-        corners = vth_data.setdefault("timing", {}).setdefault("corners", {})
-        matching = sorted(
-            name for name, data in corners.items()
-            if isinstance(data, dict) and data.get("format", "liberty") == format_name
-        )
+    full_breadcrumb = f"{breadcrumb} / {format_name.upper()}"
 
-        def handle_corner(corner_name: Optional[str]) -> None:
-            if not corner_name:
-                return
+    def on_vth(track_name, vth_name, vth_data, vth_crumb, resume_vth) -> None:
+        corners = vth_data.setdefault("timing", {}).setdefault("corners", {})
+
+        def matching() -> list[str]:
+            return [
+                name for name, data in corners.items()
+                if isinstance(data, dict) and data.get("format", "liberty") == format_name
+            ]
+
+        def do_corner(corner_name: str, resume_corner) -> None:
             data = corners.setdefault(corner_name, {"libraries": []})
             data.setdefault("format", format_name)
 
@@ -948,45 +1059,61 @@ def _enter_timing_format(
                 if result is not None:
                     corners[corner_name] = result
                     on_done()
+                resume_corner()
             app.push_screen(
-                _CornerEditScreen(f"{track_name}/{vth_name}/{corner_name}", root, data), handle_result,
+                _CornerEditScreen(f"{vth_crumb} / {corner_name}", root, data), handle_result,
             )
-        _pick_or_create_name(
-            app, f"Pick/create a {format_name} corner ({track_name}/{vth_name})", matching,
-            f"Corner name (format={format_name}, e.g. typical, worst_case)", handle_corner,
+
+        def delete_corner(corner_name: str) -> None:
+            corners.pop(corner_name, None)
+            on_done()
+
+        _loop_named_level(
+            app, f"{vth_crumb}\nPick/create/delete a {format_name} corner", matching,
+            f"Corner name (format={format_name}, e.g. typical, worst_case)",
+            do_corner, resume_vth, on_delete=delete_corner,
         )
-    _navigate_to_vth(app, technology, on_vth)
+    _navigate_to_vth(app, technology, full_breadcrumb, on_vth, on_return)
 
 
 def _enter_flat_category(
-    app: App, technology: dict, root: Path, category: str, label: str, on_done=lambda: None,
+    app: App, technology: dict, root: Path, breadcrumb: str, category: str, label: str, on_return,
+    on_done=lambda: None,
 ) -> None:
-    """Front-End -> Verilog, or Back-End -> SPICE: pick/create a track/vth,
-    then edit that one flat (not stack- or corner-keyed) file list."""
-    def on_vth(track_name: str, vth_name: str, vth_data: dict) -> None:
+    """Front-End -> Verilog, or Back-End -> SPICE: pick/create/delete a
+    track/vth, then edit that one flat (not stack- or corner-keyed) file
+    list. There's no name to pick at this level (it's a single list per
+    vth, not a growable set), so closing the editor goes straight back to
+    the vth picker, one level up."""
+    full_breadcrumb = f"{breadcrumb} / {label}"
+
+    def on_vth(track_name, vth_name, vth_data, vth_crumb, resume_vth) -> None:
         def handle_result(values: Optional[list]) -> None:
             if values is not None:
                 vth_data[category] = values
                 on_done()
+            resume_vth()
         app.push_screen(
-            _FileListScreen(f"{label} for {track_name}/{vth_name}", root, vth_data.get(category, [])),
-            handle_result,
+            _FileListScreen(f"{vth_crumb}\n{label}", root, vth_data.get(category, [])), handle_result,
         )
-    _navigate_to_vth(app, technology, on_vth)
+    _navigate_to_vth(app, technology, full_breadcrumb, on_vth, on_return)
 
 
 def _enter_stack_field(
-    app: App, technology: dict, root: Path, field: str, label: str, on_done=lambda: None,
+    app: App, technology: dict, root: Path, breadcrumb: str, field: str, label: str, on_return,
+    on_done=lambda: None,
 ) -> None:
-    """Back-End -> GDS / LEF / Techfiles: pick/create a track/vth, then a
-    metal stack, then edit just that one field for that stack -- without
-    needing to open the full per-stack editor for the other two fields."""
-    def on_vth(track_name: str, vth_name: str, vth_data: dict) -> None:
+    """Back-End -> GDS / LEF / Techfiles: pick/create/delete a track/vth,
+    then a metal stack, then edit just that one field for that stack --
+    without needing to open the full per-stack editor for the other two
+    fields. Looping at the stack level too means finishing (or deleting)
+    one stack lands you back on the stack picker for the same vth."""
+    full_breadcrumb = f"{breadcrumb} / {label}"
+
+    def on_vth(track_name, vth_name, vth_data, vth_crumb, resume_vth) -> None:
         stacks = _normalize_stacks(vth_data)
 
-        def handle_stack(stack_name: Optional[str]) -> None:
-            if not stack_name:
-                return
+        def do_stack(stack_name: str, resume_stack) -> None:
             entry = stacks.setdefault(stack_name, {key: [] for key in _STACK_KEYED_FIELDS})
 
             def handle_result(values: Optional[list]) -> None:
@@ -994,17 +1121,22 @@ def _enter_stack_field(
                     entry[field] = values
                     _write_stacks(vth_data, stacks)
                     on_done()
+                resume_stack()
             app.push_screen(
-                _FileListScreen(
-                    f"{label} for {track_name}/{vth_name}/{stack_name}", root, entry.get(field, []),
-                ),
+                _FileListScreen(f"{vth_crumb} / {stack_name}\n{label}", root, entry.get(field, [])),
                 handle_result,
             )
-        _pick_or_create_name(
-            app, f"Pick/create a metal stack ({track_name}/{vth_name})", sorted(stacks),
-            "Metal stack name (e.g. 9lmT2, 7lmT1)", handle_stack,
+
+        def delete_stack(stack_name: str) -> None:
+            stacks.pop(stack_name, None)
+            _write_stacks(vth_data, stacks)
+            on_done()
+
+        _loop_named_level(
+            app, f"{vth_crumb}\nPick/create/delete a metal stack", lambda: stacks,
+            "Metal stack name (e.g. 9lmT2, 7lmT1)", do_stack, resume_vth, on_delete=delete_stack,
         )
-    _navigate_to_vth(app, technology, on_vth)
+    _navigate_to_vth(app, technology, full_breadcrumb, on_vth, on_return)
 
 
 class _VthScreen(ModalScreen[Optional[dict]]):
@@ -1460,69 +1592,83 @@ class PdkMenuApp(App[None]):
         pick a category, then (lazily, creating track/vth/corner as
         needed) land on the real leaf editor -- the same data _edit_tracks
         edits, just entered from "what kind of file is this" instead of
-        "which track/vth first"."""
-        def handle(choice: Optional[str]) -> None:
+        "which track/vth first". Loops (see _loop_fixed_choice) so
+        finishing with one category lands you back on this same picker;
+        cancelling it outright has nothing to return to but the main
+        menu, which is correct -- it's genuinely the level above this."""
+        def do_category(choice: str, resume_category) -> None:
             if choice == "timing":
-                self._edit_timing_format()
+                self._edit_timing_format(f"{self._name} / Front-End", resume_category)
             elif choice == "verilog":
                 _enter_flat_category(
-                    self, self._technology, self._root, "verilog_models", "Verilog models",
-                    on_done=self._refresh,
+                    self, self._technology, self._root, f"{self._name} / Front-End",
+                    "verilog_models", "Verilog models", resume_category, on_done=self._refresh,
                 )
-        self.push_screen(_PickScreen("Front-End", [
+        _loop_fixed_choice(self, f"{self._name} / Front-End\nPick a category", [
             ("Timing / Power (lib: ECSM/NLDM/CCS)", "timing"),
             ("Verilog", "verilog"),
-        ]), handle)
+        ], do_category, lambda: None)
 
-    def _edit_timing_format(self) -> None:
-        def handle(choice: Optional[str]) -> None:
+    def _edit_timing_format(self, breadcrumb: str, on_return) -> None:
+        full_breadcrumb = f"{breadcrumb} / Timing-Power"
+
+        def do_format(choice: str, resume_format) -> None:
             if choice == "__custom__":
                 def handle_name(name: Optional[str]) -> None:
                     if name:
                         _enter_timing_format(
-                            self, self._technology, self._root, name, on_done=self._refresh,
+                            self, self._technology, self._root, full_breadcrumb, name, resume_format,
+                            on_done=self._refresh,
                         )
+                    else:
+                        resume_format()
                 self.push_screen(_TextScreen("Custom delay-model format name"), handle_name)
-            elif choice:
-                _enter_timing_format(self, self._technology, self._root, choice, on_done=self._refresh)
-        self.push_screen(_PickScreen("Timing / Power -- pick a delay-model format", [
+            else:
+                _enter_timing_format(
+                    self, self._technology, self._root, full_breadcrumb, choice, resume_format,
+                    on_done=self._refresh,
+                )
+        _loop_fixed_choice(self, f"{full_breadcrumb}\nPick a delay-model format", [
             ("ECSM", "ecsm"), ("NLDM", "nldm"), ("CCS", "ccs"), ("Other / custom format...", "__custom__"),
-        ]), handle)
+        ], do_format, on_return)
 
     def _edit_back_end(self) -> None:
         """Mirrors Back_End/{gds,lef,spice} (lef/techfiles share one
         metal-stack axis, same as the real lef/<family>/techfiles/
-        subdirectory living inside lef/<family>/, not beside it)."""
-        def handle(choice: Optional[str]) -> None:
+        subdirectory living inside lef/<family>/, not beside it). Loops
+        the same way _edit_front_end does."""
+        def do_category(choice: str, resume_category) -> None:
             if choice == "gds":
                 _enter_stack_field(
-                    self, self._technology, self._root, "gds", "GDS files", on_done=self._refresh,
+                    self, self._technology, self._root, f"{self._name} / Back-End", "gds",
+                    "GDS files", resume_category, on_done=self._refresh,
                 )
             elif choice == "lef":
-                self._edit_lef_menu()
+                self._edit_lef_menu(f"{self._name} / Back-End", resume_category)
             elif choice == "spice":
                 _enter_flat_category(
-                    self, self._technology, self._root, "spice_models", "SPICE models",
-                    on_done=self._refresh,
+                    self, self._technology, self._root, f"{self._name} / Back-End",
+                    "spice_models", "SPICE models", resume_category, on_done=self._refresh,
                 )
-        self.push_screen(_PickScreen("Back-End", [
+        _loop_fixed_choice(self, f"{self._name} / Back-End\nPick a category", [
             ("GDS", "gds"), ("LEF", "lef"), ("SPICE", "spice"),
-        ]), handle)
+        ], do_category, lambda: None)
 
-    def _edit_lef_menu(self) -> None:
-        def handle(choice: Optional[str]) -> None:
+    def _edit_lef_menu(self, breadcrumb: str, on_return) -> None:
+        def do_choice(choice: str, resume_choice) -> None:
             if choice == "lef":
                 _enter_stack_field(
-                    self, self._technology, self._root, "lef", "LEF files", on_done=self._refresh,
+                    self, self._technology, self._root, breadcrumb, "lef", "LEF files",
+                    resume_choice, on_done=self._refresh,
                 )
             elif choice == "techfiles":
                 _enter_stack_field(
-                    self, self._technology, self._root, "qrc_techfiles", "QRC techfiles",
-                    on_done=self._refresh,
+                    self, self._technology, self._root, breadcrumb, "qrc_techfiles",
+                    "QRC techfiles", resume_choice, on_done=self._refresh,
                 )
-        self.push_screen(_PickScreen("LEF", [
+        _loop_fixed_choice(self, f"{breadcrumb} / LEF\nPick LEF files or techfiles", [
             ("LEF files", "lef"), ("Techfiles (QRC captables)", "techfiles"),
-        ]), handle)
+        ], do_choice, on_return)
 
     def _edit_dont_use(self) -> None:
         synthesis = self._technology.setdefault("synthesis", {})

@@ -10,7 +10,7 @@ import yaml
 from wolf.environment import _technology_inputs
 from wolf.package.registry import PackageRegistry, load_manifest
 from wolf.pdk_menu import PdkMenuApp, _default_document, open_pdk_menu
-from textual.widgets import Input, OptionList
+from textual.widgets import Input, OptionList, Static
 
 
 class PdkMenuEndToEndTests(unittest.TestCase):
@@ -185,9 +185,27 @@ class PdkMenuEndToEndTests(unittest.TestCase):
                 await pilot.pause()
                 await pilot.press("escape")  # FileListScreen done -> back to CornerEditScreen
                 await pilot.pause()
-                await pilot.press("escape")  # CornerEditScreen done -> back to the main menu
+                await pilot.press("escape")  # CornerEditScreen done -> back to the corner picker,
+                await pilot.pause()          # not the main menu -- one level at a time, not a jump
+                title = app.screen.query_one("#dialog-title", Static).content
+                self.assertIn("smoketest / Front-End / Timing-Power / ECSM / 9T / lvt", title)
+                self._select(app.screen.query_one(OptionList), "typical")
+                await pilot.press("escape")  # corner picker cancelled -> up to the vth picker
                 await pilot.pause()
-                self.assertEqual(len(app.screen_stack), 1)  # every _PickScreen already popped itself
+                self.assertIn("9T\n", app.screen.query_one("#dialog-title", Static).content)
+                self._select(app.screen.query_one(OptionList), "lvt")
+                await pilot.press("escape")  # vth picker cancelled -> up to the track picker
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "9T")
+                await pilot.press("escape")  # track picker cancelled -> up to the format picker
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "ECSM")
+                await pilot.press("escape")  # format picker cancelled -> up to the category picker
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "Timing / Power (lib: ECSM/NLDM/CCS)")
+                await pilot.press("escape")  # category picker cancelled -> up to the main menu
+                await pilot.pause()
+                self.assertEqual(len(app.screen_stack), 1)
                 await pilot.press("s")
                 await pilot.pause()
 
@@ -258,8 +276,26 @@ class PdkMenuEndToEndTests(unittest.TestCase):
                 await pilot.pause()
                 await pilot.press("escape")  # done browsing -> back to FileListScreen
                 await pilot.pause()
-                await pilot.press("escape")  # FileListScreen done -> back to the main menu
+                await pilot.press("escape")  # FileListScreen done -> back to the stack picker,
+                await pilot.pause()          # not the main menu -- one level at a time
+                title = app.screen.query_one("#dialog-title", Static).content
+                self.assertIn("smoketest / Back-End / LEF files / 9T / lvt", title)
+                self._select(app.screen.query_one(OptionList), "9lmT2")
+                await pilot.press("escape")  # stack picker cancelled -> up to the vth picker
                 await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "lvt")
+                await pilot.press("escape")  # vth picker cancelled -> up to the track picker
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "9T")
+                await pilot.press("escape")  # track picker cancelled -> up to LEF files/Techfiles
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "LEF files")
+                await pilot.press("escape")  # that picker cancelled -> up to the Back-End category
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "LEF")
+                await pilot.press("escape")  # category picker cancelled -> up to the main menu
+                await pilot.pause()
+                self.assertEqual(len(app.screen_stack), 1)
                 await pilot.press("s")
                 await pilot.pause()
 
@@ -279,6 +315,74 @@ class PdkMenuEndToEndTests(unittest.TestCase):
         )
         self.assertEqual(resolved.metal_stack, "9lmT2")
         self.assertEqual([p.name for p in resolved.technology_lefs], ["9lmT2.lef"])
+
+    def test_front_end_corner_picker_deletes_an_entry_in_place(self):
+        """A legacy corner (renamed away from, e.g. PVT_1P08V_25C once its
+        real PVT code is known) has no other way to be removed from the
+        library-shaped Front-End navigation -- 'd' on the corner picker
+        must delete it without closing the picker, matching the delete
+        convention everywhere else in this menu."""
+        data = _default_document("smoketest", str(self.root / "libroot"))
+        data["metadata"]["technology"]["tracks"] = {"9T": {"vths": {"lvt": {
+            "timing": {"corners": {
+                "PVT_1P08V_25C": {"libraries": ["lib/typical.lib"], "format": "liberty"},
+            }},
+        }}}}
+
+        async def drive():
+            app = PdkMenuApp("smoketest", self.manifest_path, data, is_new=True)
+            async with app.run_test() as pilot:
+                main_list = app.query_one(OptionList)
+                self._select(main_list, "Front-End (timing/power, verilog)")
+                await pilot.press("enter")
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "Timing / Power (lib: ECSM/NLDM/CCS)")
+                await pilot.press("enter")
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "Other / custom format...")
+                await pilot.press("enter")
+                await pilot.pause()
+                app.screen.query_one(Input).value = "liberty"
+                await pilot.press("enter")
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "9T")  # existing track
+                await pilot.press("enter")
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "lvt")  # existing vth
+                await pilot.press("enter")
+                await pilot.pause()
+                # At the corner picker: the legacy corner plus "+ Create new...".
+                corner_list = app.screen.query_one(OptionList)
+                self.assertEqual(
+                    [o.prompt for o in corner_list.options], ["PVT_1P08V_25C", "+ Create new..."],
+                )
+                corner_list.highlighted = 0
+                await pilot.press("d")  # delete it in place
+                await pilot.pause()
+                self.assertEqual([o.prompt for o in corner_list.options], ["+ Create new..."])
+                await pilot.press("escape")  # corner picker cancelled -> up to the vth picker
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "lvt")
+                await pilot.press("escape")
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "9T")
+                await pilot.press("escape")
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "Other / custom format...")
+                await pilot.press("escape")
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "Timing / Power (lib: ECSM/NLDM/CCS)")
+                await pilot.press("escape")
+                await pilot.pause()
+                self.assertEqual(len(app.screen_stack), 1)
+                await pilot.press("s")
+                await pilot.pause()
+
+        asyncio.run(drive())
+
+        document = yaml.safe_load(self.manifest_path.read_text(encoding="utf-8"))
+        corners = document["metadata"]["technology"]["tracks"]["9T"]["vths"]["lvt"]["timing"]["corners"]
+        self.assertEqual(corners, {})
 
     def test_editing_an_existing_manifest_preserves_its_structure(self):
         data = _default_document("smoketest", str(self.root / "libroot"))

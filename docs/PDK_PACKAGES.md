@@ -197,15 +197,29 @@ declare for it.
 
 **Front-End** / **Back-End** mirror the real library layout instead:
 Front-End → Timing/Power → a delay-model format (ECSM/NLDM/CCS, or type
-your own) lands you picking or creating a track, then a vth, then a
-corner already using that format (or a new one, pre-set to it) -- the
-same corner editor Tracks would open, just reached by "what kind of file
-is this" instead of "which track/vth first". Front-End → Verilog, and
-Back-End → GDS / LEF / LEF → Techfiles / SPICE, work the same way --
-pick/create a track and vth, then (for GDS/LEF/Techfiles) a metal stack,
-then edit that one file list directly. Nothing about the underlying data
-differs between the two paths; pick whichever matches how you're
-currently thinking about the library.
+your own) lands you picking, creating, or deleting a track, then a vth,
+then a corner already using that format (or a new one, pre-set to it) --
+the same corner editor Tracks would open, just reached by "what kind of
+file is this" instead of "which track/vth first". Front-End → Verilog,
+and Back-End → GDS / LEF / LEF → Techfiles / SPICE, work the same way --
+pick/create/delete a track and vth, then (for GDS/LEF/Techfiles) a metal
+stack, then edit that one file list directly. Nothing about the
+underlying data differs between the two paths; pick whichever matches
+how you're currently thinking about the library.
+
+Every picker along either path shows the full path so far at the top
+(`tsmc65 / Front-End / Timing-Power / ECSM / 9T / lvt`, say), and `esc`
+always goes back exactly one of those levels -- to the vth picker from a
+corner, to the track picker from a vth, to the format picker from a
+track, and so on -- never straight back to the main menu partway through
+a chain. Finishing with one item (saving a corner, picking a different
+metal stack) lands you back on the picker for that same level rather
+than kicking you out entirely, so adding several corners, vths, or
+tracks in a row doesn't mean re-entering Front-End/Back-End each time.
+`d` deletes the highlighted track, vth, corner, or metal stack in place,
+without closing the picker -- the same way to remove a corner you no
+longer want (a legacy name you've since renamed away from, say) as `d`
+already works in the Tracks path's own corner/track/vth list editors.
 
 `a` adds (browsing the filesystem for file lists, typed text for names
 and cell-glob lists), `d` deletes the highlighted entry, `enter` opens
