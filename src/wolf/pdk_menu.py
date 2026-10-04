@@ -20,7 +20,11 @@ Every file/directory picker remembers the last directory it was used in
 from the package root every time -- real PDK trees keep lib/lef/gds/qrc
 for the same corner near each other, so jumping back to the same
 neighborhood across several consecutive picks (libraries, then that
-corner's qrc file, then the next corner) is the common case.
+corner's qrc file, then the next corner) is the common case. That starting
+directory is never a hard boundary, though: 'u' climbs one level at a
+time from wherever the tree is currently rooted, since a corner's QRC
+techfile just as often lives in a sibling directory as the libraries
+picked moments earlier, not the same one.
 
 NAME is optional: `wolf pdk menu` with none picks from existing pdk/*
 packages (or offers to create one). A given NAME may also be a dotted
@@ -131,20 +135,33 @@ class _FilterableDirectoryTree(DirectoryTree):
         return [path for path in paths if not path.name.startswith(".")]
 
 
+def _parent_or_none(path: str) -> Optional[str]:
+    """The directory above `path`, or None if `path` is already a
+    filesystem root (so "go up" can stop offering to climb further)."""
+    resolved = Path(path).expanduser().resolve()
+    parent = resolved.parent
+    return None if parent == resolved else str(parent)
+
+
 class _BrowseFilesScreen(ModalScreen[Optional[list]]):
     """Browse the filesystem and collect one or more file paths, of any
     suffix -- a PDK tree mixes .lib/.lef/.gds/.v/.spi/.captable files, so
     unlike wolf.env_menu's RTL-only browser this never filters by suffix.
 
     'a' adds the highlighted file, or every file directly inside the
-    highlighted directory; 'h' toggles hidden (dot) entries, off by
-    default; enter on a file opens it in $EDITOR to inspect it rather than
-    adding it (adding is always an explicit 'a'); escape finishes,
-    returning whatever was added (possibly empty).
+    highlighted directory; 'u' climbs one directory level, so the tree
+    being rooted at the last directory used (for convenience -- see
+    App.last_browsed_dir) never traps you there, since a corner's QRC
+    techfile just as often lives in a sibling directory as the libraries
+    you picked moments earlier, not the same one; 'h' toggles hidden (dot)
+    entries, off by default; enter on a file opens it in $EDITOR to
+    inspect it rather than adding it (adding is always an explicit 'a');
+    escape finishes, returning whatever was added (possibly empty).
     """
 
     BINDINGS = [
         ("a", "add", "Add"),
+        ("u", "up", "Up a level"),
         ("h", "toggle_hidden", "Hidden files"),
         ("escape", "done", "Done"),
     ]
@@ -169,7 +186,7 @@ class _BrowseFilesScreen(ModalScreen[Optional[list]]):
         hidden = "shown" if self._show_hidden else "hidden"
         return (
             f"{picked} — enter: expand folder / edit file in $EDITOR — a: add — "
-            f"h: toggle dotfiles (currently {hidden}) — esc: done"
+            f"u: up a level — h: toggle dotfiles (currently {hidden}) — esc: done"
         )
 
     def _refresh_hint(self) -> None:
@@ -181,6 +198,14 @@ class _BrowseFilesScreen(ModalScreen[Optional[list]]):
         tree.show_hidden = self._show_hidden
         tree.reload()
         self._refresh_hint()
+
+    def action_up(self) -> None:
+        tree = self.query_one(DirectoryTree)
+        parent = _parent_or_none(str(tree.path))
+        if parent is None:
+            self.app.notify("Already at the top of the filesystem.", severity="warning")
+            return
+        tree.path = parent
 
     def on_directory_tree_file_selected(self, event: DirectoryTree.FileSelected) -> None:
         event.stop()
@@ -224,6 +249,7 @@ class _BrowseDirectoryScreen(ModalScreen[Optional[str]]):
 
     BINDINGS = [
         ("a", "select", "Use this directory"),
+        ("u", "up", "Up a level"),
         ("h", "toggle_hidden", "Hidden files"),
         ("escape", "cancel", "Cancel"),
     ]
@@ -245,7 +271,7 @@ class _BrowseDirectoryScreen(ModalScreen[Optional[str]]):
     def _hint(self) -> str:
         hidden = "shown" if self._show_hidden else "hidden"
         return (
-            f"enter: expand folder — a: use this directory — "
+            f"enter: expand folder — a: use this directory — u: up a level — "
             f"h: toggle dotfiles (currently {hidden}) — esc: cancel"
         )
 
@@ -258,6 +284,14 @@ class _BrowseDirectoryScreen(ModalScreen[Optional[str]]):
         tree.show_hidden = self._show_hidden
         tree.reload()
         self._refresh_hint()
+
+    def action_up(self) -> None:
+        tree = self.query_one(DirectoryTree)
+        parent = _parent_or_none(str(tree.path))
+        if parent is None:
+            self.app.notify("Already at the top of the filesystem.", severity="warning")
+            return
+        tree.path = parent
 
     def _highlighted_directory(self) -> Optional[Path]:
         node = self.query_one(DirectoryTree).cursor_node

@@ -306,6 +306,68 @@ class PdkMenuEndToEndTests(unittest.TestCase):
         self.assertEqual(document["name"], "smoketest")
 
 
+class BrowseFilesScreenNavigationTests(unittest.TestCase):
+    """The actual bug report: a browser rooted at the last directory used
+    (for convenience) must still be able to reach a sibling directory --
+    a corner's QRC techfile routinely lives next to, not inside, the
+    directory its libraries came from."""
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory(prefix="wolf-browse-files-")
+        self.root = Path(self.temporary.name)
+        (self.root / "lib").mkdir()
+        (self.root / "lib" / "typical.lib").write_text("-- typical --\n", encoding="utf-8")
+        (self.root / "qrc").mkdir()
+        (self.root / "qrc" / "rc_25C.captable").write_text("-- captable --\n", encoding="utf-8")
+
+    def tearDown(self):
+        self.temporary.cleanup()
+
+    def test_up_escapes_a_directory_rooted_away_from_a_sibling_file(self):
+        from textual.app import App, ComposeResult
+        from textual.widgets import DirectoryTree
+        from wolf.pdk_menu import _BrowseFilesScreen
+
+        lib_dir = self.root / "lib"
+        qrc_file = self.root / "qrc" / "rc_25C.captable"
+        result: list = []
+
+        class HostApp(App):
+            def compose(self) -> ComposeResult:
+                return []
+
+        async def drive():
+            app = HostApp()
+            async with app.run_test() as pilot:
+                def handle(picked):
+                    result.extend(picked or [])
+                app.push_screen(_BrowseFilesScreen(str(lib_dir), title="t"), handle)
+                await pilot.pause()
+
+                tree = app.screen.query_one(DirectoryTree)
+                self.assertEqual(Path(tree.path).resolve(), lib_dir.resolve())
+
+                await pilot.press("u")  # climb out of lib/ ...
+                await pilot.pause()
+                self.assertEqual(Path(tree.path).resolve(), self.root.resolve())
+
+                # ... down into the sibling qrc/ directory ...
+                for _ in range(2):  # skip past "lib" to "qrc" (alphabetical)
+                    await pilot.press("down")
+                    await pilot.pause()
+                await pilot.press("enter")  # expand qrc/
+                await pilot.pause()
+                await pilot.press("down")  # the captable file
+                await pilot.pause()
+                await pilot.press("a")  # add it
+                await pilot.pause()
+                await pilot.press("escape")  # done
+                await pilot.pause()
+
+        asyncio.run(drive())
+        self.assertEqual(result, [str(qrc_file.resolve())])
+
+
 class OpenPdkMenuRoutingTests(unittest.TestCase):
     """The plain-Python routing in open_pdk_menu (existing vs. new package),
     kept separate from the TUI itself."""

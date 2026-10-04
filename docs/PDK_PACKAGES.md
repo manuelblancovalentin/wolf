@@ -215,8 +215,11 @@ raw YAML in `$EDITOR` rather than through dedicated fields, deliberately
 
 Every file/directory picker remembers the last directory it was used in
 for the rest of the session and starts there next time, rather than
-restarting from the package root -- useful since a corner's libraries,
-QRC file, and neighboring LEF/GDS usually live near each other on disk.
+restarting from the package root -- useful since a corner's libraries and
+its QRC file usually live near each other on disk. That starting point is
+never a dead end, though: `u` climbs one directory level at a time, since
+the QRC techfile just as often lives in a sibling directory as the
+libraries picked moments earlier, not the same one.
 
 `q`/`escape` quits without saving; `s` saves in place without closing;
 the Save button saves and closes.
