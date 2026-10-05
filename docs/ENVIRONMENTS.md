@@ -178,8 +178,17 @@ with different resolved provenance is rejected rather than overwriting history.
 
 ## Editing, cloning, and legacy compatibility
 
-Profiles remain human-readable and may be edited directly. A narrow structured
-setter updates existing paths:
+`wolf env menu [name]` is the interactive, full-coverage way to build or edit
+a profile -- RTL sources, design name/top, technology (PDK package, track/
+vth, and metal stack for a tracked package), flow/backend, constraints (SDC
+files), project root, and an optional workspace root override, each picked
+from what's actually declared elsewhere (a tracked PDK's own track/vth
+names, its metal stacks) rather than typed blind. Browsing for a project or
+workspace root that doesn't exist yet can create it on the spot (`n`), a
+real `mkdir` right away, not deferred to save.
+
+Profiles also remain human-readable and may be edited directly. A narrow
+structured setter updates existing paths:
 
 ```bash
 wolf env set ibex-asap7 constraints.clocks.0.period_ps 1100

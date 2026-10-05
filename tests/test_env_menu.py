@@ -1,0 +1,284 @@
+import asyncio
+import os
+from pathlib import Path
+import tempfile
+import unittest
+from unittest.mock import patch
+
+import yaml
+from textual.widgets import Input, OptionList, Static
+
+from wolf.env_menu import EnvWizardApp
+
+
+class EnvWizardEndToEndTests(unittest.TestCase):
+    """Drives the real TUI (Textual's own headless Pilot), the same bar
+    `wolf pdk menu` is held to -- exercising the real screens, not just
+    the underlying schema, is what catches wiring bugs between a picker
+    and what actually ends up in wolf.yaml."""
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory(prefix="wolf-env-menu-")
+        self.root = Path(self.temporary.name)
+        self.state = self.root / "state"
+        self.registry = self.root / "registry"
+        self.state.mkdir(parents=True)
+        self.variables = patch.dict(
+            os.environ,
+            {"WOLF_HOME": str(self.state), "WOLF_REGISTRY": str(self.registry)},
+        )
+        self.variables.start()
+
+        self.hdl_dir = self.root / "hdl"
+        self.hdl_dir.mkdir()
+        (self.hdl_dir / "top.v").write_text("module top(input clk);\nendmodule\n", encoding="utf-8")
+
+        self.constraints_dir = self.root / "constraints"
+        self.constraints_dir.mkdir()
+        self.sdc_path = self.constraints_dir / "top.sdc"
+        self.sdc_path.write_text("set_max_delay 1.0\n", encoding="utf-8")
+
+        self._register_pdk()
+
+    def tearDown(self):
+        self.variables.stop()
+        self.temporary.cleanup()
+
+    def _register_pdk(self):
+        manifest = {
+            "schema_version": 1, "kind": "pdk", "name": "testpdk", "description": "testpdk",
+            "source": {"type": "local-path", "root": str(self.root / "pdksrc"), "revision": "V1"},
+            "validation": {"required_paths": []},
+            "metadata": {"technology": {
+                "name": "testpdk",
+                "tracks": {"9T": {"vths": {
+                    "lvt": {
+                        "lef": {"6lmT1": ["lef/x.lef"], "7lmT1": ["lef/y.lef"]},
+                        "timing": {"corners": {"typical": {"libraries": ["lib/x.lib"]}}},
+                    },
+                    "rvt": {
+                        "lef": ["lef/flat.lef"],
+                        "timing": {"corners": {"typical": {"libraries": ["lib/x.lib"]}}},
+                    },
+                }}},
+            }},
+        }
+        pdk_dir = self.registry / "pdk"
+        pdk_dir.mkdir(parents=True, exist_ok=True)
+        (pdk_dir / "testpdk.yaml").write_text(yaml.safe_dump(manifest), encoding="utf-8")
+        installation = self.state / "packages" / "pdk" / "testpdk" / "V1"
+        (installation / "source").mkdir(parents=True)
+        (installation / "installed.yaml").write_text(
+            yaml.safe_dump({
+                "package": "pdk/testpdk", "revision": "V1", "source_revision": "V1",
+                "content_path": "source", "installed_at": "2026-10-05T00:00:00Z",
+            }),
+            encoding="utf-8",
+        )
+
+    def _select(self, option_list, label):
+        options = [o.prompt for o in option_list.options]
+        option_list.highlighted = options.index(label)
+
+    def test_full_wizard_builds_tracked_technology_constraints_and_workspace(self):
+        project_root = self.root / "project"
+
+        async def drive():
+            app = EnvWizardApp("smoketest")
+            async with app.run_test() as pilot:
+                main_list = app.query_one(OptionList)
+
+                # RTL sources: type a path manually.
+                self._select(main_list, "RTL sources: none yet")
+                await pilot.press("enter")
+                await pilot.pause()
+                await pilot.press("a")
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "Type a path manually")
+                await pilot.press("enter")
+                await pilot.pause()
+                app.screen.query_one(Input).value = str(self.hdl_dir / "top.v")
+                await pilot.press("enter")
+                await pilot.pause()
+                await pilot.press("escape")  # done with sources
+                await pilot.pause()
+
+                # Design name/top: pick the detected module.
+                self._select(app.screen.query_one(OptionList), "Design name / top: not set")
+                await pilot.press("enter")
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "top")
+                await pilot.press("enter")
+                await pilot.pause()
+                await pilot.press("enter")  # accept default design name (blank = same as top)
+                await pilot.pause()
+
+                # Technology: package, then track/vth, then metal stack.
+                self._select(app.screen.query_one(OptionList), "Technology (PDK): not set")
+                await pilot.press("enter")
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "Pick PDK package")
+                await pilot.press("enter")
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "pdk/testpdk (installed)")
+                await pilot.press("enter")
+                await pilot.pause()
+
+                self._select(app.screen.query_one(OptionList), "Technology (PDK): pdk/testpdk")
+                await pilot.press("enter")
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "Pick track / vth")
+                await pilot.press("enter")
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "9T / lvt")
+                await pilot.press("enter")
+                await pilot.pause()
+
+                self._select(
+                    app.screen.query_one(OptionList), "Technology (PDK): pdk/testpdk (9T/lvt)",
+                )
+                await pilot.press("enter")
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "Pick metal stack")
+                await pilot.press("enter")
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "7lmT1")
+                await pilot.press("enter")
+                await pilot.pause()
+                # Picking from the stack-choice screen already dismisses
+                # straight back to the main menu -- these category pickers
+                # are single-shot, not a loop (see _edit_flow's own
+                # _change_flow for the same pattern).
+
+                # Constraints: add the real SDC by manual path.
+                self._select(app.screen.query_one(OptionList), "Constraints (SDC): none yet")
+                await pilot.press("enter")
+                await pilot.pause()
+                await pilot.press("a")
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "Type a path manually")
+                await pilot.press("enter")
+                await pilot.pause()
+                app.screen.query_one(Input).value = str(self.sdc_path)
+                await pilot.press("enter")
+                await pilot.pause()
+                await pilot.press("escape")  # done with constraints
+                await pilot.pause()
+
+                # Project root: type a path manually.
+                self._select(app.screen.query_one(OptionList), "Project root: not set")
+                await pilot.press("enter")
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "Type a path manually")
+                await pilot.press("enter")
+                await pilot.pause()
+                app.screen.query_one(Input).value = str(project_root)
+                await pilot.press("enter")
+                await pilot.pause()
+
+                await pilot.press("s")
+                await pilot.pause()
+
+        asyncio.run(drive())
+
+        document = yaml.safe_load((self.state / "envs" / "smoketest" / "wolf.yaml").read_text(encoding="utf-8"))
+        self.assertEqual(document["design"]["top"], "top")
+        self.assertEqual(document["design"]["sources"], [{"path": str(self.hdl_dir / "top.v")}])
+        self.assertEqual(
+            document["technology"],
+            {"package": "pdk/testpdk", "track": "9T", "vth": "lvt", "metal_stack": "7lmT1"},
+        )
+        self.assertEqual(document["constraints"], {"files": [str(self.sdc_path)]})
+        self.assertEqual(document["project"], {"root": str(project_root)})
+
+    def test_track_vth_and_metal_stack_require_their_prerequisites(self):
+        async def drive():
+            app = EnvWizardApp("smoketest2")
+            async with app.run_test() as pilot:
+                main_list = app.query_one(OptionList)
+                def main_menu_options() -> list[str]:
+                    return [o.prompt for o in app.screen.query_one(OptionList).options]
+
+                self._select(main_list, "Technology (PDK): not set")
+                await pilot.press("enter")
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "Pick track / vth")
+                await pilot.press("enter")
+                await pilot.pause()
+                # No PDK package picked yet -- warns, lands back on the main
+                # menu rather than opening a track/vth picker.
+                self.assertIn("Technology (PDK): not set", main_menu_options())
+
+                self._select(main_list, "Technology (PDK): not set")
+                await pilot.press("enter")
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "Pick metal stack")
+                await pilot.press("enter")
+                await pilot.pause()
+                # No track/vth picked yet either -- same guard.
+                self.assertIn("Technology (PDK): not set", main_menu_options())
+
+                # Pick the package, then a vth with no named stacks (flat lef).
+                self._select(main_list, "Technology (PDK): not set")
+                await pilot.press("enter")
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "Pick PDK package")
+                await pilot.press("enter")
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "pdk/testpdk (installed)")
+                await pilot.press("enter")
+                await pilot.pause()
+                self._select(main_list, "Technology (PDK): pdk/testpdk")
+                await pilot.press("enter")
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "Pick track / vth")
+                await pilot.press("enter")
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "9T / rvt")
+                await pilot.press("enter")
+                await pilot.pause()
+
+                self._select(main_list, "Technology (PDK): pdk/testpdk (9T/rvt)")
+                await pilot.press("enter")
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "Pick metal stack")
+                await pilot.press("enter")
+                await pilot.pause()
+                # rvt has a flat lef list -- no named stacks to pick, so this
+                # also lands back on the main menu rather than a picker.
+                self.assertIn("Technology (PDK): pdk/testpdk (9T/rvt)", main_menu_options())
+
+        asyncio.run(drive())
+
+    def test_project_root_browser_creates_a_new_folder_with_a_real_mkdir(self):
+        async def drive():
+            with patch("wolf.env_menu.Path.home", return_value=self.root):
+                app = EnvWizardApp("smoketest3")
+                async with app.run_test() as pilot:
+                    main_list = app.query_one(OptionList)
+                    self._select(main_list, "Project root: not set")
+                    await pilot.press("enter")
+                    await pilot.pause()
+                    self._select(app.screen.query_one(OptionList), "Browse filesystem")
+                    await pilot.press("enter")
+                    await pilot.pause()
+                    await pilot.press("n")
+                    await pilot.pause()
+                    app.screen.query_one(Input).value = "new-project"
+                    await pilot.press("enter")
+                    await pilot.pause()
+                    await pilot.press("a")  # use the (now real, on-disk) new directory
+                    await pilot.pause()
+                    await pilot.press("s")
+                    await pilot.pause()
+
+        asyncio.run(drive())
+
+        document = yaml.safe_load((self.state / "envs" / "smoketest3" / "wolf.yaml").read_text(encoding="utf-8"))
+        created = Path(document["project"]["root"])
+        self.assertEqual(created.name, "new-project")
+        self.assertTrue(created.is_dir())
+
+
+if __name__ == "__main__":
+    unittest.main()

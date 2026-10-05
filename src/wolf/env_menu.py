@@ -160,6 +160,35 @@ def _maybe_install(app: App, package_id: str, on_done) -> None:
     )
 
 
+def _technology_tracks(package: str) -> dict:
+    """A tracked PDK package's own technology.tracks, read straight from
+    its manifest -- empty for a flat (single implicit corner) package,
+    which has nothing to pick here."""
+    manifest = PackageRegistry().get(package)
+    technology = manifest.metadata.get("technology", {})
+    tracks = technology.get("tracks", {}) if isinstance(technology, dict) else {}
+    return tracks if isinstance(tracks, dict) else {}
+
+
+def _technology_metal_stacks(package: str, track: str, vth: str) -> list[str]:
+    """Every named metal stack declared for one track/vth's lef/
+    qrc_techfiles -- must match wolf.environment's own
+    _STACK_KEYED_FIELDS. Empty means this vth has no named stacks at
+    all (a flat lef list, or none declared yet) -- nothing to pick,
+    WOLF resolves it without technology.metal_stack."""
+    tracks = _technology_tracks(package)
+    track_data = tracks.get(track, {})
+    vth_data = track_data.get("vths", {}).get(vth, {}) if isinstance(track_data, dict) else {}
+    if not isinstance(vth_data, dict):
+        return []
+    stacks: set = set()
+    for key in ("lef", "qrc_techfiles"):
+        value = vth_data.get(key)
+        if isinstance(value, dict):
+            stacks.update(value)
+    return sorted(stacks)
+
+
 class _TextScreen(ModalScreen[Optional[str]]):
     def __init__(self, title: str, initial: str = "", hint: str = "enter to submit — esc to cancel"):
         super().__init__()
@@ -196,15 +225,21 @@ class _FilterableDirectoryTree(DirectoryTree):
 
 
 class _BrowseScreen(ModalScreen[Optional[list]]):
-    """Browse the filesystem and collect one or more RTL file paths.
+    """Browse the filesystem and collect one or more file paths.
 
     Consistent with every other list screen here: 'a' adds (the
-    highlighted file, or every RTL-looking file directly inside the
+    highlighted file, or every matching-suffix file directly inside the
     highlighted directory), 'h' toggles hidden (dot) files and
     directories, off by default. Enter on a directory expands/collapses
     it -- the tree's own default, left untouched. Enter on a file opens
     it in $EDITOR to view it, rather than adding it -- adding is always
     an explicit 'a'. Escape finishes, returning whatever was added.
+
+    `suffixes` narrows which files 'a' picks up from a directory (RTL by
+    default); pass `None` to accept any file. `title`/`label` adapt the
+    dialog's wording for whatever this particular browse is collecting
+    (RTL sources, an SDC file, ...) without needing a separate screen
+    class per file kind.
     """
 
     BINDINGS = [
@@ -213,22 +248,28 @@ class _BrowseScreen(ModalScreen[Optional[list]]):
         ("escape", "done", "Done"),
     ]
 
-    def __init__(self, start: str):
+    def __init__(
+        self, start: str, *, suffixes: Optional[tuple] = _RTL_SUFFIXES,
+        title: str = "Browse for RTL files", label: str = "file(s)",
+    ):
         super().__init__()
         self._start = start
+        self._suffixes = suffixes
+        self._title = title
+        self._label = label
         self._selected: list[str] = []
         self._show_hidden = False
 
     def compose(self) -> ComposeResult:
         with Vertical(id="dialog"):
-            yield Static("Browse for RTL files", id="dialog-title")
+            yield Static(self._title, id="dialog-title")
             tree = _FilterableDirectoryTree(self._start, id="browse-tree")
             tree.show_hidden = self._show_hidden
             yield tree
             yield Static(self._hint(), id="dialog-hint")
 
     def _hint(self) -> str:
-        picked = f"{len(self._selected)} file(s) picked" if self._selected else "none picked yet"
+        picked = f"{len(self._selected)} {self._label} picked" if self._selected else "none picked yet"
         hidden = "shown" if self._show_hidden else "hidden"
         return (
             f"{picked} — enter: expand folder / edit file in $EDITOR — a: add — "
@@ -258,15 +299,15 @@ class _BrowseScreen(ModalScreen[Optional[list]]):
         if path.is_dir():
             added = 0
             for entry in sorted(path.iterdir()):
-                if entry.is_file() and entry.suffix.lower() in _RTL_SUFFIXES:
+                if entry.is_file() and (not self._suffixes or entry.suffix.lower() in self._suffixes):
                     resolved = str(entry.resolve())
                     if resolved not in self._selected:
                         self._selected.append(resolved)
                         added += 1
             if added:
-                self.app.notify(f"Added {added} RTL file(s) from {path}")
+                self.app.notify(f"Added {added} {self._label} from {path}")
             else:
-                self.app.notify("No new RTL files in that directory.", severity="warning")
+                self.app.notify("No new matching files in that directory.", severity="warning")
         else:
             resolved = str(path.resolve())
             if resolved in self._selected:
@@ -327,12 +368,15 @@ class _BrowseDirectoryScreen(ModalScreen[Optional[str]]):
         tree.reload()
         self._refresh_hint()
 
-    def _highlighted_directory(self) -> Optional[Path]:
+    def _highlighted_node(self) -> Optional[TreeNode]:
         node = self.query_one(DirectoryTree).cursor_node
         if node is None:
             return None
-        path = node.data.path
-        return path if path.is_dir() else path.parent
+        return node if node.data.path.is_dir() else node.parent
+
+    def _highlighted_directory(self) -> Optional[Path]:
+        node = self._highlighted_node()
+        return node.data.path if node is not None else None
 
     def action_select(self) -> None:
         directory = self._highlighted_directory()
@@ -340,20 +384,29 @@ class _BrowseDirectoryScreen(ModalScreen[Optional[str]]):
             self.dismiss(str(directory.resolve()))
 
     def action_new_folder(self) -> None:
-        directory = self._highlighted_directory()
-        if directory is None:
+        parent_node = self._highlighted_node()
+        if parent_node is None:
             return
+        directory = parent_node.data.path
 
-        def handle_name(name: Optional[str]) -> None:
+        async def handle_name(name: Optional[str]) -> None:
             if not name:
                 return
             new_directory = directory / name
             try:
                 new_directory.mkdir()
-                self.app.notify(f"Created {new_directory}")
-                self.query_one(DirectoryTree).reload()
             except OSError as error:
                 self.app.notify(f"Could not create folder: {error}", severity="error")
+                return
+            self.app.notify(f"Created {new_directory}")
+            tree = self.query_one(DirectoryTree)
+            await tree.reload_node(parent_node)
+            resolved = new_directory.resolve()
+            child = next(
+                (node for node in parent_node.children if node.data.path.resolve() == resolved), None,
+            )
+            if child is not None:
+                tree.move_cursor(child)
         self.app.push_screen(_TextScreen(f"New folder name (inside {directory})"), handle_name)
 
     def action_cancel(self) -> None:
@@ -633,6 +686,91 @@ class _SourcesScreen(ModalScreen[Optional[list]]):
         self.dismiss(self._sources)
 
 
+class _ConstraintFilesScreen(ModalScreen[Optional[list]]):
+    """Add/remove constraints.files entries -- SDC files applied to
+    every run, the same local-path shape design.sources' own path
+    entries use. 'a' adds (browse, filtered to .sdc, or type a path
+    manually), 'd' deletes the highlighted entry, enter opens one in
+    $EDITOR to view it, escape finishes."""
+
+    BINDINGS = [
+        ("a", "add", "Add"),
+        ("d", "delete", "Delete"),
+        ("escape", "done", "Done"),
+    ]
+
+    def __init__(self, files: list[str]):
+        super().__init__()
+        self._files = list(files)
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="dialog"):
+            yield Static("Constraints (SDC) files", id="dialog-title")
+            yield OptionList(*self._options())
+            yield Static(
+                "enter: open in $EDITOR — a: add — d: delete highlighted — esc: done",
+                id="dialog-hint",
+            )
+
+    def _options(self) -> list[Option]:
+        if not self._files:
+            return [Option("(none yet — press 'a' to add)", id="__empty__", disabled=True)]
+        return [Option(path, id=str(index)) for index, path in enumerate(self._files)]
+
+    def _refresh(self) -> None:
+        option_list = self.query_one(OptionList)
+        option_list.clear_options()
+        for option in self._options():
+            option_list.add_option(option)
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        event.stop()
+        if event.option_id in (None, "__empty__"):
+            return
+        _open_in_editor(self.app, Path(self._files[int(event.option_id)]))
+
+    def action_add(self) -> None:
+        def handle_method(method: Optional[str]) -> None:
+            if method == "browse":
+                existing = next((Path(path).parent for path in reversed(self._files)), None)
+                start = str(existing or Path.home())
+
+                def handle_browse(paths: Optional[list]) -> None:
+                    if paths:
+                        for path in paths:
+                            if path not in self._files:
+                                self._files.append(path)
+                        self._refresh()
+                self.app.push_screen(
+                    _BrowseScreen(start, suffixes=(".sdc",), title="Browse for SDC files", label="SDC file(s)"),
+                    handle_browse,
+                )
+            elif method == "manual":
+                def handle_path(value: Optional[str]) -> None:
+                    if value:
+                        self._files.append(_absolute(value))
+                        self._refresh()
+                self.app.push_screen(_TextScreen("Path to an SDC file"), handle_path)
+        self.app.push_screen(
+            _PickScreen("Add a constraints file", [
+                ("Browse filesystem", "browse"),
+                ("Type a path manually", "manual"),
+            ]),
+            handle_method,
+        )
+
+    def action_delete(self) -> None:
+        option_list = self.query_one(OptionList)
+        index = option_list.highlighted
+        if index is None or index >= len(self._files):
+            return
+        del self._files[index]
+        self._refresh()
+
+    def action_done(self) -> None:
+        self.dismiss(self._files)
+
+
 class _MainMenuOptionList(OptionList):
     """The main menu's own list: arrow-down off the last row moves focus
     into the Save/Quit buttons below, instead of just stopping there."""
@@ -687,9 +825,14 @@ class EnvWizardApp(App[None]):
         self.design_name: Optional[str] = None
         self.design_top: Optional[str] = None
         self.technology_package: Optional[str] = None
+        self.technology_track: Optional[str] = None
+        self.technology_vth: Optional[str] = None
+        self.technology_metal_stack: Optional[str] = None
         self.flow_package: Optional[str] = None
         self.backend: Optional[str] = None
         self.project_root: Optional[str] = None
+        self.workspace_root: Optional[str] = None
+        self.constraint_files: list[str] = []
 
         manifest = self._path / ENVIRONMENT_FILENAME
         if manifest.is_file():
@@ -701,8 +844,11 @@ class EnvWizardApp(App[None]):
                 {"package": entry.package} if entry.package else {"path": entry.path}
                 for entry in profile.design_sources
             ]
-            if profile.technology and profile.technology.package:
+            if profile.technology:
                 self.technology_package = profile.technology.package
+                self.technology_track = profile.technology.track
+                self.technology_vth = profile.technology.vth
+                self.technology_metal_stack = profile.technology.metal_stack
             if profile.flow and profile.flow.package:
                 self.flow_package = profile.flow.package
             # A flow with no package (bundled default) also has no recorded
@@ -710,6 +856,8 @@ class EnvWizardApp(App[None]):
             # --backend` override, never persisted. Re-editing such an
             # environment starts flow/backend unset; pick it again if needed.
             self.project_root = profile.project_root
+            self.workspace_root = profile.workspace_root
+            self.constraint_files = list(profile.constraint_files)
         self.sub_title = self._name
 
     def compose(self) -> ComposeResult:
@@ -741,14 +889,25 @@ class EnvWizardApp(App[None]):
             if self.sources else "none yet"
         design_label = " / ".join(filter(None, (self.design_name, self.design_top))) or "not set"
         technology_label = self.technology_package or "not set"
+        if self.technology_package and self.technology_track:
+            technology_label += f" ({self.technology_track}/{self.technology_vth}"
+            technology_label += f", {self.technology_metal_stack})" if self.technology_metal_stack else ")"
         flow_label = self.flow_package or (f"bundled default, backend={self.backend}" if self.backend else "not set")
         project_label = self.project_root or "not set"
+        workspace_label = self.workspace_root or (
+            f"{self.project_root}/workspace (default)" if self.project_root else "not set"
+        )
+        constraints_label = (
+            f"{len(self.constraint_files)} file(s)" if self.constraint_files else "none yet"
+        )
         return [
             Option(f"RTL sources: {sources_label}", id="sources"),
             Option(f"Design name / top: {design_label}", id="design"),
             Option(f"Technology (PDK): {technology_label}", id="technology"),
             Option(f"Flow / backend: {flow_label}", id="flow"),
+            Option(f"Constraints (SDC): {constraints_label}", id="constraints"),
             Option(f"Project root: {project_label}", id="project"),
+            Option(f"Workspace root: {workspace_label}", id="workspace"),
         ]
 
     def _refresh(self) -> None:
@@ -778,8 +937,16 @@ class EnvWizardApp(App[None]):
             self._edit_technology()
         elif choice == "flow":
             self._edit_flow()
+        elif choice == "constraints":
+            def handle(value: Optional[list]) -> None:
+                if value is not None:
+                    self.constraint_files = value
+                    self._refresh()
+            self.push_screen(_ConstraintFilesScreen(self.constraint_files), handle)
         elif choice == "project":
             self._edit_project_root()
+        elif choice == "workspace":
+            self._edit_workspace_root()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "save":
@@ -821,31 +988,65 @@ class EnvWizardApp(App[None]):
         else:
             self.push_screen(_TextScreen("Top module name", self.design_top or ""), pick_name)
 
-    def _edit_project_root(self) -> None:
+    def _edit_directory_field(self, label: str, current: Optional[str], on_set) -> None:
+        """Shared browse/manual flow behind project root and workspace
+        root: 'Browse filesystem' lands on _BrowseDirectoryScreen, whose
+        own 'n' binding creates a real new folder (a plain mkdir, right
+        away -- not deferred to Save) and expands into it, so pointing
+        either field at a directory that doesn't exist yet is a single
+        screen, not a trip out to a terminal first."""
         def handle_method(method: Optional[str]) -> None:
             if method == "browse":
                 def handle_browse(path: Optional[str]) -> None:
                     if path is not None:
-                        self.project_root = path
+                        on_set(path)
                         self._refresh()
-                self.push_screen(
-                    _BrowseDirectoryScreen(self.project_root or str(Path.home())), handle_browse,
-                )
+                self.push_screen(_BrowseDirectoryScreen(current or str(Path.home())), handle_browse)
             elif method == "manual":
                 def handle_path(value: Optional[str]) -> None:
                     if value is not None:
-                        self.project_root = _absolute(value) if value else None
+                        on_set(_absolute(value) if value else None)
                         self._refresh()
-                self.push_screen(_TextScreen("Project root", self.project_root or ""), handle_path)
+                self.push_screen(_TextScreen(label, current or ""), handle_path)
         self.push_screen(
-            _PickScreen("Set project root", [
+            _PickScreen(f"Set {label.lower()}", [
                 ("Browse filesystem", "browse"),
                 ("Type a path manually", "manual"),
             ]),
             handle_method,
         )
 
+    def _edit_project_root(self) -> None:
+        def on_set(value: Optional[str]) -> None:
+            self.project_root = value
+        self._edit_directory_field("Project root", self.project_root, on_set)
+
+    def _edit_workspace_root(self) -> None:
+        def on_set(value: Optional[str]) -> None:
+            self.workspace_root = value
+        self._edit_directory_field(
+            "Workspace root (optional -- defaults to project root / workspace)",
+            self.workspace_root or self.project_root, on_set,
+        )
+
     def _edit_technology(self) -> None:
+        def handle_action(action: Optional[str]) -> None:
+            if action == "package":
+                self._pick_technology_package()
+            elif action == "track_vth":
+                self._pick_technology_track_vth()
+            elif action == "metal_stack":
+                self._pick_technology_metal_stack()
+        self.push_screen(
+            _PickScreen("Technology (PDK)", [
+                ("Pick PDK package", "package"),
+                ("Pick track / vth", "track_vth"),
+                ("Pick metal stack", "metal_stack"),
+            ]),
+            handle_action,
+        )
+
+    def _pick_technology_package(self) -> None:
         entries = [
             _package_choice(manifest) for manifest in PackageRegistry().manifests()
             if manifest.identifier.kind == "pdk"
@@ -861,10 +1062,65 @@ class EnvWizardApp(App[None]):
                 return
 
             def finish() -> None:
+                if value != self.technology_package:
+                    # A different package's track/vth/stack names don't
+                    # carry over -- keeping a stale selection around would
+                    # silently resolve against the wrong package's vocabulary.
+                    self.technology_track = None
+                    self.technology_vth = None
+                    self.technology_metal_stack = None
                 self.technology_package = value
                 self._refresh()
             _maybe_install(self, value, finish)
         self.push_screen(_PickScreen("Pick a technology (PDK) package", choices, details), handle)
+
+    def _pick_technology_track_vth(self) -> None:
+        if not self.technology_package:
+            self.notify("Pick a PDK package first.", severity="warning")
+            return
+        tracks = _technology_tracks(self.technology_package)
+        if not tracks:
+            self.notify(
+                f"{self.technology_package} declares a flat technology (no named tracks/vths) "
+                "-- nothing to pick.", severity="warning",
+            )
+            return
+        choices = [
+            (f"{track} / {vth}", f"{track}/{vth}")
+            for track, track_data in sorted(tracks.items())
+            for vth in sorted(track_data.get("vths", {})) if isinstance(track_data, dict)
+        ]
+
+        def handle(value: Optional[str]) -> None:
+            if value is None:
+                return
+            track, vth = value.split("/", 1)
+            if (track, vth) != (self.technology_track, self.technology_vth):
+                self.technology_metal_stack = None
+            self.technology_track = track
+            self.technology_vth = vth
+            self._refresh()
+        self.push_screen(_PickScreen("Pick a track / vth", choices), handle)
+
+    def _pick_technology_metal_stack(self) -> None:
+        if not self.technology_track or not self.technology_vth:
+            self.notify("Pick a track/vth first.", severity="warning")
+            return
+        stacks = _technology_metal_stacks(self.technology_package, self.technology_track, self.technology_vth)
+        if not stacks:
+            self.notify(
+                f"{self.technology_track}/{self.technology_vth} declares no named metal stacks "
+                "-- nothing to pick, WOLF resolves it without technology.metal_stack.",
+                severity="warning",
+            )
+            return
+
+        def handle(value: Optional[str]) -> None:
+            if value is None:
+                return
+            self.technology_metal_stack = value
+            self._refresh()
+        self.push_screen(_PickScreen("Pick a metal stack", [(name, name) for name in stacks]), handle)
 
     def _edit_flow(self) -> None:
         def handle_action(action: Optional[str]) -> None:
@@ -960,13 +1216,24 @@ class EnvWizardApp(App[None]):
         if design:
             document["design"] = design
         if self.technology_package:
-            document["technology"] = {"package": self.technology_package}
+            technology: dict = {"package": self.technology_package}
+            if self.technology_track:
+                technology["track"] = self.technology_track
+            if self.technology_vth:
+                technology["vth"] = self.technology_vth
+            if self.technology_metal_stack:
+                technology["metal_stack"] = self.technology_metal_stack
+            document["technology"] = technology
         if self.flow_package:
             document["flow"] = {"package": self.flow_package}
         elif self.backend:
             document["flow"] = {"name": "default"}
+        if self.constraint_files:
+            document["constraints"] = {"files": self.constraint_files}
         if self.project_root:
             document["project"] = {"root": self.project_root}
+        if self.workspace_root:
+            document["workspace"] = {"root": self.workspace_root}
 
         # Every path this wizard collects was already made absolute at pick
         # time (see _absolute()), so there is nothing left for

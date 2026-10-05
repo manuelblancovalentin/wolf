@@ -37,8 +37,14 @@ resolve from the input file's directory.
 .BI "wolf env menu " "[name]"
 Interactively create or edit a declarative environment: RTL sources
 (installed packages or local paths), design name/top (offered from module
-names found in those sources), technology (PDK) and flow/backend, and
-project root.
+names found in those sources), technology (PDK package, track/vth, and
+metal stack), flow/backend, constraints (SDC files), project root, and an
+optional workspace root override. Browsing for a project or workspace root
+can create a new directory on the spot
+.RB ( n ),
+making a real
+.B mkdir
+immediately rather than deferring it to save.
 .I name
 defaults to the active environment when omitted, so the normal flow is
 .BR "wolf env create" ", " "wolf activate" ", " "wolf env menu" " (no argument), "
