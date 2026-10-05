@@ -207,6 +207,14 @@ Saving also copies any RTL source that isn't already living under
 the stored path to the copy -- a source added by browsing to some file
 elsewhere ends up owned by the project, not left pointing outside it.
 
+The Technology entry opens a submenu (PDK package, then track/vth, then
+metal stack) that stays open across all three picks and shows each one's
+current value -- escape applies whatever's set so far to the main menu,
+rather than bouncing back there after every single pick. `q`/escape at the
+top level asks for confirmation (defaulting to No) whenever there are
+unsaved changes; a plain enter or a second escape on that prompt cancels
+the quit and returns to the main menu, only an explicit move to Yes exits.
+
 Profiles also remain human-readable and may be edited directly. A narrow
 structured setter updates existing paths:
 

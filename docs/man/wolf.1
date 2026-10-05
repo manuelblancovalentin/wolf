@@ -54,7 +54,10 @@ scaffolds, offering to prefill RTL sources, design name/top, and
 constraints from whatever design it finds there. Saving copies any RTL
 source not already under the project's own
 .B inputs/hdl/<design>/
-into it.
+into it. The Technology entry's own submenu (package, track/vth, metal
+stack) stays open across all three picks instead of returning to the main
+menu after each one. Quitting with unsaved changes asks for confirmation,
+defaulting to No.
 .I name
 defaults to the active environment when omitted, so the normal flow is
 .BR "wolf env create" ", " "wolf activate" ", " "wolf env menu" " (no argument), "

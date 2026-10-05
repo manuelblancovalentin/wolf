@@ -773,6 +773,135 @@ class _ConstraintFilesScreen(ModalScreen[Optional[list]]):
         self.dismiss(self._files)
 
 
+class _TechnologyScreen(ModalScreen[Optional[dict]]):
+    """Pick a PDK package, then its track/vth, then its metal stack --
+    stays open after each pick and refreshes its own labels in place
+    (the same "mutable until done" shape _SourcesScreen/
+    _ConstraintFilesScreen already use), instead of bouncing back to the
+    main menu after every single pick the way a single-shot _PickScreen
+    would. escape finishes with whatever's set so far, never None -- the
+    main menu applies it unconditionally."""
+
+    BINDINGS = [("escape", "done", "Done")]
+
+    def __init__(self, package: Optional[str], track: Optional[str], vth: Optional[str], metal_stack: Optional[str]):
+        super().__init__()
+        self._package = package
+        self._track = track
+        self._vth = vth
+        self._metal_stack = metal_stack
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="dialog"):
+            yield Static("Technology (PDK)", id="dialog-title")
+            yield OptionList(*self._options())
+            yield Static("enter: edit — esc: done", id="dialog-hint")
+
+    def _options(self) -> list[Option]:
+        track_vth_label = f"{self._track} / {self._vth}" if self._track else "not set"
+        return [
+            Option(f"PDK package: {self._package or 'not set'}", id="package"),
+            Option(f"Track / vth: {track_vth_label}", id="track_vth"),
+            Option(f"Metal stack: {self._metal_stack or 'not set'}", id="metal_stack"),
+        ]
+
+    def _refresh(self) -> None:
+        option_list = self.query_one(OptionList)
+        option_list.clear_options()
+        for option in self._options():
+            option_list.add_option(option)
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        event.stop()
+        if event.option_id == "package":
+            self._pick_package()
+        elif event.option_id == "track_vth":
+            self._pick_track_vth()
+        elif event.option_id == "metal_stack":
+            self._pick_metal_stack()
+
+    def _pick_package(self) -> None:
+        entries = [
+            _package_choice(manifest) for manifest in PackageRegistry().manifests()
+            if manifest.identifier.kind == "pdk"
+        ]
+        if not entries:
+            self.app.notify("No pdk/* packages found in any configured registry.", severity="warning")
+            return
+        choices = [(label, identifier) for label, identifier, _ in entries]
+        details = {identifier: detail for _, identifier, detail in entries if detail}
+
+        def handle(value: Optional[str]) -> None:
+            if value is None:
+                return
+
+            def finish() -> None:
+                if value != self._package:
+                    # A different package's track/vth/stack names don't
+                    # carry over -- keeping a stale selection around would
+                    # silently resolve against the wrong package's vocabulary.
+                    self._track = None
+                    self._vth = None
+                    self._metal_stack = None
+                self._package = value
+                self._refresh()
+            _maybe_install(self.app, value, finish)
+        self.app.push_screen(_PickScreen("Pick a technology (PDK) package", choices, details), handle)
+
+    def _pick_track_vth(self) -> None:
+        if not self._package:
+            self.app.notify("Pick a PDK package first.", severity="warning")
+            return
+        tracks = _technology_tracks(self._package)
+        if not tracks:
+            self.app.notify(
+                f"{self._package} declares a flat technology (no named tracks/vths) "
+                "-- nothing to pick.", severity="warning",
+            )
+            return
+        choices = [
+            (f"{track} / {vth}", f"{track}/{vth}")
+            for track, track_data in sorted(tracks.items())
+            for vth in sorted(track_data.get("vths", {})) if isinstance(track_data, dict)
+        ]
+
+        def handle(value: Optional[str]) -> None:
+            if value is None:
+                return
+            track, vth = value.split("/", 1)
+            if (track, vth) != (self._track, self._vth):
+                self._metal_stack = None
+            self._track = track
+            self._vth = vth
+            self._refresh()
+        self.app.push_screen(_PickScreen("Pick a track / vth", choices), handle)
+
+    def _pick_metal_stack(self) -> None:
+        if not self._track or not self._vth:
+            self.app.notify("Pick a track/vth first.", severity="warning")
+            return
+        stacks = _technology_metal_stacks(self._package, self._track, self._vth)
+        if not stacks:
+            self.app.notify(
+                f"{self._track}/{self._vth} declares no named metal stacks "
+                "-- nothing to pick, WOLF resolves it without technology.metal_stack.",
+                severity="warning",
+            )
+            return
+
+        def handle(value: Optional[str]) -> None:
+            if value is None:
+                return
+            self._metal_stack = value
+            self._refresh()
+        self.app.push_screen(_PickScreen("Pick a metal stack", [(name, name) for name in stacks]), handle)
+
+    def action_done(self) -> None:
+        self.dismiss({
+            "package": self._package, "track": self._track, "vth": self._vth, "metal_stack": self._metal_stack,
+        })
+
+
 class _ProjectScanScreen(ModalScreen[Optional[str]]):
     """Shows the shallow structural scan of a project root (see
     wolf.project_tree.scan_project_tree) -- which of inputs/outputs/
@@ -1031,10 +1160,30 @@ class EnvWizardApp(App[None]):
         if event.button.id == "save":
             self._save(close=True)
         elif event.button.id == "quit_":
-            self.exit()
+            self.action_quit()
 
     def action_save_in_place(self) -> None:
         self._save(close=False)
+
+    def action_quit(self) -> None:
+        """Overrides App's own default action_quit (bound to q/escape, and
+        wired to the "Quit without saving" button above): with unsaved
+        changes, confirm first -- defaulting to No, so an accidental
+        escape (the common case this exists for) or a plain enter on the
+        confirm screen itself just returns to the main menu, not a lost
+        edit. Nothing to lose (never dirty, or already saved) exits
+        immediately, no prompt."""
+        if not self._dirty:
+            self.exit()
+            return
+
+        def handle(choice: Optional[str]) -> None:
+            if choice == "yes":
+                self.exit()
+        self.push_screen(
+            _PickScreen("You have unsaved changes. Quit without saving?", [("No", "no"), ("Yes", "yes")]),
+            handle,
+        )
 
     def _edit_design(self) -> None:
         detected = _scan_modules(self.sources)
@@ -1142,97 +1291,21 @@ class EnvWizardApp(App[None]):
         )
 
     def _edit_technology(self) -> None:
-        def handle_action(action: Optional[str]) -> None:
-            if action == "package":
-                self._pick_technology_package()
-            elif action == "track_vth":
-                self._pick_technology_track_vth()
-            elif action == "metal_stack":
-                self._pick_technology_metal_stack()
+        def handle(result: Optional[dict]) -> None:
+            if result is None:
+                return
+            self.technology_package = result["package"]
+            self.technology_track = result["track"]
+            self.technology_vth = result["vth"]
+            self.technology_metal_stack = result["metal_stack"]
+            self._refresh()
         self.push_screen(
-            _PickScreen("Technology (PDK)", [
-                ("Pick PDK package", "package"),
-                ("Pick track / vth", "track_vth"),
-                ("Pick metal stack", "metal_stack"),
-            ]),
-            handle_action,
+            _TechnologyScreen(
+                self.technology_package, self.technology_track,
+                self.technology_vth, self.technology_metal_stack,
+            ),
+            handle,
         )
-
-    def _pick_technology_package(self) -> None:
-        entries = [
-            _package_choice(manifest) for manifest in PackageRegistry().manifests()
-            if manifest.identifier.kind == "pdk"
-        ]
-        if not entries:
-            self.notify("No pdk/* packages found in any configured registry.", severity="warning")
-            return
-        choices = [(label, identifier) for label, identifier, _ in entries]
-        details = {identifier: detail for _, identifier, detail in entries if detail}
-
-        def handle(value: Optional[str]) -> None:
-            if value is None:
-                return
-
-            def finish() -> None:
-                if value != self.technology_package:
-                    # A different package's track/vth/stack names don't
-                    # carry over -- keeping a stale selection around would
-                    # silently resolve against the wrong package's vocabulary.
-                    self.technology_track = None
-                    self.technology_vth = None
-                    self.technology_metal_stack = None
-                self.technology_package = value
-                self._refresh()
-            _maybe_install(self, value, finish)
-        self.push_screen(_PickScreen("Pick a technology (PDK) package", choices, details), handle)
-
-    def _pick_technology_track_vth(self) -> None:
-        if not self.technology_package:
-            self.notify("Pick a PDK package first.", severity="warning")
-            return
-        tracks = _technology_tracks(self.technology_package)
-        if not tracks:
-            self.notify(
-                f"{self.technology_package} declares a flat technology (no named tracks/vths) "
-                "-- nothing to pick.", severity="warning",
-            )
-            return
-        choices = [
-            (f"{track} / {vth}", f"{track}/{vth}")
-            for track, track_data in sorted(tracks.items())
-            for vth in sorted(track_data.get("vths", {})) if isinstance(track_data, dict)
-        ]
-
-        def handle(value: Optional[str]) -> None:
-            if value is None:
-                return
-            track, vth = value.split("/", 1)
-            if (track, vth) != (self.technology_track, self.technology_vth):
-                self.technology_metal_stack = None
-            self.technology_track = track
-            self.technology_vth = vth
-            self._refresh()
-        self.push_screen(_PickScreen("Pick a track / vth", choices), handle)
-
-    def _pick_technology_metal_stack(self) -> None:
-        if not self.technology_track or not self.technology_vth:
-            self.notify("Pick a track/vth first.", severity="warning")
-            return
-        stacks = _technology_metal_stacks(self.technology_package, self.technology_track, self.technology_vth)
-        if not stacks:
-            self.notify(
-                f"{self.technology_track}/{self.technology_vth} declares no named metal stacks "
-                "-- nothing to pick, WOLF resolves it without technology.metal_stack.",
-                severity="warning",
-            )
-            return
-
-        def handle(value: Optional[str]) -> None:
-            if value is None:
-                return
-            self.technology_metal_stack = value
-            self._refresh()
-        self.push_screen(_PickScreen("Pick a metal stack", [(name, name) for name in stacks]), handle)
 
     def _edit_flow(self) -> None:
         def handle_action(action: Optional[str]) -> None:

@@ -125,42 +125,41 @@ class EnvWizardEndToEndTests(unittest.TestCase):
                 await pilot.press("enter")  # accept default design name (blank = same as top)
                 await pilot.pause()
 
-                # Technology: package, then track/vth, then metal stack.
+                # Technology: package, then track/vth, then metal stack --
+                # all inside one visit to the Technology submenu, which
+                # stays open (and shows live state) after each pick.
                 self._select(app.screen.query_one(OptionList), "Technology (PDK): not set")
                 await pilot.press("enter")
                 await pilot.pause()
-                self._select(app.screen.query_one(OptionList), "Pick PDK package")
+                self._select(app.screen.query_one(OptionList), "PDK package: not set")
                 await pilot.press("enter")
                 await pilot.pause()
                 self._select(app.screen.query_one(OptionList), "pdk/testpdk (installed)")
                 await pilot.press("enter")
                 await pilot.pause()
 
-                self._select(app.screen.query_one(OptionList), "Technology (PDK): pdk/testpdk")
-                await pilot.press("enter")
-                await pilot.pause()
-                self._select(app.screen.query_one(OptionList), "Pick track / vth")
+                self._select(app.screen.query_one(OptionList), "Track / vth: not set")
                 await pilot.press("enter")
                 await pilot.pause()
                 self._select(app.screen.query_one(OptionList), "9T / lvt")
                 await pilot.press("enter")
                 await pilot.pause()
 
-                self._select(
-                    app.screen.query_one(OptionList), "Technology (PDK): pdk/testpdk (9T/lvt)",
-                )
-                await pilot.press("enter")
-                await pilot.pause()
-                self._select(app.screen.query_one(OptionList), "Pick metal stack")
+                self._select(app.screen.query_one(OptionList), "Metal stack: not set")
                 await pilot.press("enter")
                 await pilot.pause()
                 self._select(app.screen.query_one(OptionList), "7lmT1")
                 await pilot.press("enter")
                 await pilot.pause()
-                # Picking from the stack-choice screen already dismisses
-                # straight back to the main menu -- these category pickers
-                # are single-shot, not a loop (see _edit_flow's own
-                # _change_flow for the same pattern).
+
+                # Still on the Technology submenu -- esc applies it to the
+                # main menu, rather than bouncing there after every pick.
+                self.assertEqual(
+                    [o.prompt for o in app.screen.query_one(OptionList).options],
+                    ["PDK package: pdk/testpdk", "Track / vth: 9T / lvt", "Metal stack: 7lmT1"],
+                )
+                await pilot.press("escape")
+                await pilot.pause()
 
                 # Constraints: add the real SDC by manual path.
                 self._select(app.screen.query_one(OptionList), "Constraints (SDC): none yet")
@@ -205,8 +204,6 @@ class EnvWizardEndToEndTests(unittest.TestCase):
             app = EnvWizardApp("smoketest2")
             async with app.run_test() as pilot:
                 main_list = app.query_one(OptionList)
-                def main_menu_options() -> list[str]:
-                    return [o.prompt for o in app.screen.query_one(OptionList).options]
 
                 # Project root first -- Technology is gated until it's set.
                 self._select(main_list, "Project root: not set")
@@ -222,51 +219,46 @@ class EnvWizardEndToEndTests(unittest.TestCase):
                 self._select(main_list, "Technology (PDK): not set")
                 await pilot.press("enter")
                 await pilot.pause()
-                self._select(app.screen.query_one(OptionList), "Pick track / vth")
-                await pilot.press("enter")
-                await pilot.pause()
-                # No PDK package picked yet -- warns, lands back on the main
-                # menu rather than opening a track/vth picker.
-                self.assertIn("Technology (PDK): not set", main_menu_options())
+                depth_before = len(app.screen_stack)
 
-                self._select(main_list, "Technology (PDK): not set")
+                def tech_options() -> list[str]:
+                    return [o.prompt for o in app.screen.query_one(OptionList).options]
+
+                self._select(app.screen.query_one(OptionList), "Track / vth: not set")
                 await pilot.press("enter")
                 await pilot.pause()
-                self._select(app.screen.query_one(OptionList), "Pick metal stack")
+                # No PDK package picked yet -- warns, stays on the (still
+                # open) Technology submenu rather than opening a picker.
+                self.assertEqual(len(app.screen_stack), depth_before)
+                self.assertIn("Track / vth: not set", tech_options())
+
+                self._select(app.screen.query_one(OptionList), "Metal stack: not set")
                 await pilot.press("enter")
                 await pilot.pause()
                 # No track/vth picked yet either -- same guard.
-                self.assertIn("Technology (PDK): not set", main_menu_options())
+                self.assertEqual(len(app.screen_stack), depth_before)
 
                 # Pick the package, then a vth with no named stacks (flat lef).
-                self._select(main_list, "Technology (PDK): not set")
-                await pilot.press("enter")
-                await pilot.pause()
-                self._select(app.screen.query_one(OptionList), "Pick PDK package")
+                self._select(app.screen.query_one(OptionList), "PDK package: not set")
                 await pilot.press("enter")
                 await pilot.pause()
                 self._select(app.screen.query_one(OptionList), "pdk/testpdk (installed)")
                 await pilot.press("enter")
                 await pilot.pause()
-                self._select(main_list, "Technology (PDK): pdk/testpdk")
-                await pilot.press("enter")
-                await pilot.pause()
-                self._select(app.screen.query_one(OptionList), "Pick track / vth")
+                self._select(app.screen.query_one(OptionList), "Track / vth: not set")
                 await pilot.press("enter")
                 await pilot.pause()
                 self._select(app.screen.query_one(OptionList), "9T / rvt")
                 await pilot.press("enter")
                 await pilot.pause()
 
-                self._select(main_list, "Technology (PDK): pdk/testpdk (9T/rvt)")
+                self._select(app.screen.query_one(OptionList), "Metal stack: not set")
                 await pilot.press("enter")
                 await pilot.pause()
-                self._select(app.screen.query_one(OptionList), "Pick metal stack")
-                await pilot.press("enter")
-                await pilot.pause()
-                # rvt has a flat lef list -- no named stacks to pick, so this
-                # also lands back on the main menu rather than a picker.
-                self.assertIn("Technology (PDK): pdk/testpdk (9T/rvt)", main_menu_options())
+                # rvt has a flat lef list -- no named stacks to pick, so
+                # this also stays on the Technology submenu, not a picker.
+                self.assertEqual(len(app.screen_stack), depth_before)
+                self.assertIn("Metal stack: not set", tech_options())
 
         asyncio.run(drive())
 
@@ -302,6 +294,53 @@ class EnvWizardEndToEndTests(unittest.TestCase):
         created = Path(document["project"]["root"])
         self.assertEqual(created.name, "new-project")
         self.assertTrue(created.is_dir())
+
+    def test_quit_with_unsaved_changes_requires_confirming_yes(self):
+        """escape is also the "go back one level" key everywhere else in
+        this wizard, so an accidental press at the top level must not
+        silently discard an in-progress edit -- confirm, defaulting to
+        No, and only an explicit move to Yes actually quits."""
+        project_root = self.root / "project5"
+
+        async def drive():
+            app = EnvWizardApp("smoketest5")
+            async with app.run_test() as pilot:
+                main_list = app.query_one(OptionList)
+                self._select(main_list, "Project root: not set")
+                await pilot.press("enter")
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "Type a path manually")
+                await pilot.press("enter")
+                await pilot.pause()
+                app.screen.query_one(Input).value = str(project_root)
+                await pilot.press("enter")
+                await pilot.pause()
+                self.assertIn("unsaved changes", app.sub_title)
+
+                # First escape: confirm dialog, default highlighted is "No".
+                await pilot.press("escape")
+                await pilot.pause()
+                confirm_opts = [o.prompt for o in app.screen.query_one(OptionList).options]
+                self.assertEqual(confirm_opts, ["No", "Yes"])
+                self.assertEqual(app.screen.query_one(OptionList).highlighted, 0)
+
+                # Plain enter accepts the default (No) -- back on the main
+                # menu, still running, nothing lost.
+                await pilot.press("enter")
+                await pilot.pause()
+                self.assertTrue(app.is_running)
+                self.assertIn("Project root", app.screen.query_one(OptionList).options[0].prompt)
+
+                # Escape again, this time move to Yes and confirm.
+                await pilot.press("escape")
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "Yes")
+                await pilot.press("enter")
+                await pilot.pause()
+                self.assertFalse(app.is_running)
+
+        asyncio.run(drive())
+        self.assertFalse((self.state / "envs" / "smoketest5" / "wolf.yaml").exists())
 
     def test_setting_an_existing_project_root_scans_and_prefills_a_picked_design(self):
         """The shallow scan always runs the moment project root is set to
