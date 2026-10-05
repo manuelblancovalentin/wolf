@@ -20,6 +20,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 from typing import Optional
 
@@ -42,6 +43,7 @@ from wolf.package.installer import PackageInstaller
 from wolf.package.registry import PackageRegistry
 from wolf.package.store import PackageStore
 from wolf.paths import builtin_flow_root, environments_dir
+from wolf.project_tree import PER_DESIGN_INPUT_CATEGORIES, ProjectTreeScan, scan_design, scan_project_tree
 
 
 _MODULE_RE = re.compile(r"^\s*module\s+([A-Za-z_][A-Za-z0-9_$]*)", re.MULTILINE)
@@ -771,6 +773,77 @@ class _ConstraintFilesScreen(ModalScreen[Optional[list]]):
         self.dismiss(self._files)
 
 
+class _ProjectScanScreen(ModalScreen[Optional[str]]):
+    """Shows the shallow structural scan of a project root (see
+    wolf.project_tree.scan_project_tree) -- which of inputs/outputs/
+    workspace exist, which inputs/ categories are present, and which
+    design names they suggest. This scan always runs the moment a
+    project root is set to an existing directory, never skipped --
+    an all-missing result (a genuinely new, empty directory) is shown
+    the same way a populated one is, not silently passed over.
+
+    Picking a design name triggers the deeper per-design scan
+    (wolf.project_tree.scan_design), prefilling RTL sources, design
+    name/top, and constraints in the wizard's own in-memory state --
+    still nothing written to wolf.yaml until Save. Escape (or no design
+    names found at all) leaves the project root set with nothing else
+    prefilled; the manual, pick-everything-by-hand flow underneath is
+    completely unaffected either way.
+    """
+
+    BINDINGS = [("escape", "done", "Done")]
+
+    def __init__(self, root: Path, scan: ProjectTreeScan):
+        super().__init__()
+        self._root = root
+        self._scan = scan
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="dialog"):
+            yield Static(f"Project tree scan: {self._root}", id="dialog-title")
+            yield Static(self._structure_summary(), id="scan-summary")
+            yield OptionList(*self._options())
+            yield Static(self._hint(), id="dialog-hint")
+
+    def _structure_summary(self) -> str:
+        def mark(value: bool) -> str:
+            return "present" if value else "missing"
+        lines = [
+            f"inputs/: {mark(self._scan.inputs_exists)}  "
+            f"outputs/: {mark(self._scan.outputs_exists)}  "
+            f"workspace/: {mark(self._scan.workspace_exists)}",
+        ]
+        for category in PER_DESIGN_INPUT_CATEGORIES:
+            cat_scan = self._scan.categories[category]
+            lines.append(f"  inputs/{category}: {mark(cat_scan.exists)} ({len(cat_scan.designs)} design(s))")
+        present_libs = sorted(name for name, exists in self._scan.lib_subdirs.items() if exists)
+        lines.append(f"  inputs/lib: {', '.join(present_libs) or 'none found'}")
+        return "\n".join(lines)
+
+    def _design_label(self, name: str) -> str:
+        missing = self._scan.designs_missing_categories(name)
+        return f"{name} (missing: {', '.join(missing)})" if missing else f"{name} (complete)"
+
+    def _options(self) -> list[Option]:
+        if not self._scan.design_names:
+            return [Option(
+                "(no existing design found here -- esc to continue manually)",
+                id="__empty__", disabled=True,
+            )]
+        return [Option(self._design_label(name), id=name) for name in self._scan.design_names]
+
+    def _hint(self) -> str:
+        return "enter: load this design's inputs — esc: continue without picking one"
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        event.stop()
+        if event.option_id and event.option_id != "__empty__":
+            self.dismiss(event.option_id)
+
+    def action_done(self) -> None:
+        self.dismiss(None)
+
+
 class _MainMenuOptionList(OptionList):
     """The main menu's own list: arrow-down off the last row moves focus
     into the Save/Quit buttons below, instead of just stopping there."""
@@ -893,21 +966,27 @@ class EnvWizardApp(App[None]):
             technology_label += f" ({self.technology_track}/{self.technology_vth}"
             technology_label += f", {self.technology_metal_stack})" if self.technology_metal_stack else ")"
         flow_label = self.flow_package or (f"bundled default, backend={self.backend}" if self.backend else "not set")
-        project_label = self.project_root or "not set"
         workspace_label = self.workspace_root or (
             f"{self.project_root}/workspace (default)" if self.project_root else "not set"
         )
         constraints_label = (
             f"{len(self.constraint_files)} file(s)" if self.constraint_files else "none yet"
         )
+        # Everything but "Project root" needs a project root to mean
+        # anything -- RTL added before one is set has nowhere to be copied
+        # into at save time (see _save's own copy-into-inputs/hdl step),
+        # and a scan can't run without a directory to scan. Visible but
+        # unselectable (not hidden) so it's clear what's gating the rest,
+        # not just missing.
+        gated = not self.project_root
         return [
-            Option(f"RTL sources: {sources_label}", id="sources"),
-            Option(f"Design name / top: {design_label}", id="design"),
-            Option(f"Technology (PDK): {technology_label}", id="technology"),
-            Option(f"Flow / backend: {flow_label}", id="flow"),
-            Option(f"Constraints (SDC): {constraints_label}", id="constraints"),
-            Option(f"Project root: {project_label}", id="project"),
-            Option(f"Workspace root: {workspace_label}", id="workspace"),
+            Option(f"Project root: {self.project_root or 'not set'}", id="project"),
+            Option(f"RTL sources: {sources_label}", id="sources", disabled=gated),
+            Option(f"Design name / top: {design_label}", id="design", disabled=gated),
+            Option(f"Technology (PDK): {technology_label}", id="technology", disabled=gated),
+            Option(f"Flow / backend: {flow_label}", id="flow", disabled=gated),
+            Option(f"Constraints (SDC): {constraints_label}", id="constraints", disabled=gated),
+            Option(f"Workspace root: {workspace_label}", id="workspace", disabled=gated),
         ]
 
     def _refresh(self) -> None:
@@ -1019,7 +1098,40 @@ class EnvWizardApp(App[None]):
     def _edit_project_root(self) -> None:
         def on_set(value: Optional[str]) -> None:
             self.project_root = value
+            if value and Path(value).is_dir():
+                self._scan_project_root(Path(value))
         self._edit_directory_field("Project root", self.project_root, on_set)
+
+    def _scan_project_root(self, root: Path) -> None:
+        """Always runs once a project root is set to a directory that
+        already exists -- see _ProjectScanScreen's own docstring for why
+        this is never skipped, even for a directory with nothing in it
+        yet."""
+        scan = scan_project_tree(root)
+
+        def handle(design: Optional[str]) -> None:
+            if design:
+                self._apply_design_scan(root, design)
+        self.push_screen(_ProjectScanScreen(root, scan), handle)
+
+    def _apply_design_scan(self, root: Path, design: str) -> None:
+        deep = scan_design(root, design)
+        self.design_name = design
+        self.sources = [{"path": str(path)} for path in deep.hdl_files]
+        detected = _scan_modules(self.sources)
+        if detected:
+            self.design_top = detected[0]
+        if deep.constraint_files:
+            self.constraint_files = [str(path) for path in deep.constraint_files]
+        self._refresh()
+        summary = (
+            f"Loaded {design}: {len(deep.hdl_files)} HDL file(s), "
+            f"{len(deep.constraint_files)} constraints file(s), "
+            f"{deep.output_run_count} output run(s), {deep.workspace_run_count} workspace run(s) found."
+        )
+        if deep.missing_categories:
+            summary += f" Missing inputs categories: {', '.join(deep.missing_categories)}."
+        self.notify(summary)
 
     def _edit_workspace_root(self) -> None:
         def on_set(value: Optional[str]) -> None:
@@ -1204,7 +1316,37 @@ class EnvWizardApp(App[None]):
             )
         self.push_screen(_PickScreen("Pick a flow package", choices, details), handle)
 
+    def _copy_sources_into_project(self) -> None:
+        """Any local-path RTL source that isn't already living under
+        <project_root>/inputs/hdl/<design_name>/ gets copied there, and
+        its stored path rewritten to the copy. Done at Save, not at Add
+        time: project_root/design_name aren't guaranteed to exist yet
+        when a source is first picked (that's the whole reason Add just
+        records whatever path was picked), but both are real,
+        already-resolved fields by the time Save runs. "Quit without
+        saving" means no copy ever happens, same as every other change
+        this wizard makes."""
+        if not self.project_root or not self.design_name:
+            return
+        hdl_dir = Path(self.project_root) / "inputs" / "hdl" / self.design_name
+        for entry in self.sources:
+            path = entry.get("path")
+            if not path:
+                continue
+            source_path = Path(path)
+            try:
+                source_path.resolve().relative_to(hdl_dir.resolve())
+                continue  # already inside the project's own hdl dir
+            except (ValueError, OSError):
+                pass
+            hdl_dir.mkdir(parents=True, exist_ok=True)
+            destination = hdl_dir / source_path.name
+            if destination.resolve() != source_path.resolve():
+                shutil.copy2(source_path, destination)
+            entry["path"] = str(destination.resolve())
+
     def _save(self, *, close: bool) -> None:
+        self._copy_sources_into_project()
         document: dict = {"schema": ENVIRONMENT_SCHEMA, "name": self._name}
         design: dict = {}
         if self.design_name:

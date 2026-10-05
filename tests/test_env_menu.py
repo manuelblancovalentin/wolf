@@ -88,6 +88,18 @@ class EnvWizardEndToEndTests(unittest.TestCase):
             async with app.run_test() as pilot:
                 main_list = app.query_one(OptionList)
 
+                # Project root first -- everything else is gated on it.
+                # This path doesn't exist yet, so no scan screen appears.
+                self._select(main_list, "Project root: not set")
+                await pilot.press("enter")
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "Type a path manually")
+                await pilot.press("enter")
+                await pilot.pause()
+                app.screen.query_one(Input).value = str(project_root)
+                await pilot.press("enter")
+                await pilot.pause()
+
                 # RTL sources: type a path manually.
                 self._select(main_list, "RTL sources: none yet")
                 await pilot.press("enter")
@@ -165,17 +177,6 @@ class EnvWizardEndToEndTests(unittest.TestCase):
                 await pilot.press("escape")  # done with constraints
                 await pilot.pause()
 
-                # Project root: type a path manually.
-                self._select(app.screen.query_one(OptionList), "Project root: not set")
-                await pilot.press("enter")
-                await pilot.pause()
-                self._select(app.screen.query_one(OptionList), "Type a path manually")
-                await pilot.press("enter")
-                await pilot.pause()
-                app.screen.query_one(Input).value = str(project_root)
-                await pilot.press("enter")
-                await pilot.pause()
-
                 await pilot.press("s")
                 await pilot.pause()
 
@@ -183,7 +184,13 @@ class EnvWizardEndToEndTests(unittest.TestCase):
 
         document = yaml.safe_load((self.state / "envs" / "smoketest" / "wolf.yaml").read_text(encoding="utf-8"))
         self.assertEqual(document["design"]["top"], "top")
-        self.assertEqual(document["design"]["sources"], [{"path": str(self.hdl_dir / "top.v")}])
+        # Saving copies the source into <project_root>/inputs/hdl/<design>/
+        # and rewrites the stored path to the copy, rather than keeping a
+        # path that points outside the project.
+        copied = project_root / "inputs" / "hdl" / "top" / "top.v"
+        self.assertEqual(document["design"]["sources"], [{"path": str(copied)}])
+        self.assertTrue(copied.is_file())
+        self.assertEqual(copied.read_text(encoding="utf-8"), (self.hdl_dir / "top.v").read_text(encoding="utf-8"))
         self.assertEqual(
             document["technology"],
             {"package": "pdk/testpdk", "track": "9T", "vth": "lvt", "metal_stack": "7lmT1"},
@@ -192,12 +199,25 @@ class EnvWizardEndToEndTests(unittest.TestCase):
         self.assertEqual(document["project"], {"root": str(project_root)})
 
     def test_track_vth_and_metal_stack_require_their_prerequisites(self):
+        project_root = self.root / "project2"
+
         async def drive():
             app = EnvWizardApp("smoketest2")
             async with app.run_test() as pilot:
                 main_list = app.query_one(OptionList)
                 def main_menu_options() -> list[str]:
                     return [o.prompt for o in app.screen.query_one(OptionList).options]
+
+                # Project root first -- Technology is gated until it's set.
+                self._select(main_list, "Project root: not set")
+                await pilot.press("enter")
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "Type a path manually")
+                await pilot.press("enter")
+                await pilot.pause()
+                app.screen.query_one(Input).value = str(project_root)
+                await pilot.press("enter")
+                await pilot.pause()
 
                 self._select(main_list, "Technology (PDK): not set")
                 await pilot.press("enter")
@@ -269,6 +289,10 @@ class EnvWizardEndToEndTests(unittest.TestCase):
                     await pilot.pause()
                     await pilot.press("a")  # use the (now real, on-disk) new directory
                     await pilot.pause()
+                    # The new, empty directory is still scanned (never
+                    # skipped) -- nothing found, so esc continues manually.
+                    await pilot.press("escape")
+                    await pilot.pause()
                     await pilot.press("s")
                     await pilot.pause()
 
@@ -278,6 +302,60 @@ class EnvWizardEndToEndTests(unittest.TestCase):
         created = Path(document["project"]["root"])
         self.assertEqual(created.name, "new-project")
         self.assertTrue(created.is_dir())
+
+    def test_setting_an_existing_project_root_scans_and_prefills_a_picked_design(self):
+        """The shallow scan always runs the moment project root is set to
+        a directory that already exists (never skipped -- see
+        _ProjectScanScreen's own docstring); picking a design out of it
+        prefills RTL sources, design name/top, and constraints in one
+        shot, matching the real tree shape found in
+        sandboxes/manuelbv/wolf_tutorials/ALU (per-design subdirectories
+        for hdl, but a flat <design>.constraints.sdc file)."""
+        existing_root = self.root / "existing"
+        hdl_dir = existing_root / "inputs" / "hdl" / "top"
+        hdl_dir.mkdir(parents=True)
+        (hdl_dir / "top.v").write_text("module top(input clk);\nendmodule\n", encoding="utf-8")
+        constraints_dir = existing_root / "inputs" / "constraints"
+        constraints_dir.mkdir(parents=True)
+        (constraints_dir / "top.constraints.sdc").write_text("set_max_delay 1.0\n", encoding="utf-8")
+
+        async def drive():
+            app = EnvWizardApp("smoketest4")
+            async with app.run_test() as pilot:
+                main_list = app.query_one(OptionList)
+                self._select(main_list, "Project root: not set")
+                await pilot.press("enter")
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "Type a path manually")
+                await pilot.press("enter")
+                await pilot.pause()
+                app.screen.query_one(Input).value = str(existing_root)
+                await pilot.press("enter")
+                await pilot.pause()
+
+                # The scan screen appears unprompted, listing the one
+                # design its shallow scan found.
+                scan_opts = [o.prompt for o in app.screen.query_one(OptionList).options]
+                self.assertEqual(scan_opts, ["top (missing: calibre, env, floorplans, scripts, tb)"])
+                self._select(app.screen.query_one(OptionList), scan_opts[0])
+                await pilot.press("enter")
+                await pilot.pause()
+
+                await pilot.press("s")
+                await pilot.pause()
+
+        asyncio.run(drive())
+
+        document = yaml.safe_load((self.state / "envs" / "smoketest4" / "wolf.yaml").read_text(encoding="utf-8"))
+        self.assertEqual(document["design"]["name"], "top")
+        self.assertEqual(document["design"]["top"], "top")
+        # Already inside the project's own inputs/hdl/top/ -- save's
+        # copy-into-project step has nothing to do, so the path is
+        # untouched.
+        self.assertEqual(document["design"]["sources"], [{"path": str((hdl_dir / "top.v").resolve())}])
+        self.assertEqual(
+            document["constraints"], {"files": [str((constraints_dir / "top.constraints.sdc").resolve())]},
+        )
 
 
 if __name__ == "__main__":

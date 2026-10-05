@@ -187,6 +187,26 @@ names, its metal stacks) rather than typed blind. Browsing for a project or
 workspace root that doesn't exist yet can create it on the spot (`n`), a
 real `mkdir` right away, not deferred to save.
 
+Project root comes first in the wizard and gates everything else -- every
+other field stays visible but unselectable until it's set, since RTL
+sources, constraints, and workspace all ultimately resolve relative to it.
+Setting it to a directory that already exists always triggers a scan (see
+`wolf.project_tree`, never skipped, even for an empty directory) against the
+same `inputs/{calibre,constraints,env,floorplans,hdl,lib,scripts,tb}`
+convention `wolf env auto-setup` itself scaffolds -- each category's own
+per-design subdirectory (or, for `constraints` specifically, a flat
+`<design>.<anything>` file -- both shapes are accepted) suggests a design
+name. Picking one out of the scan prefills RTL sources, design name/top,
+and constraints in the wizard's own in-memory state; nothing is written to
+`wolf.yaml` until Save, same as every other field here. Declining (`esc`,
+or nothing found) leaves project root set with everything else still to
+fill in by hand.
+
+Saving also copies any RTL source that isn't already living under
+`<project_root>/inputs/hdl/<design_name>/` into that directory, rewriting
+the stored path to the copy -- a source added by browsing to some file
+elsewhere ends up owned by the project, not left pointing outside it.
+
 Profiles also remain human-readable and may be edited directly. A narrow
 structured setter updates existing paths:
 

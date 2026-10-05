@@ -19,6 +19,7 @@ from wolf.environment import (
 )
 from wolf.legacy import LegacyCommandError, run_env
 from wolf.paths import environments_dir
+from wolf.project_tree import PER_DESIGN_INPUT_CATEGORIES, SHARED_LIB_SUBDIRS
 from wolf import ui
 
 
@@ -224,14 +225,6 @@ def command_clone(args: argparse.Namespace) -> int:
     return 0
 
 
-# Per-design input categories, scaffolded as <project_root>/inputs/<category>/<design_name>.
-# Mirrors the legacy `wolf env auto-setup` directory spec (bin/wolf.env), backend-agnostic:
-# no files are created, only the directories every design's inputs are expected to live under.
-_PER_DESIGN_INPUT_CATEGORIES = ("calibre", "constraints", "env", "floorplans", "hdl", "scripts", "tb")
-# Shared across all designs in a project, not nested under a design name.
-_SHARED_INPUT_SUBDIRS = ("lib/gds", "lib/lef", "lib/spice", "lib/timing", "lib/verilog")
-
-
 def command_auto_setup(args: argparse.Namespace) -> int:
     name = resolve_environment_name(args.name)
     environment_directory = _existing_environment(name)
@@ -262,10 +255,10 @@ def command_auto_setup(args: argparse.Namespace) -> int:
         project_root / "outputs" / design_name,
         project_root / "workspace",
     ]
-    for category in _PER_DESIGN_INPUT_CATEGORIES:
+    for category in PER_DESIGN_INPUT_CATEGORIES:
         planned.append(project_root / "inputs" / category / design_name)
-    for shared in _SHARED_INPUT_SUBDIRS:
-        planned.append(project_root / "inputs" / shared)
+    for shared in SHARED_LIB_SUBDIRS:
+        planned.append(project_root / "inputs" / "lib" / shared)
 
     created = [path for path in planned if not path.is_dir()]
     for path in planned:
