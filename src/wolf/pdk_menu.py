@@ -696,6 +696,444 @@ class _CornersScreen(ModalScreen[Optional[dict]]):
         self.dismiss(self._corners)
 
 
+def _all_timing_corner_names(technology: dict) -> list[str]:
+    """Every PVT timing-corner name declared anywhere in this package,
+    across every track/vth -- corner names are universal vocabulary (the
+    same name means the same PVT skew everywhere it's used), so a
+    delay_corner only needs to reference one by name, not by track/vth.
+    Must match wolf.environment's own _collect_timing_corner_names."""
+    names: set = set()
+    for track_data in technology.get("tracks", {}).values():
+        if not isinstance(track_data, dict):
+            continue
+        for vth_data in track_data.get("vths", {}).values():
+            if not isinstance(vth_data, dict):
+                continue
+            corners = vth_data.get("timing", {})
+            corners = corners.get("corners", {}) if isinstance(corners, dict) else {}
+            if isinstance(corners, dict):
+                names.update(corners)
+    return sorted(names)
+
+
+def _all_rc_corner_names(technology: dict) -> list[str]:
+    """Every named RC-extraction corner declared anywhere in this
+    package, across every track/vth/metal-stack -- same universal-
+    vocabulary assumption as _all_timing_corner_names. Must match
+    wolf.environment's own _collect_rc_corner_names."""
+    names: set = set()
+    for track_data in technology.get("tracks", {}).values():
+        if not isinstance(track_data, dict):
+            continue
+        for vth_data in track_data.get("vths", {}).values():
+            if not isinstance(vth_data, dict):
+                continue
+            qrc = vth_data.get("qrc_techfiles")
+            if isinstance(qrc, dict):
+                for stack_corners in qrc.values():
+                    if isinstance(stack_corners, dict):
+                        names.update(stack_corners)
+    return sorted(names)
+
+
+def _all_delay_corner_names(technology: dict) -> list[str]:
+    delay_corners = technology.get("delay_corners", {})
+    return sorted(delay_corners) if isinstance(delay_corners, dict) else []
+
+
+class _OpcondsScreen(ModalScreen[Optional[dict]]):
+    """Edit the named operating conditions (create_opcond's own process/
+    voltage/temperature) a timing corner may optionally reference. Real
+    .lib files almost always embed this already (confirmed unused in a
+    real legacy flow this schema is modeled on), so this exists for
+    completeness -- declared once, optionally linked from elsewhere --
+    not because every corner needs one."""
+
+    BINDINGS = [
+        ("a", "add", "Add opcond"),
+        ("d", "delete", "Delete opcond"),
+        ("escape", "done", "Done"),
+    ]
+
+    def __init__(self, title: str, opconds: dict):
+        super().__init__()
+        self._title = title
+        self._opconds = dict(opconds)
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="dialog"):
+            yield Static(self._title, id="dialog-title")
+            yield OptionList(*self._options())
+            yield Static(self._hint(), id="dialog-hint")
+
+    def _options(self) -> list[Option]:
+        if not self._opconds:
+            return [Option("(none yet -- press a to add)", id="__empty__", disabled=True)]
+        return [
+            Option(
+                f"{name} (process={data.get('process', '?')}, voltage={data.get('voltage', '?')}, "
+                f"temperature={data.get('temperature', '?')})",
+                id=name,
+            )
+            for name, data in self._opconds.items()
+        ]
+
+    def _hint(self) -> str:
+        return f"{len(self._opconds)} opcond(s) — enter: edit — a: add — d: delete highlighted — esc: done"
+
+    def _refresh(self) -> None:
+        option_list = self.query_one(OptionList)
+        option_list.clear_options()
+        for option in self._options():
+            option_list.add_option(option)
+        self.query_one("#dialog-hint", Static).update(self._hint())
+
+    def _edit(self, name: str) -> None:
+        def handle(data: Optional[dict]) -> None:
+            if data is not None:
+                self._opconds[name] = data
+                self._refresh()
+        self.app.push_screen(_OpcondEditScreen(name, self._opconds.get(name, {})), handle)
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        event.stop()
+        if event.option_id and event.option_id != "__empty__":
+            self._edit(event.option_id)
+
+    def action_add(self) -> None:
+        def handle(name: Optional[str]) -> None:
+            if not name:
+                return
+            if name in self._opconds:
+                self.app.notify(f"Opcond {name!r} already exists.", severity="warning")
+                return
+            self._opconds[name] = {}
+            self._refresh()
+            self._edit(name)
+        self.app.push_screen(_TextScreen("Opcond name (e.g. typ_1p2_25c)"), handle)
+
+    def action_delete(self) -> None:
+        option_list = self.query_one(OptionList)
+        if option_list.highlighted is None or not self._opconds:
+            return
+        name = list(self._opconds)[option_list.highlighted]
+        del self._opconds[name]
+        self._refresh()
+
+    def action_done(self) -> None:
+        self.dismiss(self._opconds)
+
+
+class _OpcondEditScreen(ModalScreen[Optional[dict]]):
+    """Edit one opcond's process/voltage/temperature -- free-text fields,
+    since create_opcond's own values and units vary (e.g. 1.0 vs 1, 25
+    vs "25C")."""
+
+    BINDINGS = [("escape", "done", "Done")]
+
+    def __init__(self, name: str, data: dict):
+        super().__init__()
+        self._name = name
+        self._data = dict(data)
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="dialog"):
+            yield Static(self._name, id="dialog-title")
+            yield OptionList(*self._options())
+            yield Static("enter: edit field — esc: done", id="dialog-hint")
+
+    def _options(self) -> list[Option]:
+        return [
+            Option(f"Process: {self._data.get('process', 'unset')}", id="process"),
+            Option(f"Voltage: {self._data.get('voltage', 'unset')}", id="voltage"),
+            Option(f"Temperature: {self._data.get('temperature', 'unset')}", id="temperature"),
+        ]
+
+    def _refresh(self) -> None:
+        option_list = self.query_one(OptionList)
+        option_list.clear_options()
+        for option in self._options():
+            option_list.add_option(option)
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        event.stop()
+        field = event.option_id
+
+        def handle(value: Optional[str]) -> None:
+            if value is not None:
+                self._data[field] = value
+                self._refresh()
+        self.app.push_screen(_TextScreen(f"{field.title()} value", str(self._data.get(field, ""))), handle)
+
+    def action_done(self) -> None:
+        self.dismiss(self._data)
+
+
+class _DelayCornersScreen(ModalScreen[Optional[dict]]):
+    """Edit the named delay corners a package declares -- each one a
+    pairing of a declared PVT timing-corner name and a declared RC-
+    extraction-corner name, the exact pairing a real delay_corner is
+    (one rc_corner, one timing_condition). Creating one requires at
+    least one of each to already exist -- an empty picker warns and
+    aborts rather than letting you reference a name that doesn't exist
+    yet, the same linked-dependency guard _AnalysisViewsScreen applies
+    one level up."""
+
+    BINDINGS = [
+        ("a", "add", "Add delay corner"),
+        ("d", "delete", "Delete delay corner"),
+        ("escape", "done", "Done"),
+    ]
+
+    def __init__(self, title: str, technology: dict, delay_corners: dict):
+        super().__init__()
+        self._title = title
+        self._technology = technology
+        self._delay_corners = dict(delay_corners)
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="dialog"):
+            yield Static(self._title, id="dialog-title")
+            yield OptionList(*self._options())
+            yield Static(self._hint(), id="dialog-hint")
+
+    def _options(self) -> list[Option]:
+        if not self._delay_corners:
+            return [Option("(none yet -- press a to add)", id="__empty__", disabled=True)]
+        return [
+            Option(
+                f"{name} (timing_corner={data.get('timing_corner', '?')}, "
+                f"rc_corner={data.get('rc_corner', '?')})",
+                id=name,
+            )
+            for name, data in self._delay_corners.items()
+        ]
+
+    def _hint(self) -> str:
+        return (
+            f"{len(self._delay_corners)} delay corner(s) — enter: edit — a: add — "
+            f"d: delete highlighted — esc: done"
+        )
+
+    def _refresh(self) -> None:
+        option_list = self.query_one(OptionList)
+        option_list.clear_options()
+        for option in self._options():
+            option_list.add_option(option)
+        self.query_one("#dialog-hint", Static).update(self._hint())
+
+    def _pick_pairing(self, on_done) -> None:
+        timing_names = _all_timing_corner_names(self._technology)
+        if not timing_names:
+            self.app.notify(
+                "No timing corners declared yet -- add one under Tracks or Front-End "
+                "before creating a delay corner.", severity="warning",
+            )
+            return
+        rc_names = _all_rc_corner_names(self._technology)
+        if not rc_names:
+            self.app.notify(
+                "No RC-extraction corners declared yet -- add one under Back-End / LEF "
+                "/ Techfiles before creating a delay corner.", severity="warning",
+            )
+            return
+
+        def handle_timing(timing_corner: Optional[str]) -> None:
+            if timing_corner is None:
+                return
+
+            def handle_rc(rc_corner: Optional[str]) -> None:
+                if rc_corner is None:
+                    return
+                on_done({"timing_corner": timing_corner, "rc_corner": rc_corner})
+            self.app.push_screen(
+                _PickScreen("RC-extraction corner", [(n, n) for n in rc_names]), handle_rc,
+            )
+        self.app.push_screen(
+            _PickScreen("PVT timing corner", [(n, n) for n in timing_names]), handle_timing,
+        )
+
+    def _edit(self, name: str) -> None:
+        def handle(data: dict) -> None:
+            self._delay_corners[name] = data
+            self._refresh()
+        self._pick_pairing(handle)
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        event.stop()
+        if event.option_id and event.option_id != "__empty__":
+            self._edit(event.option_id)
+
+    def action_add(self) -> None:
+        def handle(name: Optional[str]) -> None:
+            if not name:
+                return
+            if name in self._delay_corners:
+                self.app.notify(f"Delay corner {name!r} already exists.", severity="warning")
+                return
+            self._edit(name)
+        self.app.push_screen(_TextScreen("Delay corner name (e.g. wc_rcworst)"), handle)
+
+    def action_delete(self) -> None:
+        option_list = self.query_one(OptionList)
+        if option_list.highlighted is None or not self._delay_corners:
+            return
+        name = list(self._delay_corners)[option_list.highlighted]
+        del self._delay_corners[name]
+        self._refresh()
+
+    def action_done(self) -> None:
+        self.dismiss(self._delay_corners)
+
+
+_ANALYSIS_VIEW_FLAGS = (
+    ("is_setup", "Setup"), ("is_hold", "Hold"), ("is_dynamic", "Dynamic"), ("is_leakage", "Leakage"),
+)
+
+
+class _AnalysisViewFlagsScreen(ModalScreen[dict]):
+    """Toggle which kind(s) of analysis one analysis_view drives --
+    setup/hold/dynamic/leakage, matching create_analysis_view's own
+    flags. enter toggles the highlighted flag; escape finishes with
+    whatever's currently set (even all-off, though that's unusual)."""
+
+    BINDINGS = [("escape", "done", "Done")]
+
+    def __init__(self, title: str, data: dict):
+        super().__init__()
+        self._title = title
+        self._flags = {key: bool(data.get(key, False)) for key, _ in _ANALYSIS_VIEW_FLAGS}
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="dialog"):
+            yield Static(self._title, id="dialog-title")
+            yield OptionList(*self._options())
+            yield Static("enter: toggle highlighted — esc: done", id="dialog-hint")
+
+    def _options(self) -> list[Option]:
+        return [
+            Option(f"[{'x' if self._flags[key] else ' '}] {label}", id=key)
+            for key, label in _ANALYSIS_VIEW_FLAGS
+        ]
+
+    def _refresh(self) -> None:
+        option_list = self.query_one(OptionList)
+        highlighted = option_list.highlighted
+        option_list.clear_options()
+        for option in self._options():
+            option_list.add_option(option)
+        option_list.highlighted = highlighted
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        event.stop()
+        key = event.option_id
+        self._flags[key] = not self._flags[key]
+        self._refresh()
+
+    def action_done(self) -> None:
+        self.dismiss(self._flags)
+
+
+class _AnalysisViewsScreen(ModalScreen[Optional[dict]]):
+    """Edit the named analysis views a package declares -- each one a
+    declared delay_corner plus which kind(s) of analysis it drives,
+    matching create_analysis_view's own flags. constraint_mode is
+    deliberately not here: it's a design-level pairing (which SDC a view
+    uses), resolved at run time from the environment, not declared
+    statically per PDK."""
+
+    BINDINGS = [
+        ("a", "add", "Add analysis view"),
+        ("d", "delete", "Delete analysis view"),
+        ("escape", "done", "Done"),
+    ]
+
+    def __init__(self, title: str, technology: dict, analysis_views: dict):
+        super().__init__()
+        self._title = title
+        self._technology = technology
+        self._analysis_views = dict(analysis_views)
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="dialog"):
+            yield Static(self._title, id="dialog-title")
+            yield OptionList(*self._options())
+            yield Static(self._hint(), id="dialog-hint")
+
+    def _flag_summary(self, data: dict) -> str:
+        active = [label for key, label in _ANALYSIS_VIEW_FLAGS if data.get(key)]
+        return "+".join(active) if active else "none"
+
+    def _options(self) -> list[Option]:
+        if not self._analysis_views:
+            return [Option("(none yet -- press a to add)", id="__empty__", disabled=True)]
+        return [
+            Option(f"{name} (delay_corner={data.get('delay_corner', '?')}, {self._flag_summary(data)})", id=name)
+            for name, data in self._analysis_views.items()
+        ]
+
+    def _hint(self) -> str:
+        return (
+            f"{len(self._analysis_views)} analysis view(s) — enter: edit — a: add — "
+            f"d: delete highlighted — esc: done"
+        )
+
+    def _refresh(self) -> None:
+        option_list = self.query_one(OptionList)
+        option_list.clear_options()
+        for option in self._options():
+            option_list.add_option(option)
+        self.query_one("#dialog-hint", Static).update(self._hint())
+
+    def _edit(self, name: str) -> None:
+        delay_corner_names = _all_delay_corner_names(self._technology)
+        if not delay_corner_names:
+            self.app.notify(
+                "No delay corners declared yet -- add one under Signoff / Delay corners "
+                "before creating an analysis view.", severity="warning",
+            )
+            return
+
+        def handle_delay_corner(delay_corner: Optional[str]) -> None:
+            if delay_corner is None:
+                return
+            existing = self._analysis_views.get(name, {})
+
+            def handle_flags(flags: dict) -> None:
+                self._analysis_views[name] = {"delay_corner": delay_corner, **flags}
+                self._refresh()
+            self.app.push_screen(_AnalysisViewFlagsScreen(f"{name} flags", existing), handle_flags)
+        self.app.push_screen(
+            _PickScreen("Delay corner", [(n, n) for n in delay_corner_names]), handle_delay_corner,
+        )
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        event.stop()
+        if event.option_id and event.option_id != "__empty__":
+            self._edit(event.option_id)
+
+    def action_add(self) -> None:
+        def handle(name: Optional[str]) -> None:
+            if not name:
+                return
+            if name in self._analysis_views:
+                self.app.notify(f"Analysis view {name!r} already exists.", severity="warning")
+                return
+            self._edit(name)
+        self.app.push_screen(_TextScreen("Analysis view name (e.g. func_setup_wc)"), handle)
+
+    def action_delete(self) -> None:
+        option_list = self.query_one(OptionList)
+        if option_list.highlighted is None or not self._analysis_views:
+            return
+        name = list(self._analysis_views)[option_list.highlighted]
+        del self._analysis_views[name]
+        self._refresh()
+
+    def action_done(self) -> None:
+        self.dismiss(self._analysis_views)
+
+
 _VTH_FILE_FIELDS = (
     ("gds", "GDS files"),
     ("verilog_models", "Verilog models"),
@@ -2299,6 +2737,9 @@ class PdkMenuApp(App[None]):
         tracks = technology.get("tracks", {})
         generic = technology.get("generic", {})
         dont_use = technology.get("synthesis", {}).get("dont_use", [])
+        opconds = technology.get("opconds", {})
+        delay_corners = technology.get("delay_corners", {})
+        analysis_views = technology.get("analysis_views", {})
         options = [
             Option(f"Revision: {source.get('revision', 'unset')}", id="revision"),
             Option(f"License name: {self._data.get('license', {}).get('name', 'not set')}", id="license"),
@@ -2311,6 +2752,11 @@ class PdkMenuApp(App[None]):
             Option(f"Tracks ({len(tracks)} track/vth group(s))", id="tracks"),
             Option("Front-End (timing/power, verilog)", id="front_end"),
             Option("Back-End (LEF, GDS, techfiles, SPICE)", id="back_end"),
+            Option(
+                f"Signoff ({len(opconds)} opcond(s), {len(delay_corners)} delay corner(s), "
+                f"{len(analysis_views)} analysis view(s))",
+                id="signoff",
+            ),
             Option(f"Generic / other fields ({len(generic)} key(s), edit as YAML)", id="generic"),
             Option(f"Synthesis dont_use cells ({len(dont_use)})", id="dont_use"),
             Option(
@@ -2345,6 +2791,8 @@ class PdkMenuApp(App[None]):
             self._edit_front_end()
         elif choice == "back_end":
             self._edit_back_end()
+        elif choice == "signoff":
+            self._edit_signoff()
         elif choice == "generic":
             self._edit_generic()
         elif choice == "dont_use":
@@ -2476,6 +2924,73 @@ class PdkMenuApp(App[None]):
         _loop_fixed_choice(self, f"{breadcrumb} / LEF\nPick LEF files or techfiles", [
             ("LEF files", "lef"), ("Techfiles (QRC captables)", "techfiles"),
         ], do_choice, on_return)
+
+    def _edit_signoff(self) -> None:
+        """Mirrors the real MMMC object chain (opconds -> delay corners ->
+        analysis views, each referencing declared timing/rc corner names
+        by name) as a static, fully-declared catalog -- the dynamic part
+        (which of these actually drive a given run) is an environment-
+        level concern, not edited here. Loops the same way Front-End/
+        Back-End do."""
+        def do_category(choice: str, resume_category) -> None:
+            if choice == "opconds":
+                self._edit_opconds(resume_category)
+            elif choice == "delay_corners":
+                self._edit_delay_corners(resume_category)
+            elif choice == "analysis_views":
+                self._edit_analysis_views(resume_category)
+        _loop_fixed_choice(self, f"{self._name} / Signoff\nPick a category", [
+            ("Opconds (optional, process/voltage/temperature)", "opconds"),
+            ("Delay corners (PVT corner + RC corner pairing)", "delay_corners"),
+            ("Analysis views (delay corner + setup/hold/dynamic/leakage)", "analysis_views"),
+        ], do_category, lambda: None)
+
+    def _edit_opconds(self, on_return) -> None:
+        def handle(opconds: Optional[dict]) -> None:
+            if opconds is not None:
+                if opconds:
+                    self._technology["opconds"] = opconds
+                else:
+                    self._technology.pop("opconds", None)
+                self._refresh()
+            on_return()
+        self.push_screen(
+            _OpcondsScreen(f"{self._name} / Signoff / Opconds", self._technology.get("opconds", {})), handle,
+        )
+
+    def _edit_delay_corners(self, on_return) -> None:
+        def handle(delay_corners: Optional[dict]) -> None:
+            if delay_corners is not None:
+                if delay_corners:
+                    self._technology["delay_corners"] = delay_corners
+                else:
+                    self._technology.pop("delay_corners", None)
+                self._refresh()
+            on_return()
+        self.push_screen(
+            _DelayCornersScreen(
+                f"{self._name} / Signoff / Delay corners", self._technology,
+                self._technology.get("delay_corners", {}),
+            ),
+            handle,
+        )
+
+    def _edit_analysis_views(self, on_return) -> None:
+        def handle(analysis_views: Optional[dict]) -> None:
+            if analysis_views is not None:
+                if analysis_views:
+                    self._technology["analysis_views"] = analysis_views
+                else:
+                    self._technology.pop("analysis_views", None)
+                self._refresh()
+            on_return()
+        self.push_screen(
+            _AnalysisViewsScreen(
+                f"{self._name} / Signoff / Analysis views", self._technology,
+                self._technology.get("analysis_views", {}),
+            ),
+            handle,
+        )
 
     def _edit_dont_use(self) -> None:
         synthesis = self._technology.setdefault("synthesis", {})

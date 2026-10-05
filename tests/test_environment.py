@@ -803,5 +803,101 @@ class MetalStackTests(DeclarativeEnvironmentTests):
             )
 
 
+class SignoffCatalogTests(DeclarativeEnvironmentTests):
+    """opconds -> delay_corners -> analysis_views: a static catalog
+    mirroring the real MMMC object chain, each referencing the declared
+    ones before it by name only -- the dynamic part (which actually
+    drives a given run) is an environment-level concern this doesn't
+    cover."""
+
+    def _write_file(self, name, package="tsmc65-signoff"):
+        path = self.state / "packages" / "pdk" / package / "pdk-rev" / "source" / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"-- {name} --\n", encoding="utf-8")
+        return path
+
+    def _signoff_package(self, *, delay_corners=None, analysis_views=None, opconds=None):
+        technology = {
+            "name": "tsmc65-signoff",
+            "tracks": {"9T": {"vths": {"lvt": {
+                "qrc_techfiles": {"9lmT2": {
+                    "rcbest": ["qrc/rcbest.captable"], "rcworst": ["qrc/rcworst.captable"],
+                }},
+                "timing": {"corners": {
+                    "bc": {"libraries": ["lib/bc.lib"]}, "wc": {"libraries": ["lib/wc.lib"]},
+                }},
+            }}}},
+        }
+        if opconds is not None:
+            technology["opconds"] = opconds
+        if delay_corners is not None:
+            technology["delay_corners"] = delay_corners
+        if analysis_views is not None:
+            technology["analysis_views"] = analysis_views
+        self._package("pdk", "tsmc65-signoff", "pdk-rev", {"technology": technology})
+        for relative in ("qrc/rcbest.captable", "qrc/rcworst.captable", "lib/bc.lib", "lib/wc.lib"):
+            self._write_file(relative)
+
+    def _resolve(self):
+        text = self._complete_yaml().replace(
+            "package: pdk/asap7", "package: pdk/tsmc65-signoff\n  metal_stack: 9lmT2",
+        )
+        return resolve_declarative_environment(
+            load_environment(self._write(text, "signoff.yaml")),
+            state_root=self.state, environment_directory=self.environment,
+        )
+
+    def test_full_catalog_resolves_and_links_by_name(self):
+        self._signoff_package(
+            opconds={"typ_25c": {"process": "1.0", "voltage": "1.2", "temperature": "25"}},
+            delay_corners={
+                "wc_rcworst": {"timing_corner": "wc", "rc_corner": "rcworst"},
+                "bc_rcbest": {"timing_corner": "bc", "rc_corner": "rcbest"},
+            },
+            analysis_views={
+                "func_setup_wc": {"delay_corner": "wc_rcworst", "is_setup": True},
+                "func_hold_bc": {"delay_corner": "bc_rcbest", "is_hold": True},
+            },
+        )
+        context = self._resolve()
+        opconds = {o.name: o for o in context.technology.catalog_opconds}
+        self.assertEqual(opconds["typ_25c"].voltage, "1.2")
+        delay_corners = {d.name: d for d in context.technology.catalog_delay_corners}
+        self.assertEqual(delay_corners["wc_rcworst"].rc_corner, "rcworst")
+        views = {v.name: v for v in context.technology.catalog_analysis_views}
+        self.assertTrue(views["func_setup_wc"].is_setup)
+        self.assertEqual(views["func_setup_wc"].delay_corner, "wc_rcworst")
+        self.assertFalse(views["func_hold_bc"].is_setup)
+        self.assertTrue(views["func_hold_bc"].is_hold)
+
+    def test_no_signoff_declared_resolves_to_empty_catalog(self):
+        self._signoff_package()
+        context = self._resolve()
+        self.assertEqual(context.technology.catalog_opconds, ())
+        self.assertEqual(context.technology.catalog_delay_corners, ())
+        self.assertEqual(context.technology.catalog_analysis_views, ())
+
+    def test_delay_corner_referencing_undeclared_timing_corner_is_rejected(self):
+        self._signoff_package(delay_corners={
+            "bogus": {"timing_corner": "nope", "rc_corner": "rcworst"},
+        })
+        with self.assertRaisesRegex(ValueError, "is not a declared timing corner"):
+            self._resolve()
+
+    def test_delay_corner_referencing_undeclared_rc_corner_is_rejected(self):
+        self._signoff_package(delay_corners={
+            "bogus": {"timing_corner": "wc", "rc_corner": "nope"},
+        })
+        with self.assertRaisesRegex(ValueError, "is not a declared RC-extraction corner"):
+            self._resolve()
+
+    def test_analysis_view_referencing_undeclared_delay_corner_is_rejected(self):
+        self._signoff_package(analysis_views={
+            "bogus": {"delay_corner": "nope", "is_setup": True},
+        })
+        with self.assertRaisesRegex(ValueError, "is not a declared delay corner"):
+            self._resolve()
+
+
 if __name__ == "__main__":
     unittest.main()

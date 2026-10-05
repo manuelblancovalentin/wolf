@@ -89,6 +89,48 @@ class ResolvedQrcCorner:
 
 
 @dataclass(frozen=True)
+class ResolvedOpcond:
+    """One named operating condition (create_opcond's own process/
+    voltage/temperature) a timing corner may optionally reference --
+    metadata for library sets that don't already embed it. Real .lib
+    files almost always embed this already, so most packages declare
+    none at all; this exists for the PDKs/corners that do need it."""
+
+    name: str
+    process: Optional[str] = None
+    voltage: Optional[str] = None
+    temperature: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class ResolvedDelayCorner:
+    """One named MMMC delay corner: a declared PVT timing-corner name
+    paired with a declared RC-extraction-corner name -- the exact pairing
+    a real delay_corner is (one rc_corner, one timing_condition), kept as
+    a static, fully-declared catalog entry rather than computed per run."""
+
+    name: str
+    timing_corner: str
+    rc_corner: str
+
+
+@dataclass(frozen=True)
+class ResolvedAnalysisView:
+    """One named MMMC analysis view: a declared delay corner plus which
+    kind(s) of analysis it drives (create_analysis_view's own -setup/
+    -hold/-dynamic/-leakage flags). constraint_mode is deliberately not
+    part of this -- it's a design-level pairing (which SDC a view uses),
+    resolved at run time from the environment, not a PDK fact."""
+
+    name: str
+    delay_corner: str
+    is_setup: bool = False
+    is_hold: bool = False
+    is_dynamic: bool = False
+    is_leakage: bool = False
+
+
+@dataclass(frozen=True)
 class CatalogLibrarySet:
     """One (corner, track, vth)'s own library files -- the full cross
     product a tracked technology package declares, not just the one
@@ -155,6 +197,9 @@ class ResolvedTechnology:
     catalog_library_sets: tuple[CatalogLibrarySet, ...] = ()
     catalog_lef_files: tuple[CatalogFileList, ...] = ()
     catalog_gds_files: tuple[CatalogFileList, ...] = ()
+    catalog_opconds: tuple[ResolvedOpcond, ...] = ()
+    catalog_delay_corners: tuple[ResolvedDelayCorner, ...] = ()
+    catalog_analysis_views: tuple[ResolvedAnalysisView, ...] = ()
 
 
 @dataclass(frozen=True)

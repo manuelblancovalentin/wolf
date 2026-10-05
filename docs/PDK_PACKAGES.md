@@ -202,6 +202,66 @@ the same shape a flat package produces (`timing_corners`, `technology_lefs`,
 `gds_files`, ...), so nothing downstream (the Genus MMMC generation, say)
 needs to know which shape a package was declared in.
 
+### Signoff: `opconds`, `delay_corners`, `analysis_views`
+
+The real Cadence MMMC object chain is `library_set` (a timing corner's
+own `.lib` files, already covered above) → `timing_condition` → one
+`opcond` (optional) → `delay_corner` (one RC-extraction corner paired
+with one timing condition) → `analysis_view` (one delay corner plus which
+kind of analysis it drives, against a design's own constraint mode). Most
+of that chain turns out to be a PDK fact, not a per-run one -- which PVT
+corner pairs with which RC corner for signoff is fixed for a given
+process, not something that changes design to design -- so it's declared
+once here, at the top of `technology`, the same way `timing.corners` and
+`qrc_techfiles`' rc-corner names already are:
+
+```yaml
+technology:
+  opconds:
+    typ_25c: {process: "1.0", voltage: "1.2", temperature: "25"}
+  delay_corners:
+    wc_rcworst: {timing_corner: wc, rc_corner: rcworst}
+    bc_rcbest: {timing_corner: bc, rc_corner: rcbest}
+  analysis_views:
+    func_setup_wc: {delay_corner: wc_rcworst, is_setup: true}
+    func_hold_bc: {delay_corner: bc_rcbest, is_hold: true}
+```
+
+Each level references the one below it **by name only** -- `opconds` is
+free-standing (optional metadata most real `.lib` files already embed, so
+most packages declare none at all), `delay_corners` references an already-
+declared PVT timing-corner name and RC-extraction-corner name, and
+`analysis_views` references an already-declared `delay_corners` name plus
+`create_analysis_view`'s own `is_setup`/`is_hold`/`is_dynamic`/`is_leakage`
+flags. `constraint_mode` is deliberately not part of an `analysis_view`
+here -- which SDC a view uses is a design-level pairing, resolved at run
+time from the environment (via WOLF's existing `inputs/constraints/
+${design_name}.sdc` convention), not a PDK fact.
+
+Resolution rejects a `delay_corners` entry referencing a timing-corner or
+rc-corner name that isn't actually declared anywhere in the package, and
+an `analysis_views` entry referencing an undeclared `delay_corners` name
+-- a real authoring mistake, not something to silently resolve around.
+A package with none of these declared (the common case -- most runs don't
+need MMMC at all) resolves to empty catalogs, at no cost.
+
+`wolf pdk menu`'s main menu has a **Signoff** entry for all three, each a
+simple named-entry list (`a` add, `d` delete, `enter` edit, `esc` done).
+Creating a `delay_corners` entry walks you through picking its timing
+corner, then its rc corner, from whatever's actually declared elsewhere
+in the package; creating an `analysis_views` entry walks you through
+picking its delay corner, then toggling setup/hold/dynamic/leakage. If
+the prerequisite level is empty (no timing/rc corners declared yet, for
+a delay corner; no delay corners declared yet, for an analysis view),
+`a` warns and aborts rather than letting you reference something that
+doesn't exist -- go declare that first.
+
+This is the static half of signoff. The dynamic half -- which of the
+declared `analysis_views` actually drive a given run -- is meant to be
+an environment-level `wolf.yaml` selection (a list of names into this
+catalog, defaulting to "all" if omitted), not edited here; that half is
+not yet implemented.
+
 ### `generic`: whatever doesn't depend on track/vth
 
 Some real fields genuinely don't vary by track or vth at all -- a GDS

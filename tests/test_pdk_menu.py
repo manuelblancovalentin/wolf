@@ -594,6 +594,169 @@ class PdkMenuEndToEndTests(unittest.TestCase):
         # The source rc-corner is untouched by cloning it.
         self.assertEqual(qrc["6lmT1"]["cbest"], ["qrc/9t_rvt_6lmT1_cbest.captable"])
 
+    def test_signoff_delay_corner_and_analysis_view_require_their_prerequisites(self):
+        """Creating a delay corner with no timing/rc corners declared, or
+        an analysis view with no delay corners declared, must not silently
+        create a reference to something that doesn't exist -- the add flow
+        warns and leaves the list untouched, the same linked-dependency
+        guard the whole opconds -> delay_corners -> analysis_views chain
+        relies on."""
+        data = _default_document("smoketest", str(self.root / "libroot"))
+
+        async def drive():
+            app = PdkMenuApp("smoketest", self.manifest_path, data, is_new=True)
+            async with app.run_test() as pilot:
+                main_list = app.query_one(OptionList)
+                self._select(main_list, "Signoff (0 opcond(s), 0 delay corner(s), 0 analysis view(s))")
+                await pilot.press("enter")
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "Delay corners (PVT corner + RC corner pairing)")
+                await pilot.press("enter")
+                await pilot.pause()
+                depth_before = len(app.screen_stack)
+                await pilot.press("a")
+                await pilot.pause()
+                app.screen.query_one(Input).value = "wc_rcworst"
+                await pilot.press("enter")
+                await pilot.pause()
+                # No timing/rc corners exist -- nothing pushed, nothing added.
+                self.assertEqual(len(app.screen_stack), depth_before)
+                hint = app.screen.query_one("#dialog-hint", Static).content
+                self.assertIn("0 delay corner(s)", hint)
+                await pilot.press("escape")  # back to Signoff
+                await pilot.pause()
+                self._select(
+                    app.screen.query_one(OptionList),
+                    "Analysis views (delay corner + setup/hold/dynamic/leakage)",
+                )
+                await pilot.press("enter")
+                await pilot.pause()
+                depth_before = len(app.screen_stack)
+                await pilot.press("a")
+                await pilot.pause()
+                app.screen.query_one(Input).value = "func_setup_wc"
+                await pilot.press("enter")
+                await pilot.pause()
+                # No delay corners exist -- nothing pushed, nothing added.
+                self.assertEqual(len(app.screen_stack), depth_before)
+                hint = app.screen.query_one("#dialog-hint", Static).content
+                self.assertIn("0 analysis view(s)", hint)
+
+        asyncio.run(drive())
+
+    def test_signoff_links_opconds_delay_corners_and_analysis_views(self):
+        """The full chain, built through the real screens: an opcond, a
+        delay corner picking a declared timing corner and rc corner by
+        name, and an analysis view picking that declared delay corner and
+        toggling setup on -- each level only offered what the level below
+        it had actually declared."""
+        data = _default_document("smoketest", str(self.root / "libroot"))
+        data["metadata"]["technology"]["tracks"] = {"9T": {"vths": {"rvt": {
+            "timing": {"corners": {
+                "bc": {"libraries": ["lib/typical.lib"]}, "wc": {"libraries": ["lib/worst.lib"]},
+            }},
+            "qrc_techfiles": {"6lmT1": {
+                "rcbest": ["qrc/rcbest.captable"], "rcworst": ["qrc/rcworst.captable"],
+            }},
+        }}}}
+
+        async def drive():
+            app = PdkMenuApp("smoketest", self.manifest_path, data, is_new=True)
+            async with app.run_test() as pilot:
+                main_list = app.query_one(OptionList)
+                self._select(main_list, "Signoff (0 opcond(s), 0 delay corner(s), 0 analysis view(s))")
+                await pilot.press("enter")
+                await pilot.pause()
+
+                # Opconds.
+                self._select(app.screen.query_one(OptionList), "Opconds (optional, process/voltage/temperature)")
+                await pilot.press("enter")
+                await pilot.pause()
+                await pilot.press("a")
+                await pilot.pause()
+                app.screen.query_one(Input).value = "typ_25c"
+                await pilot.press("enter")  # lands on _OpcondEditScreen
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "Process: unset")
+                await pilot.press("enter")
+                await pilot.pause()
+                app.screen.query_one(Input).value = "1.0"
+                await pilot.press("enter")
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "Voltage: unset")
+                await pilot.press("enter")
+                await pilot.pause()
+                app.screen.query_one(Input).value = "1.2"
+                await pilot.press("enter")
+                await pilot.pause()
+                await pilot.press("escape")  # done editing opcond
+                await pilot.pause()
+                await pilot.press("escape")  # done with opconds list
+                await pilot.pause()
+
+                # Delay corners -- picks declared timing/rc corner names.
+                self._select(app.screen.query_one(OptionList), "Delay corners (PVT corner + RC corner pairing)")
+                await pilot.press("enter")
+                await pilot.pause()
+                await pilot.press("a")
+                await pilot.pause()
+                app.screen.query_one(Input).value = "wc_rcworst"
+                await pilot.press("enter")
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "wc")
+                await pilot.press("enter")
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "rcworst")
+                await pilot.press("enter")
+                await pilot.pause()
+                await pilot.press("escape")  # done with delay corners list
+                await pilot.pause()
+
+                # Analysis views -- picks the declared delay corner, toggles setup.
+                self._select(
+                    app.screen.query_one(OptionList),
+                    "Analysis views (delay corner + setup/hold/dynamic/leakage)",
+                )
+                await pilot.press("enter")
+                await pilot.pause()
+                await pilot.press("a")
+                await pilot.pause()
+                app.screen.query_one(Input).value = "func_setup_wc"
+                await pilot.press("enter")
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "wc_rcworst")
+                await pilot.press("enter")
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "[ ] Setup")
+                await pilot.press("enter")
+                await pilot.pause()
+                await pilot.press("escape")  # done toggling flags
+                await pilot.pause()
+                await pilot.press("escape")  # done with analysis views list
+                await pilot.pause()
+
+                while len(app.screen_stack) > 1:
+                    await pilot.press("escape")
+                    await pilot.pause()
+                await pilot.press("s")
+                await pilot.pause()
+
+        asyncio.run(drive())
+
+        document = yaml.safe_load(self.manifest_path.read_text(encoding="utf-8"))
+        technology = document["metadata"]["technology"]
+        self.assertEqual(
+            technology["opconds"]["typ_25c"], {"process": "1.0", "voltage": "1.2"},
+        )
+        self.assertEqual(
+            technology["delay_corners"]["wc_rcworst"], {"timing_corner": "wc", "rc_corner": "rcworst"},
+        )
+        self.assertEqual(
+            technology["analysis_views"]["func_setup_wc"],
+            {"delay_corner": "wc_rcworst", "is_setup": True, "is_hold": False,
+             "is_dynamic": False, "is_leakage": False},
+        )
+
     def test_front_end_corner_picker_deletes_an_entry_in_place(self):
         """A legacy corner (renamed away from, e.g. PVT_1P08V_25C once its
         real PVT code is known) has no other way to be removed from the

@@ -15,8 +15,9 @@ from typing import Any, Mapping, Optional
 import yaml
 
 from wolf.context import (
-    CatalogFileList, CatalogLibrarySet, ResolvedContext, ResolvedQrcCorner, ResolvedSource,
-    ResolvedTechnology, ResolvedTimingCorner, resolve_stored_path,
+    CatalogFileList, CatalogLibrarySet, ResolvedAnalysisView, ResolvedContext, ResolvedDelayCorner,
+    ResolvedOpcond, ResolvedQrcCorner, ResolvedSource, ResolvedTechnology, ResolvedTimingCorner,
+    resolve_stored_path,
 )
 from wolf.package.model import PackageId
 from wolf.package.registry import PackageRegistry
@@ -370,9 +371,15 @@ def _parse_timing_corners(
 
 
 # A flat (no tracks) technology's timing/physical keys, kept exactly as before.
-_FLAT_TECHNOLOGY_FIELDS = {"name", "timing", "physical", "synthesis", "setup_yaml_fragment"}
+_FLAT_TECHNOLOGY_FIELDS = {
+    "name", "timing", "physical", "synthesis", "setup_yaml_fragment",
+    "opconds", "delay_corners", "analysis_views",
+}
 # A multi-track technology's own top-level keys.
-_TRACKED_TECHNOLOGY_FIELDS = {"name", "tracks", "generic", "synthesis", "setup_yaml_fragment"}
+_TRACKED_TECHNOLOGY_FIELDS = {
+    "name", "tracks", "generic", "synthesis", "setup_yaml_fragment",
+    "opconds", "delay_corners", "analysis_views",
+}
 
 
 # gds is deliberately not here: a cell's own GDS geometry lives on the
@@ -715,6 +722,118 @@ def _select_track_vth(
     return requested_track, requested_vth, track_data["vths"][requested_vth]
 
 
+def _collect_timing_corner_names(tracks: Mapping[str, Any]) -> frozenset:
+    """Every PVT timing-corner name declared anywhere across a tracked
+    package's tracks/vths -- corner names are universal vocabulary (the
+    same name means the same PVT skew everywhere it's used), which is
+    what lets a delay_corner reference one by name alone, not by
+    track/vth."""
+    names: set = set()
+    for track_data in tracks.values():
+        if not isinstance(track_data, dict):
+            continue
+        for vth_data in track_data.get("vths", {}).values():
+            if not isinstance(vth_data, dict):
+                continue
+            corners = vth_data.get("timing", {})
+            corners = corners.get("corners", {}) if isinstance(corners, dict) else {}
+            if isinstance(corners, dict):
+                names.update(corners)
+    return frozenset(names)
+
+
+def _collect_rc_corner_names(tracks: Mapping[str, Any]) -> frozenset:
+    """Every named RC-extraction corner declared anywhere across a
+    tracked package's tracks/vths/metal-stacks -- same universal-
+    vocabulary assumption as _collect_timing_corner_names."""
+    names: set = set()
+    for track_data in tracks.values():
+        if not isinstance(track_data, dict):
+            continue
+        for vth_data in track_data.get("vths", {}).values():
+            if not isinstance(vth_data, dict):
+                continue
+            qrc = vth_data.get("qrc_techfiles")
+            if isinstance(qrc, dict):
+                for stack_corners in qrc.values():
+                    if isinstance(stack_corners, dict):
+                        names.update(stack_corners)
+    return frozenset(names)
+
+
+def _build_signoff_catalog(
+    metadata: Mapping[str, Any], timing_corner_names: frozenset, rc_corner_names: frozenset,
+) -> tuple[tuple[ResolvedOpcond, ...], tuple[ResolvedDelayCorner, ...], tuple[ResolvedAnalysisView, ...]]:
+    """Resolve the static opconds -> delay_corners -> analysis_views
+    catalog (see wolf.context's own docstrings for what each represents),
+    each referencing the declared ones before it by name only -- mirrors
+    the real MMMC object hierarchy (library_set/timing_condition ->
+    delay_corner -> analysis_view) as a fully-declared, run-independent
+    catalog. The dynamic part -- which analysis_views actually drive a
+    given run -- is an environment-level concern, not resolved here.
+
+    Validated eagerly: a delay_corner referencing a timing_corner/
+    rc_corner name that isn't actually declared anywhere in this
+    package, or an analysis_view referencing an undeclared delay_corner,
+    is a real authoring mistake (the same severity wolf_pdk_menu's own
+    "empty list, must create one first" guard exists to prevent while
+    editing), not something to silently resolve around.
+    """
+    opconds_data = metadata.get("opconds", {})
+    if not isinstance(opconds_data, dict):
+        raise ValueError("technology.opconds must be a mapping")
+    opconds: list[ResolvedOpcond] = []
+    for name, data in opconds_data.items():
+        if not isinstance(data, dict):
+            raise ValueError(f"technology.opconds.{name} must be a mapping")
+        opconds.append(ResolvedOpcond(
+            name=name, process=data.get("process"), voltage=data.get("voltage"),
+            temperature=data.get("temperature"),
+        ))
+
+    delay_corners_data = metadata.get("delay_corners", {})
+    if not isinstance(delay_corners_data, dict):
+        raise ValueError("technology.delay_corners must be a mapping")
+    delay_corners: list[ResolvedDelayCorner] = []
+    for name, data in delay_corners_data.items():
+        if not isinstance(data, dict):
+            raise ValueError(f"technology.delay_corners.{name} must be a mapping")
+        timing_corner = data.get("timing_corner")
+        rc_corner = data.get("rc_corner")
+        if not timing_corner or timing_corner not in timing_corner_names:
+            raise ValueError(
+                f"technology.delay_corners.{name}.timing_corner {timing_corner!r} is not a "
+                f"declared timing corner (available: {sorted(timing_corner_names)})"
+            )
+        if not rc_corner or rc_corner not in rc_corner_names:
+            raise ValueError(
+                f"technology.delay_corners.{name}.rc_corner {rc_corner!r} is not a declared "
+                f"RC-extraction corner (available: {sorted(rc_corner_names)})"
+            )
+        delay_corners.append(ResolvedDelayCorner(name=name, timing_corner=timing_corner, rc_corner=rc_corner))
+    delay_corner_names = frozenset(dc.name for dc in delay_corners)
+
+    analysis_views_data = metadata.get("analysis_views", {})
+    if not isinstance(analysis_views_data, dict):
+        raise ValueError("technology.analysis_views must be a mapping")
+    analysis_views: list[ResolvedAnalysisView] = []
+    for name, data in analysis_views_data.items():
+        if not isinstance(data, dict):
+            raise ValueError(f"technology.analysis_views.{name} must be a mapping")
+        delay_corner = data.get("delay_corner")
+        if not delay_corner or delay_corner not in delay_corner_names:
+            raise ValueError(
+                f"technology.analysis_views.{name}.delay_corner {delay_corner!r} is not a "
+                f"declared delay corner (available: {sorted(delay_corner_names)})"
+            )
+        analysis_views.append(ResolvedAnalysisView(
+            name=name, delay_corner=delay_corner,
+            is_setup=bool(data.get("is_setup", False)), is_hold=bool(data.get("is_hold", False)),
+            is_dynamic=bool(data.get("is_dynamic", False)), is_leakage=bool(data.get("is_leakage", False)),
+        ))
+    return tuple(opconds), tuple(delay_corners), tuple(analysis_views)
+
+
 def _technology_inputs(
     manifest: Any, installed: Any, reference: Optional[ComponentReference] = None,
 ) -> Optional[ResolvedTechnology]:
@@ -762,6 +881,10 @@ def _technology_inputs(
         catalog_library_sets, catalog_lef_files, catalog_gds_files = _build_catalog(
             root, metadata["tracks"], metal_stack,
         )
+        catalog_opconds, catalog_delay_corners, catalog_analysis_views = _build_signoff_catalog(
+            metadata, _collect_timing_corner_names(metadata["tracks"]),
+            _collect_rc_corner_names(metadata["tracks"]),
+        )
     else:
         catalog_library_sets, catalog_lef_files, catalog_gds_files = (), (), ()
         metal_stack = None
@@ -792,6 +915,9 @@ def _technology_inputs(
         if not isinstance(corner, str) or not corner:
             raise ValueError("technology.timing.corner must be a nonempty string")
         all_files = (*libraries, *technology_lefs, *cell_lefs, *rc_files, *gds_files, *corner_qrc_files)
+        catalog_opconds, catalog_delay_corners, catalog_analysis_views = _build_signoff_catalog(
+            metadata, frozenset(c.name for c in timing_corners), frozenset(),
+        )
 
     setup_yaml_fragment_value = metadata.get("setup_yaml_fragment")
     setup_yaml_fragment: Optional[Path] = None
@@ -819,6 +945,8 @@ def _technology_inputs(
         setup_yaml_fragment=setup_yaml_fragment,
         catalog_library_sets=catalog_library_sets, catalog_lef_files=catalog_lef_files,
         catalog_gds_files=catalog_gds_files,
+        catalog_opconds=catalog_opconds, catalog_delay_corners=catalog_delay_corners,
+        catalog_analysis_views=catalog_analysis_views,
     )
 
 
