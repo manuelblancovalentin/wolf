@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 import hashlib
+import json
 from pathlib import Path
 import re
 try:  # Python 3.9/3.10 compatibility
@@ -22,6 +23,7 @@ from wolf.context import (
 from wolf.package.model import PackageId
 from wolf.package.registry import PackageRegistry
 from wolf.package.store import PackageStore
+from wolf.paths import cache_dir
 
 
 _ENV_VAR_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -519,6 +521,59 @@ def _catalog_stack_files(
     return None
 
 
+_CHECKSUM_CACHE_FILENAME = "technology-file-checksums.json"
+
+
+def _checksum_cache_path() -> Path:
+    return cache_dir() / _CHECKSUM_CACHE_FILENAME
+
+
+def _load_checksum_cache() -> dict[str, dict[str, Any]]:
+    try:
+        return json.loads(_checksum_cache_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def _save_checksum_cache(cache: Mapping[str, Mapping[str, Any]]) -> None:
+    path = _checksum_cache_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_suffix(".tmp")
+        temporary.write_text(json.dumps(cache), encoding="utf-8")
+        temporary.replace(path)
+    except OSError:
+        pass  # The cache is a pure speed optimization; losing it is never fatal.
+
+
+def _cached_checksums(paths: tuple[Path, ...]) -> dict[str, str]:
+    """sha256 every resolved technology file, reusing a prior result keyed
+    on (mtime, size) instead of re-reading full file content when nothing
+    has changed. These are often large PDK lef/gds/timing-library files,
+    so re-hashing all of them on every `wolf run` -- even when the
+    environment config itself hasn't changed -- is the real cost behind a
+    slow resolve; a stat-based fingerprint lets an unchanged file skip the
+    read entirely while still detecting a real edit."""
+    cache = _load_checksum_cache()
+    dirty = False
+    checksums: dict[str, str] = {}
+    for path in paths:
+        key = str(path)
+        info = path.stat()
+        fingerprint = {"mtime_ns": info.st_mtime_ns, "size": info.st_size}
+        entry = cache.get(key)
+        if entry and entry.get("mtime_ns") == fingerprint["mtime_ns"] and entry.get("size") == fingerprint["size"]:
+            checksums[key] = entry["sha256"]
+            continue
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        checksums[key] = digest
+        cache[key] = {**fingerprint, "sha256": digest}
+        dirty = True
+    if dirty:
+        _save_checksum_cache(cache)
+    return checksums
+
+
 def _build_catalog(
     root: Path, tracks: Mapping[str, Any], metal_stack: Optional[str],
 ) -> tuple[tuple[CatalogLibrarySet, ...], tuple[CatalogFileList, ...], tuple[CatalogFileList, ...]]:
@@ -976,9 +1031,7 @@ def _technology_inputs(
         setup_yaml_fragment = _paths_under(root, [setup_yaml_fragment_value], "setup_yaml_fragment")[0]
         all_files = (*all_files, setup_yaml_fragment)
 
-    checksums = {
-        str(path): hashlib.sha256(path.read_bytes()).hexdigest() for path in all_files
-    }
+    checksums = _cached_checksums(all_files)
     dont_use = synthesis.get("dont_use", [])
     if not isinstance(dont_use, list) or not all(isinstance(item, str) and item for item in dont_use):
         raise ValueError("technology.synthesis.dont_use must be a list of nonempty cell name patterns")

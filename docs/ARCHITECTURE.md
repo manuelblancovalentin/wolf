@@ -308,6 +308,8 @@ Each run directory must eventually contain a portable resolved manifest sufficie
 
 Environment and package definitions are also human-readable manifests. These files are the authoritative reproducibility record and should be safe to archive with a run.
 
+Resolving a technology's checksums (library, LEF, GDS, QRC, and similar PDK files) hashes real file content, but reuses a cached digest keyed on file size and modification time instead of re-reading unchanged files on every resolution -- a real PDK's files are large enough that re-hashing all of them on every `wolf run` would otherwise dominate resolution time even when nothing about the environment changed. The cache (under WOLF's cache directory) is a pure speed optimization: a changed file is detected and re-hashed regardless, and losing the cache never changes a resolved checksum's value, only how fast it's recomputed.
+
 The implemented declarative execution path freezes this record as
 `wolf.resolved.yaml` immediately after the legacy allocator materializes the
 exact run directory and before backend execution. It records schema
