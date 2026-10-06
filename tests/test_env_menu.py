@@ -6,9 +6,10 @@ import unittest
 from unittest.mock import patch
 
 import yaml
+from textual.app import App
 from textual.widgets import Input, OptionList, Static
 
-from wolf.env_menu import EnvWizardApp
+from wolf.env_menu import EnvWizardApp, _BrowseScreen
 
 
 class EnvWizardEndToEndTests(unittest.TestCase):
@@ -573,6 +574,70 @@ class EnvWizardEndToEndTests(unittest.TestCase):
             yaml.safe_load(record_path.read_text(encoding="utf-8")),
             document,
         )
+
+
+class BrowseManifestDetectionTests(unittest.TestCase):
+    """The regular browse-filesystem add flow (not a separate menu entry)
+    must recognize a real manifest.toml and use it as-is -- a directory
+    scan can never recover its compile order or FABULOUS_EFPGA/work
+    library split, so once one is found there is nothing a per-file scan
+    would add on top of it."""
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory(prefix="wolf-browse-manifest-")
+        self.root = Path(self.temporary.name)
+        self.design_dir = self.root / "rtl"
+        self.design_dir.mkdir()
+        (self.design_dir / "top.v").write_text("module top; endmodule\n", encoding="utf-8")
+        (self.design_dir / "manifest.toml").write_text(
+            'schema_version = 1\nname = "demo"\ntop = "top"\n', encoding="utf-8",
+        )
+
+    def tearDown(self):
+        self.temporary.cleanup()
+
+    def _run_browse(self, start: Path) -> list:
+        result: list = []
+
+        class _Harness(App):
+            def on_mount(self) -> None:
+                def handle(value) -> None:
+                    result.extend(value or [])
+                self.push_screen(_BrowseScreen(str(start), detect_manifest=True), handle)
+
+        async def drive():
+            async with _Harness().run_test() as pilot:
+                await pilot.press("a")
+                await pilot.pause()
+                await pilot.press("escape")
+                await pilot.pause()
+        asyncio.run(drive())
+        return result
+
+    def test_adding_a_directory_with_a_manifest_toml_yields_one_manifest_marker(self):
+        result = self._run_browse(self.design_dir)
+        self.assertEqual(result, [{"manifest": str((self.design_dir / "manifest.toml").resolve())}])
+
+    def test_without_detect_manifest_the_old_per_file_scan_still_runs(self):
+        result: list = []
+        design_dir = self.design_dir
+
+        class _Harness(App):
+            def on_mount(self) -> None:
+                def handle(value) -> None:
+                    result.extend(value or [])
+                self.push_screen(
+                    _BrowseScreen(str(design_dir), detect_manifest=False), handle,
+                )
+
+        async def drive():
+            async with _Harness().run_test() as pilot:
+                await pilot.press("a")
+                await pilot.pause()
+                await pilot.press("escape")
+                await pilot.pause()
+        asyncio.run(drive())
+        self.assertEqual(result, [str((self.design_dir / "top.v").resolve())])
 
 
 if __name__ == "__main__":

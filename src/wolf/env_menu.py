@@ -295,6 +295,16 @@ class _BrowseScreen(ModalScreen[Optional[list]]):
     dialog's wording for whatever this particular browse is collecting
     (RTL sources, an SDC file, ...) without needing a separate screen
     class per file kind.
+
+    `detect_manifest` (RTL sources only) makes 'a' prefer a real
+    manifest.toml over the naive per-file scan: adding a directory that
+    contains one, or the manifest.toml file itself, yields one
+    `{"manifest": path}` marker in the returned list instead of N
+    individual file paths -- a scan can never recover the manifest's own
+    compile order or named-library split (FABULOUS_EFPGA vs. work), so
+    once a real manifest is found there's nothing a per-file scan would
+    add. The rest of the picked items (if any) stay plain path strings;
+    the caller (_SourcesScreen) tells the two apart with isinstance(dict).
     """
 
     BINDINGS = [
@@ -306,13 +316,15 @@ class _BrowseScreen(ModalScreen[Optional[list]]):
     def __init__(
         self, start: str, *, suffixes: Optional[tuple] = _RTL_SUFFIXES,
         title: str = "Browse for RTL files", label: str = "file(s)",
+        detect_manifest: bool = False,
     ):
         super().__init__()
         self._start = start
         self._suffixes = suffixes
         self._title = title
         self._label = label
-        self._selected: list[str] = []
+        self._detect_manifest = detect_manifest
+        self._selected: list = []
         self._show_hidden = False
 
     def compose(self) -> ComposeResult:
@@ -345,6 +357,13 @@ class _BrowseScreen(ModalScreen[Optional[list]]):
         event.stop()
         _open_in_editor(self.app, event.path)
 
+    def _manifest_marker(self, manifest_path: Path) -> Optional[dict]:
+        resolved = str(manifest_path.resolve())
+        if any(isinstance(entry, dict) and entry.get("manifest") == resolved for entry in self._selected):
+            self.app.notify(f"{manifest_path.name} is already picked.", severity="warning")
+            return None
+        return {"manifest": resolved}
+
     def action_add(self) -> None:
         tree = self.query_one(DirectoryTree)
         node = tree.cursor_node
@@ -352,6 +371,14 @@ class _BrowseScreen(ModalScreen[Optional[list]]):
             return
         path = node.data.path
         if path.is_dir():
+            manifest = path / "manifest.toml"
+            if self._detect_manifest and manifest.is_file():
+                marker = self._manifest_marker(manifest)
+                if marker is not None:
+                    self._selected.append(marker)
+                    self.app.notify(f"Detected {manifest} -- added as one RTL manifest entry.")
+                self._refresh_hint()
+                return
             added = 0
             for entry in sorted(path.iterdir()):
                 if entry.is_file() and (not self._suffixes or entry.suffix.lower() in self._suffixes):
@@ -363,6 +390,11 @@ class _BrowseScreen(ModalScreen[Optional[list]]):
                 self.app.notify(f"Added {added} {self._label} from {path}")
             else:
                 self.app.notify("No new matching files in that directory.", severity="warning")
+        elif self._detect_manifest and path.name == "manifest.toml":
+            marker = self._manifest_marker(path)
+            if marker is not None:
+                self._selected.append(marker)
+                self.app.notify(f"Added RTL manifest: {path.name}")
         else:
             resolved = str(path.resolve())
             if resolved in self._selected:
@@ -690,37 +722,25 @@ class _SourcesScreen(ModalScreen[Optional[list]]):
                 start = str(existing or Path.home())
 
                 def handle_browse(paths: Optional[list]) -> None:
+                    # A directory containing a manifest.toml comes back as
+                    # one {"manifest": ...} marker (see _BrowseScreen's
+                    # detect_manifest) -- everything else is a plain file
+                    # path, same as always.
                     if paths:
-                        for path in paths:
-                            if not any(e.get("path") == path for e in self._sources):
-                                self._sources.append({"path": path})
+                        for item in paths:
+                            if isinstance(item, dict):
+                                if not any(e.get("manifest") == item["manifest"] for e in self._sources):
+                                    self._sources.append(item)
+                            elif not any(e.get("path") == item for e in self._sources):
+                                self._sources.append({"path": item})
                         self._refresh()
-                self.app.push_screen(_BrowseScreen(start), handle_browse)
+                self.app.push_screen(_BrowseScreen(start, detect_manifest=True), handle_browse)
             elif method == "manual":
                 def handle_path(value: Optional[str]) -> None:
                     if value:
                         self._sources.append({"path": _absolute(value)})
                         self._refresh()
                 self.app.push_screen(_TextScreen("Path to an RTL file"), handle_path)
-            elif method == "manifest":
-                existing = next(
-                    (Path(e["manifest"]).parent for e in reversed(self._sources) if e.get("manifest")), None
-                )
-                start = str(existing or Path.home())
-
-                def handle_manifest_browse(paths: Optional[list]) -> None:
-                    if paths:
-                        for path in paths:
-                            if not any(e.get("manifest") == path for e in self._sources):
-                                self._sources.append({"manifest": path})
-                        self._refresh()
-                self.app.push_screen(
-                    _BrowseScreen(
-                        start, suffixes=(".toml",), title="Browse for a manifest.toml",
-                        label="manifest(s)",
-                    ),
-                    handle_manifest_browse,
-                )
             elif method == "package":
                 entries = [
                     _package_choice(manifest) for manifest in PackageRegistry().manifests()
@@ -745,7 +765,6 @@ class _SourcesScreen(ModalScreen[Optional[list]]):
             _PickScreen("Add a source", [
                 ("Browse filesystem", "browse"),
                 ("Type a path manually", "manual"),
-                ("RTL manifest (manifest.toml)", "manifest"),
                 ("Installed rtl package", "package"),
             ]),
             handle_method,
