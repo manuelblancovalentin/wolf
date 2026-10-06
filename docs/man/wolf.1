@@ -57,7 +57,11 @@ source not already under the project's own
 into it, and scaffolds every missing standard directory once project root
 exists and a design name is known (same convention
 .B "wolf env auto-setup"
-creates). The Technology entry's own submenu (package, track, vth(s), metal
+creates) -- a design with no constraints yet also gets a commented-out
+starter SDC, and a copy of this environment's own wolf.yaml is kept in
+sync at
+.BR "inputs/env/<design>/wolf.<name>.yaml" .
+The Technology entry's own submenu (package, track, vth(s), metal
 stack) stays open across all four picks instead of returning to the main
 menu after each one; vth is a checklist, not a single pick, since a real
 run commonly mixes more than one vth's library set in the same synthesis

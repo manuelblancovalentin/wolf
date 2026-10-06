@@ -212,7 +212,20 @@ scaffold_project_tree`, the same convention `wolf env auto-setup` itself
 creates) -- a project the scan found only partially populated (hdl there,
 constraints not written yet, say) gets the rest filled in automatically,
 not left as a diagnosis you have to act on by hand with a separate
-`wolf env auto-setup` call.
+`wolf env auto-setup` call. Two of those directories also get populated,
+not just created: a design with no `constraints.files` set yet gets a
+starter SDC at `inputs/constraints/<design>/<design>.sdc` (common
+directives present but commented out -- `create_clock`, I/O delays, loads
+-- to fill in and uncomment, matching the role a hand-maintained template
+played in the legacy tree this was modeled on), wired into
+`constraints.files` automatically; and saving always refreshes a copy of
+this environment's own `wolf.yaml` at
+`inputs/env/<design>/wolf.<environment_name>.yaml`, so the configuration
+behind a given project tree (which RTL, which PDK/track/vth, which
+constraints) is readable right there on disk, without `~/.wolf/envs/` at
+all -- the same role the legacy tree's own `<design>.src.yaml` played,
+except always in sync with the real source of truth instead of a second,
+driftable copy.
 
 The Technology entry opens a submenu (PDK package, then track, then vth(s),
 then metal stack) that stays open across all four picks and shows each

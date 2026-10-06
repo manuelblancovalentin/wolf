@@ -557,6 +557,23 @@ class EnvWizardEndToEndTests(unittest.TestCase):
         self.assertTrue((existing_root / "outputs" / "newdesign").is_dir())
         self.assertTrue((existing_root / "workspace").is_dir())
 
+        # No constraints.files were ever set -- a starter SDC template
+        # gets generated and wired in automatically.
+        sdc_path = existing_root / "inputs" / "constraints" / "newdesign" / "newdesign.sdc"
+        self.assertTrue(sdc_path.is_file())
+        self.assertIn("create_clock", sdc_path.read_text(encoding="utf-8"))
+        document = yaml.safe_load((self.state / "envs" / "smoketest7" / "wolf.yaml").read_text(encoding="utf-8"))
+        self.assertEqual(document["constraints"], {"files": [str(sdc_path.resolve())]})
+
+        # A copy of the saved wolf.yaml itself lands inside the project
+        # tree, readable without ~/.wolf/envs/ at all.
+        record_path = existing_root / "inputs" / "env" / "newdesign" / "wolf.smoketest7.yaml"
+        self.assertTrue(record_path.is_file())
+        self.assertEqual(
+            yaml.safe_load(record_path.read_text(encoding="utf-8")),
+            document,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
