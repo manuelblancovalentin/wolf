@@ -9,7 +9,7 @@ import yaml
 from textual.app import App
 from textual.widgets import Input, OptionList, Static
 
-from wolf.env_menu import EnvWizardApp, _BrowseScreen
+from wolf.env_menu import EnvWizardApp, _BrowseScreen, _scan_modules
 
 
 class EnvWizardEndToEndTests(unittest.TestCase):
@@ -638,6 +638,27 @@ class BrowseManifestDetectionTests(unittest.TestCase):
                 await pilot.pause()
         asyncio.run(drive())
         self.assertEqual(result, [str((self.design_dir / "top.v").resolve())])
+
+    def test_manifest_top_is_suggested_without_regex_scanning_hdl_text(self):
+        """A manifest declares its own top directly -- no reason to make
+        the user go look it up, and no reason to regex-scan the HDL text
+        for it either, unlike a loose path entry."""
+        entry = {"manifest": str((self.design_dir / "manifest.toml").resolve())}
+        self.assertEqual(_scan_modules([entry]), ["top"])
+
+    def test_a_broken_manifest_is_rejected_immediately_not_deferred_to_wolf_run(self):
+        """Pointing at a manifest.toml that references a .flist that
+        doesn't exist is caught the moment it's added, not silently
+        accepted and only discovered later at `wolf run`."""
+        broken_dir = self.root / "broken"
+        broken_dir.mkdir()
+        (broken_dir / "manifest.toml").write_text(
+            'schema_version = 1\nname = "broken"\ntop = "top"\n'
+            'verilog_sources = "manifests/verilog-sources.flist"\n',
+            encoding="utf-8",
+        )
+        result = self._run_browse(broken_dir)
+        self.assertEqual(result, [])
 
 
 if __name__ == "__main__":

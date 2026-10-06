@@ -37,7 +37,9 @@ from textual.widgets.tree import TreeNode
 _RTL_SUFFIXES = (".v", ".sv", ".vhd", ".vhdl")
 
 from wolf.backend import backend_names
-from wolf.environment import ENVIRONMENT_FILENAME, ENVIRONMENT_SCHEMA, load_environment
+from wolf.environment import (
+    ENVIRONMENT_FILENAME, ENVIRONMENT_SCHEMA, inspect_manifest_toml, load_environment,
+)
 from wolf.flow_inspect import FlowStructure, parse_flow_directory
 from wolf.package.installer import PackageInstaller
 from wolf.package.registry import PackageRegistry
@@ -80,13 +82,27 @@ def _absolute(raw: str) -> str:
 
 
 def _scan_modules(sources: list[dict]) -> list[str]:
-    """Verilog/SystemVerilog module names found in local-path sources.
+    """Candidate top-module names for design.top -- a manifest entry's own
+    declared `top` first (authoritative: the manifest says what it is,
+    nothing to guess), then Verilog/SystemVerilog module names found by
+    regex in local-path sources.
 
-    VHDL entities and package-backed sources aren't scanned -- a package's
-    own metadata already names the design (see design.package/top), and
-    VHDL detection isn't implemented yet.
+    VHDL entities aren't regex-scanned (not implemented), and an
+    installed-package entry isn't either -- a package's own metadata
+    already names the design (see design.package/top), same as a
+    manifest entry's own `top` field.
     """
     names: list[str] = []
+    for entry in sources:
+        manifest = entry.get("manifest")
+        if not manifest:
+            continue
+        try:
+            inspection = inspect_manifest_toml(Path(manifest))
+        except ValueError:
+            continue  # Surfaced already when the manifest was added; don't repeat it here.
+        if inspection.top and inspection.top not in names:
+            names.append(inspection.top)
     for entry in sources:
         raw = entry.get("path")
         if not raw:
@@ -358,10 +374,24 @@ class _BrowseScreen(ModalScreen[Optional[list]]):
         _open_in_editor(self.app, event.path)
 
     def _manifest_marker(self, manifest_path: Path) -> Optional[dict]:
+        """Parse and fully resolve the manifest right now -- not deferred
+        to whenever `wolf run` eventually resolves the environment --
+        so a bad/incomplete manifest (a missing .flist, a referenced
+        file that doesn't exist) is caught and reported the moment it's
+        added, and the picker can show what it actually declares."""
         resolved = str(manifest_path.resolve())
         if any(isinstance(entry, dict) and entry.get("manifest") == resolved for entry in self._selected):
             self.app.notify(f"{manifest_path.name} is already picked.", severity="warning")
             return None
+        try:
+            inspection = inspect_manifest_toml(manifest_path)
+        except ValueError as error:
+            self.app.notify(f"Could not use {manifest_path}: {error}", severity="error")
+            return None
+        detail = f"{inspection.source_count} source(s)"
+        if inspection.top:
+            detail += f", top {inspection.top!r}"
+        self.app.notify(f"Added RTL manifest {manifest_path.name}: {detail}")
         return {"manifest": resolved}
 
     def action_add(self) -> None:
@@ -376,7 +406,6 @@ class _BrowseScreen(ModalScreen[Optional[list]]):
                 marker = self._manifest_marker(manifest)
                 if marker is not None:
                     self._selected.append(marker)
-                    self.app.notify(f"Detected {manifest} -- added as one RTL manifest entry.")
                 self._refresh_hint()
                 return
             added = 0
@@ -394,7 +423,6 @@ class _BrowseScreen(ModalScreen[Optional[list]]):
             marker = self._manifest_marker(path)
             if marker is not None:
                 self._selected.append(marker)
-                self.app.notify(f"Added RTL manifest: {path.name}")
         else:
             resolved = str(path.resolve())
             if resolved in self._selected:

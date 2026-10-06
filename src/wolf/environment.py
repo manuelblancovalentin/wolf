@@ -1066,8 +1066,11 @@ def _technology_inputs(
 
 def _manifest_lines(path: Path) -> list[str]:
     """Read an ordered package file list, ignoring comments and blanks."""
-    return [line.strip() for line in path.read_text(encoding="utf-8").splitlines()
-            if line.strip() and not line.lstrip().startswith("#")]
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as error:
+        raise ValueError(f"design source manifest .flist does not exist or cannot be read: {path}") from error
+    return [line.strip() for line in text.splitlines() if line.strip() and not line.lstrip().startswith("#")]
 
 
 def _checksum_inventory(path: Path) -> dict[str, str]:
@@ -1110,6 +1113,44 @@ def _local_manifest_sources(manifest_path: Path) -> tuple[
     root = manifest_path.parent.resolve()
     metadata = {"manifests": {"package": manifest_path.name}}
     return _resolve_manifest_bundle(metadata, root)
+
+
+@dataclass(frozen=True)
+class ManifestInspection:
+    """A manifest.toml's own declared identity plus a source count --
+    what `wolf env menu` needs to validate a manifest the moment it's
+    added (not only once `wolf run` eventually resolves it) and to
+    suggest design.name/design.top from the manifest's own fields,
+    rather than regex-scanning HDL text the way a loose path entry
+    needs to."""
+
+    name: Optional[str]
+    top: Optional[str]
+    vhdl_standard: Optional[str]
+    source_count: int
+
+
+def inspect_manifest_toml(manifest_path: Path) -> ManifestInspection:
+    """Parse and fully resolve a manifest.toml (the same resolution a
+    design.sources[].manifest entry gets at every `wolf run`, via
+    _local_manifest_sources) far enough to answer "what does this
+    declare, and does it even parse" right away. Raises ValueError on
+    anything _resolve_manifest_bundle itself would reject (missing
+    .flist, mismatched Verilog manifests, a referenced file that
+    doesn't exist, ...) -- nothing here is cached; calling this again
+    always reflects the manifest's current state on disk, so there is
+    no separate "is it stale" question to answer."""
+    if not manifest_path.is_file():
+        raise ValueError(f"manifest does not exist: {manifest_path}")
+    try:
+        toml_data = tomllib.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError) as error:
+        raise ValueError(f"cannot parse {manifest_path}: {error}") from error
+    sources, _, _, standard, _ = _local_manifest_sources(manifest_path)
+    return ManifestInspection(
+        name=toml_data.get("name"), top=toml_data.get("top"),
+        vhdl_standard=standard, source_count=len(sources),
+    )
 
 
 def _resolve_manifest_bundle(metadata: Mapping[str, Any], root: Path) -> tuple[
