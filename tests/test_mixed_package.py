@@ -342,16 +342,19 @@ class MixedLanguagePackageTests(unittest.TestCase):
         self.assertEqual(status, 0)
         self.assertEqual(run.name, "ibex-fabulous-mvp.1")
         self.assertTrue((run / "wolf.resolved.yaml").is_file())
-        self.assertTrue((run / "backend/cadence-genus/sources.tcl").is_file())
+        # Genus collateral lands directly in the run directory -- no
+        # extra "backend/cadence-genus" nesting, matching the real
+        # legacy flat convention this run directory shape is modeled on.
+        self.assertTrue((run / "sources.tcl").is_file())
         command = execute.call_args.args[0]
         self.assertEqual(command[0], "/opt/cadence/flowtool")
         self.assertIn("-files", command)
         self.assertIn("-from", command)
         self.assertIn("-to", command)
-        self.assertEqual(execute.call_args.kwargs["cwd"], run / "backend/cadence-genus")
+        self.assertEqual(execute.call_args.kwargs["cwd"], run)
         frozen = yaml.safe_load((run / "wolf.resolved.yaml").read_text())
         self.assertEqual(frozen["workspace"]["run_directory"], str(run.resolve()))
-        self.assertEqual(frozen["execution"]["working_directory"], str((run / "backend/cadence-genus").resolve()))
+        self.assertEqual(frozen["execution"]["working_directory"], str(run.resolve()))
         self.assertEqual(frozen["execution"]["tool"], "flowtool")
 
     def test_genus_validation_fails_before_allocating_run(self):
@@ -368,7 +371,7 @@ class MixedLanguagePackageTests(unittest.TestCase):
             status, run = run_genus(context, clean=True)
         self.assertEqual(status, 17)
         self.assertTrue((run / "wolf.resolved.yaml").is_file())
-        self.assertTrue((run / "backend/cadence-genus/genus-inputs.yaml").is_file())
+        self.assertTrue((run / "genus-inputs.yaml").is_file())
 
     def test_genus_interactive_flag_is_passed_to_flowtool(self):
         context = self._context()

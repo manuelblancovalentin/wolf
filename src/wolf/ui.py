@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Optional
+from contextlib import contextmanager
+from typing import Iterator, Optional
 
 from rich.console import Console
 from rich.table import Table
@@ -123,6 +124,19 @@ def table(title: str, columns: list, rows: list) -> None:
 def section(title: str) -> None:
     """Print a bold banded section title, e.g. within a pre-run summary."""
     console.print(Text(f" {title} ", style="bold white on blue"), soft_wrap=True)
+
+
+@contextmanager
+def status(message: str) -> Iterator[None]:
+    """A spinner for a slow, blocking step with nothing to print yet --
+    resolving an environment, say, which checksums every input file's
+    real content and can take a real, visible moment on a library-heavy
+    PDK. Without this the terminal just sits silent after the banner,
+    indistinguishable from having hung. Degrades to no visible animation
+    (not an error) on a non-interactive terminal, the same as Rich's own
+    Console.status already does."""
+    with console.status(Text(f" {message}", style="bold yellow"), spinner="dots"):
+        yield
 
 
 def confirm(prompt: str, *, assume_yes: bool = False) -> bool:

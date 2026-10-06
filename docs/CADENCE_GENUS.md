@@ -147,8 +147,8 @@ decides which of these tokens to use and how:
 | `${WOLF_FLOW_CONFIG_SCRIPT}` | this run's `flow-config.tcl` path -- WOLF's own `flow_template` lists it under `user_flow_steps` |
 | `${WOLF_SETUP_YAML}` | the rendered setup.yaml's own path (available inside the flow template only, and only when a `setup_template` override is given) |
 | `${WOLF_WORKSPACE_DIR}` | resolved workspace root |
-| `${WOLF_RUN_DIRECTORY}` | this run's `backend/cadence-genus` directory |
-| `${WOLF_RUN_TAG}` | resolved run tag |
+| `${WOLF_RUN_DIRECTORY}` | this run's own numbered directory (`<design>.<N>`) |
+| `${WOLF_RUN_TAG}` | the real allocated run tag (`<design>.<N>`, matching `${WOLF_RUN_DIRECTORY}`'s own name) -- not the environment's `run_tag`, which only ever defaults to the bare design name |
 | `${WOLF_REPORTS_DIR}` | absolute directory the flow writes reports under |
 | `${WOLF_OUTPUTS_DIR}` | absolute directory the flow writes netlists under |
 
@@ -212,17 +212,21 @@ generation for that at all.
 The flow *scripts* (`presentation.tcl`, `common_flows.tcl`,
 `common_steps.tcl`, `synthesis.tcl`, `floorplanning.tcl`, `cts.tcl`,
 `route.tcl`, `postroute.tcl` -- the real step definitions) are snapshotted
-into a deduplicated, numbered `scripts.<N>` directory under
-`<run>/backend/cadence-genus`, with a `scripts.latest` symlink always
-pointing at the current one -- mirroring the legacy Bash runner's own
-`PROCESS_SCRIPTS` snapshot mechanism (`bin/wolf.run`). The dedup digest
-covers only these files: unrelated per-run resolved values (thread count,
-design name, ...) never force a new snapshot, and an unchanged flow reuses
-its existing `scripts.<N>` across runs. Everything else this run needs
-(`sources.tcl`, `technology.tcl`, `overrides.tcl`, `constraints.sdc`,
-`flow-config.tcl`, and the rendered `flow.<design>.yaml`, plus
-`setup.<design>.yaml` when a `setup_template` override is given) is
-written directly under `backend/cadence-genus`, fresh on every call.
+into a deduplicated, numbered `scripts.<N>` directory directly under the
+run directory (`<workspace>/<design>/<design>.<process>/<design>.<N>`,
+confirmed real legacy convention: every run is numbered starting at `.1`,
+there is no unnumbered run alongside them, and nothing lives one level
+deeper under a `backend/<name>` subdirectory the way an earlier revision
+of this had it), with a `scripts.latest` symlink always pointing at the
+current one -- mirroring the legacy Bash runner's own `PROCESS_SCRIPTS`
+snapshot mechanism (`bin/wolf.run`). The dedup digest covers only these
+files: unrelated per-run resolved values (thread count, design name, ...)
+never force a new snapshot, and an unchanged flow reuses its existing
+`scripts.<N>` across runs. Everything else this run needs (`sources.tcl`,
+`technology.tcl`, `overrides.tcl`, `constraints.sdc`, `flow-config.tcl`,
+and the rendered `flow.<design>.yaml`, plus `setup.<design>.yaml` when a
+`setup_template` override is given) is written directly into the run
+directory, fresh on every call.
 
 `flow-config.tcl` holds the plain `set` statements the flow's step bodies
 read (design name/top, thread count, dont-use cell list, physical view
@@ -501,8 +505,8 @@ Flowtool before allocation, writes directly under the exact numbered run,
 freezes `wolf.resolved.yaml`, and invokes:
 
 ```text
-cd <run>/backend/cadence-genus
-flowtool -files <scripts.N>/flow.<design>.yaml -run_tag <tag> \
+cd <workspace>/<design>/<design>.<process>/<design>.<N>
+flowtool -files scripts.<N>/flow.<design>.yaml -run_tag <design>.<N> \
   -from <stage> -to <stage> -directory <workspace>/<design>/<design>.<process> \
   -log flowtool.log
 ```

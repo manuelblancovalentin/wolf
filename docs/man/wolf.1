@@ -220,7 +220,16 @@ Inspect, explicitly synchronize, or remove a configured registry.
 .B wolf run --plan
 Resolve and display the selected environment's experiment paths without
 executing tools. The displayed workspace and run paths are independent of the
-caller's current directory. Planning does not allocate a physical run.
+caller's current directory. Planning does not allocate a physical run, but
+for a Cadence Genus environment it does show the real numbered run
+directory
+.RB ( <design>.<N> )
+a real run would allocate. A spinner is shown while resolving, since
+checksumming every input file's real content can take a visible moment on
+a library-heavy PDK. A bundled-default Cadence Genus flow (no
+.B flow.package
+set) is identified by a content hash of its own Tcl files, not just the
+literal name "default".
 .TP
 .BI "wolf run --environment " name
 Resolve a named legacy or declarative environment and invoke the existing runner.

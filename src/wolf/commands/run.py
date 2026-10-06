@@ -112,14 +112,37 @@ def _summary(
         technology = context.technology
         ui.key_value("Technology package", f"{context.technology_package} ({technology.revision})")
         ui.key_value("Timing corner", technology.timing_corner)
-        for library in technology.timing_libraries:
-            ui.key_value("  Timing library", library)
+        # technology.timing_libraries only ever covers the PRIMARY
+        # (first-listed) vth -- a run selecting several (confirmed real
+        # usage: mixing lvt+rvt library sets) needs every one of their
+        # libraries shown, not just the primary's. The catalog already
+        # covers every track/vth the whole package declares; filter it
+        # down to what this run actually selected.
+        selected_tracks = set(technology.selected_tracks) or ({technology.track} if technology.track else set())
+        selected_vths = set(technology.selected_vths) or ({technology.vth} if technology.vth else set())
+        if technology.catalog_library_sets and selected_vths:
+            libraries = tuple(dict.fromkeys(
+                library
+                for entry in technology.catalog_library_sets
+                if entry.track in selected_tracks and entry.vth in selected_vths
+                for library in entry.libraries
+            ))
+        else:
+            libraries = technology.timing_libraries
+        for index, library in enumerate(libraries):
+            ui.key_value(f"  [{index}] Timing library", library)
     for package, revision in sorted(context.package_revisions.items()):
         ui.key_value(f"Package {package}", revision)
 
     ui.section("Flow workspace")
     if context.flow_name:
-        ui.key_value("Flow", context.flow_name)
+        flow_label = context.flow_name
+        if context.flow_name == "default" and context.backend == "cadence-flowtool":
+            # "default" alone doesn't say which revision of WOLF's own
+            # bundled flow Tcl actually ran -- a content hash does.
+            from wolf.backend.cadence_genus import bundled_flow_digest
+            flow_label = f"{context.flow_name} (wolf bundled flow, sha256:{bundled_flow_digest()})"
+        ui.key_value("Flow", flow_label)
     ui.key_value("Workspace root", context.workspace_root)
     ui.key_value("Run directory", context.run_directory)
 
@@ -157,7 +180,8 @@ def _summary(
 
 
 def command_run(args: argparse.Namespace) -> int:
-    context = _context(args)
+    with ui.status("Resolving environment..."):
+        context = _context(args)
     backend = get_backend(context.backend)
     if context.format == "declarative-v1" and context.backend == "cadence-flowtool":
         if args.plan:
@@ -166,8 +190,8 @@ def command_run(args: argparse.Namespace) -> int:
             if failures:
                 raise ValueError("Cadence Genus validation failed: " + "; ".join(failures))
             _summary(context, from_stage=args.from_stage, to_stage=args.to_stage)
-            ui.key_value("Genus run directory", context.run_directory)
-            ui.key_value("Genus collateral", context.run_directory / "backend" / "cadence-genus")
+            from wolf.backend.cadence_genus import allocate_genus_run
+            ui.key_value("Genus run directory", allocate_genus_run(context, clean=getattr(args, "clean", False)))
             return 0
         _summary(context, from_stage=args.from_stage, to_stage=args.to_stage)
         if not ui.confirm(

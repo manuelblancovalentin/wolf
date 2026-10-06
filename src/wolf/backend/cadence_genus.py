@@ -525,13 +525,24 @@ def _normalize_vhdl_standard(value: Any) -> str:
 
 
 def allocate_genus_run(context: ResolvedContext, *, clean: bool = False) -> Path:
-    """Allocate a new numbered run without modifying earlier runs."""
+    """Allocate a numbered run (<design>.<N>) -- confirmed real legacy
+    convention: every run is numbered starting at .1, there is never an
+    unnumbered run alongside them. Without --clean, continues the latest
+    already-allocated numbered run (so an earlier invocation's Flowtool
+    checkpoints are still there for a later -from); --clean, or no
+    existing numbered run at all, allocates a fresh one. Read-only: only
+    computes a path, by globbing what's already on disk -- never creates
+    anything itself, safe to call from `wolf run --plan` too.
+    """
     base = context.workspace_root / context.design_name / f"{context.design_name}.{context.process}"
-    if not clean and not context.run_directory.exists():
-        return context.run_directory
-    index = 1
-    while (base / f"{context.design_name}.{index}").exists():
-        index += 1
+    existing = sorted(
+        int(p.name.rsplit(".", 1)[-1])
+        for p in base.glob(f"{context.design_name}.*")
+        if p.is_dir() and p.name.rsplit(".", 1)[-1].isdigit()
+    )
+    if not clean and existing:
+        return base / f"{context.design_name}.{existing[-1]}"
+    index = existing[-1] + 1 if existing else 1
     return base / f"{context.design_name}.{index}"
 
 
@@ -596,6 +607,25 @@ def _digest(files: list[Path]) -> str:
     for path in files:
         digest.update(path.read_bytes())
     return digest.hexdigest()
+
+
+# Must match prepare_genus_inputs' own _snapshot_scripts call -- the real
+# step-definition files a run actually executes.
+_FLOW_SCRIPT_NAMES = (
+    "presentation.tcl", "common_flows.tcl", "common_steps.tcl", "synthesis.tcl",
+    "floorplanning.tcl", "cts.tcl", "route.tcl", "postroute.tcl",
+)
+
+
+def bundled_flow_digest() -> str:
+    """A short content hash identifying exactly which revision of WOLF's
+    own bundled flow Tcl (flows/cadence-genus/*.tcl) a run actually
+    executes -- "default" alone doesn't say which one. Hashing the real
+    file content, not a git commit, means it's accurate even for an
+    editable/dev install with uncommitted local changes, which is
+    exactly the case this was built under."""
+    flow_root = builtin_flow_root("cadence-genus")
+    return _digest([flow_root / name for name in _FLOW_SCRIPT_NAMES])[:12]
 
 
 def _effective_genus_defines(context: ResolvedContext) -> tuple[str, ...]:
@@ -831,7 +861,11 @@ def prepare_genus_inputs(
         "WOLF_FLOW_CONFIG_SCRIPT": str(flow_config_script),
         "WOLF_WORKSPACE_DIR": str(context.workspace_root),
         "WOLF_RUN_DIRECTORY": str(destination),
-        "WOLF_RUN_TAG": context.run_tag,
+        # destination's own name, not context.run_tag -- the run
+        # directory is always named after the real allocated run tag
+        # (<design>.<N> for a Genus run; see allocate_genus_run),
+        # matching the -run_tag flag run_genus itself passes to Flowtool.
+        "WOLF_RUN_TAG": destination.name,
         "WOLF_REPORTS_DIR": str(reports_directory),
         "WOLF_OUTPUTS_DIR": str(outputs_directory),
     }
@@ -967,14 +1001,19 @@ def run_genus(
     flowtool = validate_genus_or_raise(context)
     run_directory = allocate_genus_run(context, clean=clean)
     inputs = prepare_genus_inputs(
-        context, run_directory / "backend" / "cadence-genus", interactive=interactive,
+        context, run_directory, interactive=interactive,
         from_stage=from_stage, to_stage=to_stage,
     )
     resolved = yaml.safe_load(inputs.manifest.read_text(encoding="utf-8"))
     resolved["schema"] = "wolf.resolved-run/v1"
     log_file = inputs.directory / "flowtool.log"
+    # The real, numbered run tag (<design>.<N>, from allocate_genus_run) --
+    # not context.run_tag, which only ever defaults to the bare design
+    # name and would otherwise collide every run doesn't explicitly pass
+    # --runtag.
+    run_tag = run_directory.name
     command = [
-        flowtool, "-files", str(inputs.flow_yaml), "-run_tag", context.run_tag,
+        flowtool, "-files", str(inputs.flow_yaml), "-run_tag", run_tag,
         "-from", resolved["from_stage"], "-to", resolved["to_stage"],
         "-directory", str(context.workspace_root / context.design_name
                            / f"{context.design_name}.{context.process}"),
