@@ -1179,10 +1179,8 @@ class EnvWizardApp(App[None]):
                 self.technology_metal_stack = profile.technology.metal_stack
             if profile.flow and profile.flow.package:
                 self.flow_package = profile.flow.package
-            # A flow with no package (bundled default) also has no recorded
-            # backend -- that choice is only ever used as a `wolf run
-            # --backend` override, never persisted. Re-editing such an
-            # environment starts flow/backend unset; pick it again if needed.
+            elif profile.flow and profile.flow.backend:
+                self.backend = profile.flow.backend
             self.project_root = profile.project_root
             self.workspace_root = profile.workspace_root
             self.constraint_files = list(profile.constraint_files)
@@ -1627,7 +1625,11 @@ class EnvWizardApp(App[None]):
         if self.flow_package:
             document["flow"] = {"package": self.flow_package}
         elif self.backend:
-            document["flow"] = {"name": "default"}
+            # Persisted so `wolf run` doesn't need --backend typed on
+            # every single invocation -- previously only ever recorded
+            # as "name: default" with the actual backend choice thrown
+            # away, silently requiring the CLI override forever after.
+            document["flow"] = {"name": "default", "backend": self.backend}
         if self.constraint_files:
             document["constraints"] = {"files": self.constraint_files}
         if self.project_root:

@@ -226,7 +226,15 @@ caller's current directory. Planning does not allocate a physical run.
 Resolve a named legacy or declarative environment and invoke the existing runner.
 Stored relative paths resolve from the environment directory. An explicit
 .B --workspace
-path is relative to the invocation directory unless absolute.
+path is relative to the invocation directory unless absolute. An explicit
+.B --backend
+flag always wins; otherwise a flow package's own declared backend is used,
+then the environment's own
+.B flow.backend
+(set via
+.B "wolf env menu"
+'s Flow entry when using the bundled default flow, so it never needs
+retyping on every invocation).
 Real declarative executions freeze
 .I wolf.resolved.yaml
 inside the exact allocated run before invoking backend stages. The historical

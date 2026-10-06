@@ -981,5 +981,33 @@ class MultiVthSelectionTests(DeclarativeEnvironmentTests):
             )
 
 
+class FlowBackendPersistenceTests(DeclarativeEnvironmentTests):
+    """flow.backend persists a bundled-default flow's backend choice in
+    wolf.yaml itself -- previously only ever a `wolf run --backend`
+    override, meaning it had to be typed on every single invocation even
+    though the environment otherwise fully resolved."""
+
+    def test_flow_backend_is_honored_without_a_cli_override(self):
+        text = self._complete_yaml().replace(
+            "flow:\n  package: flow/orfs", "flow:\n  name: default\n  backend: cadence-flowtool",
+        )
+        context = resolve_declarative_environment(
+            load_environment(self._write(text, "backend.yaml")),
+            state_root=self.state, environment_directory=self.environment,
+        )
+        self.assertEqual(context.backend, "cadence-flowtool")
+
+    def test_cli_backend_override_still_wins_over_flow_backend(self):
+        text = self._complete_yaml().replace(
+            "flow:\n  package: flow/orfs", "flow:\n  name: default\n  backend: cadence-flowtool",
+        )
+        context = resolve_declarative_environment(
+            load_environment(self._write(text, "backend2.yaml")),
+            state_root=self.state, environment_directory=self.environment,
+            backend_override="orfs",
+        )
+        self.assertEqual(context.backend, "orfs")
+
+
 if __name__ == "__main__":
     unittest.main()

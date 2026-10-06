@@ -242,6 +242,11 @@ unaffected. Metal stack only offers stacks declared for *every* selected
 vth (the intersection, not the union), so whatever's picked is guaranteed
 valid for the whole selection.
 
+Picking a backend for the bundled default flow (no `flow.package`) writes
+`flow.backend` into `wolf.yaml`, so it resolves on every `wolf run` from
+then on without needing `--backend` typed on every invocation -- an
+explicit `--backend` still overrides it when given.
+
 `q`/escape at the top level asks for confirmation (defaulting to No)
 whenever there are unsaved changes; a plain enter or a second escape on
 that prompt cancels the quit and returns to the main menu, only an

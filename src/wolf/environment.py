@@ -62,6 +62,12 @@ class ComponentReference:
     tracks: tuple[str, ...] = ()
     vths: tuple[str, ...] = ()
     metal_stack: Optional[str] = None
+    # flow.backend only: persists a bundled-default flow's backend choice
+    # (cadence-flowtool, orfs, ...) in wolf.yaml itself, rather than it
+    # only ever existing as a `wolf run --backend` override that has to
+    # be typed on every single invocation. A flow.package's own
+    # manifest.flow.backend still takes priority when both are present.
+    backend: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -170,6 +176,7 @@ def _component(
         {"package", "name"}
         | ({"top", "sources"} if field == "design" else set())
         | ({"track", "vth", "metal_stack"} if field == "technology" else set())
+        | ({"backend"} if field == "flow" else set())
     )
     _known_fields(mapping, allowed, field)
     package = _optional_string(mapping.get("package"), f"{field}.package")
@@ -183,11 +190,12 @@ def _component(
     metal_stack = (
         _optional_string(mapping.get("metal_stack"), f"{field}.metal_stack") if is_technology else None
     )
-    if not any((package, name, top)) and not extra_satisfied:
+    backend = _optional_string(mapping.get("backend"), f"{field}.backend") if field == "flow" else None
+    if not any((package, name, top, backend)) and not extra_satisfied:
         raise ValueError(f"{field} must define at least one value")
     return ComponentReference(
         package=package, name=name, top=top, track=track, vth=vth, tracks=tracks, vths=vths,
-        metal_stack=metal_stack,
+        metal_stack=metal_stack, backend=backend,
     )
 
 
@@ -1255,7 +1263,11 @@ def resolve_declarative_environment(
     flow_backend = (
         _semantic(manifests["flow"], "flow", "backend") if "flow" in manifests else None
     )
-    backend = backend_override or flow_backend
+    # flow.backend (see ComponentReference's own comment) persists a
+    # bundled-default flow's backend choice in wolf.yaml -- lower
+    # priority than a real flow package's own declared backend, but
+    # above it is only the explicit --backend CLI override.
+    backend = backend_override or flow_backend or (flow.backend if flow else None)
     project_root = (
         resolve_stored_path(profile.project_root, profile.path.parent)
         if profile.project_root else None
