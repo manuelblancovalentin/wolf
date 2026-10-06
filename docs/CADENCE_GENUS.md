@@ -502,14 +502,30 @@ Preparation is exposed by `wolf.backend.cadence_genus.prepare_genus_inputs`
 and is intentionally separate from the legacy Flowtool shell runner. For
 declarative `cadence-flowtool` environments, the run bridge validates
 Flowtool before allocation, writes directly under the exact numbered run,
-freezes `wolf.resolved.yaml`, and invokes:
+freezes `wolf.resolved.yaml`, and invokes Flowtool once *per stage* in the
+requested `-from`/`-to` range (never one call spanning several stages),
+mirroring the legacy Bash runner's own per-stage loop:
 
 ```text
 cd <workspace>/<design>/<design>.<process>/<design>.<N>
 flowtool -files scripts.<N>/flow.<design>.yaml -run_tag <design>.<N> \
-  -from <stage> -to <stage> -directory <workspace>/<design>/<design>.<process> \
-  -log flowtool.log
+  -from syn_generic -to syn_generic -directory <workspace>/<design>/<design>.<process> \
+  -log flowtool.syn_generic.log
+flowtool -files scripts.<N>/flow.<design>.yaml -run_tag <design>.<N> \
+  -from syn_map -to syn_map -directory <workspace>/<design>/<design>.<process> \
+  -log flowtool.syn_map.log
+flowtool -files scripts.<N>/flow.<design>.yaml -run_tag <design>.<N> \
+  -from syn_opt -to syn_opt -directory <workspace>/<design>/<design>.<process> \
+  -log flowtool.syn_opt.log
 ```
+
+Every per-invocation flag (`-interactive` in particular) is repeated on
+every one of these calls, not just the first: Flowtool itself drops
+`-interactive` past the first stage of a single call spanning several
+stages, so a `wolf run --interactive -from syn_generic -to syn_opt` that
+issued one wide-range call would silently fall out of interactive mode
+partway through. The sequence stops at the first stage whose Flowtool
+invocation exits nonzero, matching the legacy runner.
 
 Before invoking Flowtool, `wolf run` prints a categorized pre-run summary
 (design options, technology specification, workspace, inputs, flow

@@ -402,6 +402,35 @@ class MixedLanguagePackageTests(unittest.TestCase):
         self.assertTrue((run / "wolf.resolved.yaml").is_file())
         self.assertIn("-interactive", execute.call_args.args[0])
 
+    def test_genus_invokes_flowtool_once_per_stage_carrying_every_flag_each_time(self):
+        """Flowtool loses -interactive past the first stage of a single
+        multi-stage call, so a -from/-to spanning several stages must
+        become one flowtool invocation per stage -- each carrying
+        -interactive (and -from/-to narrowed to that one stage), not one
+        wide-range call that only the first stage sees it on."""
+        context = self._context()
+        with patch("wolf.backend.cadence_genus.validate_genus", return_value=(
+            GenusValidation("flowtool", True, "/opt/cadence/flowtool"),
+        )), patch("wolf.backend.cadence_genus.subprocess.run", return_value=Mock(returncode=0)) as execute:
+            status, run = run_genus(
+                context, clean=True, interactive=True,
+                from_stage="syn_generic", to_stage="syn_opt",
+            )
+        self.assertEqual(status, 0)
+        self.assertEqual(execute.call_count, 3)
+        stage_ranges = []
+        for call in execute.call_args_list:
+            command = call.args[0]
+            self.assertIn("-interactive", command)
+            stage_ranges.append((
+                command[command.index("-from") + 1], command[command.index("-to") + 1],
+            ))
+        self.assertEqual(stage_ranges, [
+            ("syn_generic", "syn_generic"), ("syn_map", "syn_map"), ("syn_opt", "syn_opt"),
+        ])
+        frozen = yaml.safe_load((run / "wolf.resolved.yaml").read_text())
+        self.assertEqual(len(frozen["execution"]["commands"]), 3)
+
     def test_nested_bundle_resolves_all_347_sources_and_checksums(self):
         nested = self.state / "packages" / "rtl" / "nested" / "nested-rev" / "source" / "packages" / "demo"
         nested.mkdir(parents=True)

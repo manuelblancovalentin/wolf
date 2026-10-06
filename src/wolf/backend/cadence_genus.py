@@ -1006,25 +1006,38 @@ def run_genus(
     )
     resolved = yaml.safe_load(inputs.manifest.read_text(encoding="utf-8"))
     resolved["schema"] = "wolf.resolved-run/v1"
-    log_file = inputs.directory / "flowtool.log"
     # The real, numbered run tag (<design>.<N>, from allocate_genus_run) --
     # not context.run_tag, which only ever defaults to the bare design
     # name and would otherwise collide every run doesn't explicitly pass
     # --runtag.
     run_tag = run_directory.name
-    command = [
-        flowtool, "-files", str(inputs.flow_yaml), "-run_tag", run_tag,
-        "-from", resolved["from_stage"], "-to", resolved["to_stage"],
-        "-directory", str(context.workspace_root / context.design_name
-                           / f"{context.design_name}.{context.process}"),
-        "-log", str(log_file),
-    ]
-    if interactive:
-        command.append("-interactive")
+    process_directory = str(
+        context.workspace_root / context.design_name / f"{context.design_name}.{context.process}"
+    )
+    # One flowtool invocation per stage, not one spanning the whole
+    # range: Flowtool loses -interactive (and would lose any other
+    # per-invocation flag) past the first stage of a multi-stage single
+    # call. The real legacy runner (bin/backends/cadence-flowtool.sh's
+    # _wolf_backend_run_stage, looped by bin/backend.sh) always ran one
+    # flowtool process per stage with -from stage -to stage, passing the
+    # full original argument set to every one of them; mirror that here
+    # rather than the single wide-range call this used to make.
+    stages: list[str] = list(resolved["synthesis_stages"]) or [resolved["from_stage"]]
+    commands: list[list[str]] = []
+    for stage in stages:
+        command = [
+            flowtool, "-files", str(inputs.flow_yaml), "-run_tag", run_tag,
+            "-from", stage, "-to", stage,
+            "-directory", process_directory,
+            "-log", str(inputs.directory / f"flowtool.{stage}.log"),
+        ]
+        if interactive:
+            command.append("-interactive")
+        commands.append(command)
     resolved["execution"] = {
         "executor": "native", "tool": "flowtool", "executable": flowtool,
         "working_directory": str(inputs.directory),
-        "command": command,
+        "commands": commands,
     }
     resolved["environment"] = context.environment_name
     resolved["workspace"] = {
@@ -1054,5 +1067,10 @@ def run_genus(
             "flowtool_scripts_directory": str(inputs.scripts_directory),
         },
     )
-    result = subprocess.run(command, cwd=inputs.directory, check=False)
-    return result.returncode, run_directory
+    returncode = 0
+    for command in commands:
+        result = subprocess.run(command, cwd=inputs.directory, check=False)
+        returncode = result.returncode
+        if returncode != 0:
+            break  # Matches the legacy runner: stop the sequence at the first failing stage.
+    return returncode, run_directory
