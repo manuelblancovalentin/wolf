@@ -6,13 +6,23 @@
 # part of the flow, not generated output; see presentation.tcl's header
 # for how to fork it.
 
+create_flow_step -name CMD_check_design_cts -owner wolf {
+    wolf_inject_for_step CMD_check_design_cts pre
+    set cmd_check_design_cts_file [file join [get_db flow_report_directory] checkDesignCTS.rpt]
+    check_design -type cts -out_file $cmd_check_design_cts_file
+    wolf_file $cmd_check_design_cts_file
+    wolf_inject_for_step CMD_check_design_cts post
+}
+
 create_flow_step -name add_clock_tree -owner wolf {
     wolf_step "add_clock_tree: implementing clock trees, propagated-clock optimization"
     wolf_inject_for_step add_clock_tree pre
 
     ccopt_design -report_dir $::wolf_reports_dir -report_prefix cts.
 
-    report_timing_summary -checks {setup drv} > [file join $::wolf_reports_dir timing.cts.rpt]
+    set add_clock_tree_timing_file [file join $::wolf_reports_dir timing.cts.rpt]
+    report_timing_summary -checks {setup drv} > $add_clock_tree_timing_file
+    wolf_file $add_clock_tree_timing_file
 
     wolf_inject_for_step add_clock_tree post
     puts [wolf_sep]
@@ -34,7 +44,9 @@ create_flow_step -name run_opt_postcts_hold -owner wolf {
 
     opt_design -post_cts -hold -report_dir $::wolf_reports_dir -report_prefix postcts.
 
-    report_timing_summary -checks {hold drv} > [file join $::wolf_reports_dir timing.postcts_hold.rpt]
+    set run_opt_postcts_hold_timing_file [file join $::wolf_reports_dir timing.postcts_hold.rpt]
+    report_timing_summary -checks {hold drv} > $run_opt_postcts_hold_timing_file
+    wolf_file $run_opt_postcts_hold_timing_file
 
     wolf_inject_for_step run_opt_postcts_hold post
     puts [wolf_sep]

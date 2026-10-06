@@ -60,13 +60,15 @@ create_flow_step -name genus_to_innovus -owner wolf {
     wolf_inject_for_step genus_to_innovus pre
 
     #- Apply change_name rules so the netlist is Verilog/Innovus-legal
+    set genus_to_innovus_change_names_log [file join $::wolf_reports_dir design.change_names.rpt]
     update_names \
         [get_db current_design] \
         -force \
         -verilog \
         -module \
         -append_log \
-        -log [file join $::wolf_reports_dir design.change_names.rpt]
+        -log $genus_to_innovus_change_names_log
+    wolf_file $genus_to_innovus_change_names_log
 
     #- SDCs with set_timing_derate or group_path are ignored by Innovus
     set_db write_sdc_exclude {set_timing_derate group_path}
@@ -85,6 +87,7 @@ create_flow_step -name genus_to_innovus -owner wolf {
         -innovus \
         -gzip_files \
         -basename [file join $::wolf_handoff_dir $::wolf_design_name]
+    wolf_file "$::wolf_handoff_dir/$::wolf_design_name.{v,sdc,invs_init.tcl}.gz"
 
     wolf_inject_for_step genus_to_innovus post
     puts [wolf_sep]
@@ -126,5 +129,165 @@ create_flow_step -name build_xsim_files -owner wolf {
     wolf_step "build_xsim_files"
     wolf_inject_for_step build_xsim_files pre
     wolf_inject_for_step build_xsim_files post
+    puts [wolf_sep]
+}
+
+#=============================================================================
+# Innovus implementation reporting -- shared across report_floorplan/
+# report_prects/report_postcts/report_postroute (see common_flows.tcl),
+# same reuse pattern as synthesis.tcl's report_synth. Real, read-only
+# Innovus commands whose name matches the step name exactly (the same
+# convention already confirmed safe for read_mmmc/read_hdl/read_def
+# in synthesis.tcl -- create_flow_step's name and the Tcl command it
+# calls live in separate namespaces, so this is not a collision).
+#=============================================================================
+
+create_flow_step -name report_check_design -owner wolf {
+    wolf_inject_for_step report_check_design pre
+    set report_check_design_file \
+        [file join [get_db flow_report_directory] "checkDesign.[get_db flow_report_name].rpt"]
+    # "place" is the one -type value already confirmed real and valid
+    # against this flow (see CMD_check_place/CMD_check_design_cts) --
+    # reused here rather than guessing a per-stage enum value Innovus
+    # may not actually accept.
+    check_design -type place -out_file $report_check_design_file
+    wolf_file $report_check_design_file
+    wolf_inject_for_step report_check_design post
+}
+
+create_flow_step -name report_area_innovus -owner wolf {
+    wolf_inject_for_step report_area_innovus pre
+    set report_area_innovus_file [file join $::wolf_reports_dir "area.[get_db flow_report_name].rpt"]
+    report_area -min_count 1000 > $report_area_innovus_file
+    wolf_file $report_area_innovus_file
+    wolf_inject_for_step report_area_innovus post
+}
+
+create_flow_step -name report_power_innovus -owner wolf {
+    wolf_inject_for_step report_power_innovus pre
+    set report_power_innovus_file [file join $::wolf_reports_dir "power.[get_db flow_report_name].rpt"]
+    report_power -no_wrap > $report_power_innovus_file
+    wolf_file $report_power_innovus_file
+    wolf_inject_for_step report_power_innovus post
+}
+
+create_flow_step -name report_late_paths -owner wolf {
+    wolf_inject_for_step report_late_paths pre
+    set report_late_paths_file [file join $::wolf_reports_dir "late_paths.[get_db flow_report_name].rpt"]
+    report_timing -nworst 5 > $report_late_paths_file
+    wolf_file $report_late_paths_file
+    wolf_inject_for_step report_late_paths post
+}
+
+create_flow_step -name report_clock_timing -owner wolf {
+    wolf_inject_for_step report_clock_timing pre
+    set report_clock_timing_file [file join $::wolf_reports_dir "clock_timing.[get_db flow_report_name].rpt"]
+    report_clock_timing > $report_clock_timing_file
+    wolf_file $report_clock_timing_file
+    wolf_inject_for_step report_clock_timing post
+}
+
+create_flow_step -name report_route_drc -owner wolf {
+    wolf_inject_for_step report_route_drc pre
+    set report_route_drc_file [file join $::wolf_reports_dir "route_drc.[get_db flow_report_name].rpt"]
+    check_drc -out_file $report_route_drc_file
+    wolf_file $report_route_drc_file
+    wolf_inject_for_step report_route_drc post
+}
+
+create_flow_step -name report_route_density -owner wolf {
+    wolf_inject_for_step report_route_density pre
+    set report_route_density_file [file join $::wolf_reports_dir "route_density.[get_db flow_report_name].rpt"]
+    report_route_density > $report_route_density_file
+    wolf_file $report_route_density_file
+    wolf_inject_for_step report_route_density post
+}
+
+# Early-mode (hold-oriented) timing summary/paths. Left as extension
+# points rather than guessing: the real Innovus command for a *report*
+# here is `timeDesign`, which in some modes also performs real timing
+# optimization as a side effect -- guessing the wrong flag combination
+# risks silently changing the design, not just erroring loudly the way a
+# bad report command would. Fill in via wolf_inject_for_step once the
+# exact read-only invocation for this project's Innovus version is
+# confirmed.
+create_flow_step -name report_early_summary_innovus -owner wolf {
+    wolf_inject_for_step report_early_summary_innovus pre
+    wolf_inject_for_step report_early_summary_innovus post
+}
+
+create_flow_step -name report_early_paths -owner wolf {
+    wolf_inject_for_step report_early_paths pre
+    wolf_inject_for_step report_early_paths post
+}
+
+create_flow_step -name report_late_summary_innovus -owner wolf {
+    wolf_inject_for_step report_late_summary_innovus pre
+    wolf_inject_for_step report_late_summary_innovus post
+}
+
+#=============================================================================
+# Signoff/handoff extension points downstream of Innovus -- export, DRC/LVS
+# (Calibre), LEC (Conformal), and schematic/Virtuoso library generation.
+# Same status as genus_to_lec/genus_to_clp/build_sim_testbench above: real,
+# named, always-invokable steps, bodies intentionally left for
+# wolf_inject_for_step or a forked flow to fill in, since the actual
+# commands (TSMC65_run_Calibre_DRC/LVS in particular) are institution-
+# specific Calibre integration WOLF has no visibility into.
+#=============================================================================
+
+create_flow_step -name export -owner wolf {
+    wolf_step "export: writing design data"
+    wolf_inject_for_step export pre
+    wolf_inject_for_step export post
+    puts [wolf_sep]
+}
+
+create_flow_step -name DRC -owner wolf {
+    wolf_step "DRC"
+    wolf_inject_for_step DRC pre
+    wolf_inject_for_step DRC post
+    puts [wolf_sep]
+}
+
+create_flow_step -name LVS -owner wolf {
+    wolf_step "LVS"
+    wolf_inject_for_step LVS pre
+    wolf_inject_for_step LVS post
+    puts [wolf_sep]
+}
+
+create_flow_step -name lec -owner wolf {
+    wolf_step "lec"
+    wolf_inject_for_step lec pre
+    wolf_inject_for_step lec post
+    puts [wolf_sep]
+}
+
+create_flow_step -name innovus_to_tempus -owner wolf {
+    wolf_step "innovus_to_tempus"
+    wolf_inject_for_step innovus_to_tempus pre
+    wolf_inject_for_step innovus_to_tempus post
+    puts [wolf_sep]
+}
+
+create_flow_step -name innovus_to_quantus -owner wolf {
+    wolf_step "innovus_to_quantus"
+    wolf_inject_for_step innovus_to_quantus pre
+    wolf_inject_for_step innovus_to_quantus post
+    puts [wolf_sep]
+}
+
+create_flow_step -name create_virtuoso_lib -owner wolf {
+    wolf_step "create_virtuoso_lib"
+    wolf_inject_for_step create_virtuoso_lib pre
+    wolf_inject_for_step create_virtuoso_lib post
+    puts [wolf_sep]
+}
+
+create_flow_step -name schedule_signoff_subflows -owner wolf {
+    wolf_step "schedule_signoff_subflows"
+    wolf_inject_for_step schedule_signoff_subflows pre
+    wolf_inject_for_step schedule_signoff_subflows post
     puts [wolf_sep]
 }

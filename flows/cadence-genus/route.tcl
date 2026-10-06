@@ -20,7 +20,9 @@ create_flow_step -name run_route -owner wolf {
 
     route_design
 
-    check_drc -out_file [file join $::wolf_reports_dir route.drc.rpt]
+    set run_route_drc_file [file join $::wolf_reports_dir route.drc.rpt]
+    check_drc -out_file $run_route_drc_file
+    wolf_file $run_route_drc_file
 
     wolf_inject_for_step run_route post
     puts [wolf_sep]

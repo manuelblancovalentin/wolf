@@ -46,6 +46,16 @@ proc wolf_error {text} {
     puts "[ansicolor::+ bold red]\[ERROR\][ansicolor::+] [ansicolor::+ blue]$text[ansicolor::+]"
 }
 
+# Announces a file a step just wrote (a report, a netlist, a handoff
+# bundle) in its own color -- distinct from wolf_step's blue banners and
+# wolf_info's yellow tag -- so a scrollback full of otherwise-monochrome
+# Genus/Innovus output has an unmistakable marker for "here's something
+# that landed on disk". Call this right after the write, with the exact
+# path written.
+proc wolf_file {path} {
+    puts "[ansicolor::+ bold cyan]\[FILE\][ansicolor::+] [ansicolor::+ cyan]$path[ansicolor::+]"
+}
+
 # Each entry is either a file path (sourced) or inline Tcl (evaluated at
 # the global scope). An inline snippet's error is reported but does not
 # abort the step -- a bad one-off injection shouldn't take down a whole

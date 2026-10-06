@@ -175,7 +175,7 @@ create_flow_step -name elaborate -owner wolf {
 create_flow_step -name uniquify_modules -owner wolf {
     wolf_step "uniquify_modules"
     wolf_inject_for_step uniquify_modules pre
-    uniquify
+    uniquify $::wolf_design_top
     wolf_inject_for_step uniquify_modules post
     puts [wolf_sep]
 }
@@ -353,7 +353,9 @@ create_flow_step -name run_syn_generic -owner wolf {
     wolf_inject_for_step run_syn_generic pre
 
     syn_generic
-    write_hdl > [file join $::wolf_outputs_dir $::wolf_design_name.generic.v]
+    set run_syn_generic_netlist [file join $::wolf_outputs_dir $::wolf_design_name.generic.v]
+    write_hdl > $run_syn_generic_netlist
+    wolf_file $run_syn_generic_netlist
 
     wolf_inject_for_step run_syn_generic post
     puts [wolf_sep]
@@ -364,7 +366,9 @@ create_flow_step -name run_syn_map -owner wolf {
     wolf_inject_for_step run_syn_map pre
 
     syn_map
-    write_hdl > [file join $::wolf_outputs_dir $::wolf_design_name.mapped.v]
+    set run_syn_map_netlist [file join $::wolf_outputs_dir $::wolf_design_name.mapped.v]
+    write_hdl > $run_syn_map_netlist
+    wolf_file $run_syn_map_netlist
 
     wolf_inject_for_step run_syn_map post
     puts [wolf_sep]
@@ -376,7 +380,9 @@ create_flow_step -name run_syn_opt -owner wolf {
 
     syn_opt
     check_design -unresolved
-    write_hdl > [file join $::wolf_outputs_dir $::wolf_design_name.opt.v]
+    set run_syn_opt_netlist [file join $::wolf_outputs_dir $::wolf_design_name.opt.v]
+    write_hdl > $run_syn_opt_netlist
+    wolf_file $run_syn_opt_netlist
 
     wolf_inject_for_step run_syn_opt post
     puts [wolf_sep]
@@ -393,34 +399,44 @@ create_flow_step -name run_syn_opt -owner wolf {
 #-------------------------------------------------------------------------
 
 create_flow_step -name report_start -owner wolf {
-    wolf_step "report_synth: $::wolf_design_name / [get_db flow_report_name]"
+    wolf_step "$::wolf_design_name / [get_db flow_report_name]"
     wolf_inject_for_step report_start pre
     wolf_inject_for_step report_start post
 }
 
 create_flow_step -name report_area_genus -owner wolf {
     wolf_inject_for_step report_area_genus pre
-    report_area > [file join $::wolf_reports_dir "area.[get_db flow_report_name].rpt"]
+    set report_area_genus_file [file join $::wolf_reports_dir "area.[get_db flow_report_name].rpt"]
+    report_area > $report_area_genus_file
+    wolf_file $report_area_genus_file
     wolf_inject_for_step report_area_genus post
 }
 
 create_flow_step -name report_timing_summary_late_genus -owner wolf {
     wolf_inject_for_step report_timing_summary_late_genus pre
-    report_timing_summary -checks {setup drv} \
-        > [file join $::wolf_reports_dir "timing.[get_db flow_report_name].rpt"]
+    set report_timing_summary_late_genus_file \
+        [file join $::wolf_reports_dir "timing.[get_db flow_report_name].rpt"]
+    report_timing_summary -checks {setup drv} > $report_timing_summary_late_genus_file
+    wolf_file $report_timing_summary_late_genus_file
     wolf_inject_for_step report_timing_summary_late_genus post
 }
 
 create_flow_step -name report_late_paths -owner wolf {
     wolf_inject_for_step report_late_paths pre
-    report_timing -check setup -nworst 5 \
-        > [file join $::wolf_reports_dir "late_paths.[get_db flow_report_name].rpt"]
+    # report_timing has no -check flag (confirmed against a real Genus
+    # TUI-204 rejection) -- -nworst alone reports the worst paths across
+    # every active cost group/view, which is what "late paths" means here.
+    set report_late_paths_file [file join $::wolf_reports_dir "late_paths.[get_db flow_report_name].rpt"]
+    report_timing -nworst 5 > $report_late_paths_file
+    wolf_file $report_late_paths_file
     wolf_inject_for_step report_late_paths post
 }
 
 create_flow_step -name report_power_genus -owner wolf {
     wolf_inject_for_step report_power_genus pre
-    report_power > [file join $::wolf_reports_dir "power.[get_db flow_report_name].rpt"]
+    set report_power_genus_file [file join $::wolf_reports_dir "power.[get_db flow_report_name].rpt"]
+    report_power > $report_power_genus_file
+    wolf_file $report_power_genus_file
     wolf_inject_for_step report_power_genus post
 }
 
@@ -429,13 +445,17 @@ create_flow_step -name report_power_genus -owner wolf {
 # pass rather than left opt-syn_opt-only.
 create_flow_step -name report_hierarchy_genus -owner wolf {
     wolf_inject_for_step report_hierarchy_genus pre
-    report_hierarchy > [file join $::wolf_reports_dir "hierarchy.[get_db flow_report_name].rpt"]
+    set report_hierarchy_genus_file [file join $::wolf_reports_dir "hierarchy.[get_db flow_report_name].rpt"]
+    report_hierarchy > $report_hierarchy_genus_file
+    wolf_file $report_hierarchy_genus_file
     wolf_inject_for_step report_hierarchy_genus post
 }
 
 create_flow_step -name report_messages_genus -owner wolf {
     wolf_inject_for_step report_messages_genus pre
-    report_messages > [file join $::wolf_reports_dir "messages.[get_db flow_report_name].rpt"]
+    set report_messages_genus_file [file join $::wolf_reports_dir "messages.[get_db flow_report_name].rpt"]
+    report_messages > $report_messages_genus_file
+    wolf_file $report_messages_genus_file
     wolf_inject_for_step report_messages_genus post
 }
 

@@ -117,6 +117,39 @@ automatically on the technology package declaring LEF views) and
 real and resolved today -- see
 [Physical views, floorplan DEF, and MMMC](#physical-views-floorplan-def-and-mmmc).
 
+### Implementation (Innovus) flows: floorplan/prects/cts/postcts/route/postroute
+
+[`floorplanning.tcl`](../flows/cadence-genus/floorplanning.tcl),
+[`cts.tcl`](../flows/cadence-genus/cts.tcl),
+[`route.tcl`](../flows/cadence-genus/route.tcl), and
+[`postroute.tcl`](../flows/cadence-genus/postroute.tcl) carry the real
+Innovus commands the reference flow's own YAML spells out verbatim
+(`CMD_set_cong_aware`, `CMD_check_place`, `CMD_check_design_cts`,
+`CMD_check_placement`, `run_place_opt`, `add_clock_tree`, `run_route`,
+`run_opt_postroute`, ...), plus a shared `report_floorplan`/`report_prects`/
+`report_postcts`/`report_postroute` reporting sub-flow (same reuse pattern
+as `report_synth`) and a `signoff` entry point.
+
+Several steps are, deliberately, extension points rather than guessed
+content: `add_post_syn_constraints`, `create_fplan`,
+`add_clock_route_types`, and `PPA_recipe_set_path_group_options` need
+project-specific data (die size, post-synthesis constraint patches,
+non-default clock routing rules) WOLF does not resolve; `lec`, `DRC`,
+`LVS`, `create_virtuoso_lib`, `innovus_to_tempus`, `innovus_to_quantus`,
+and `schedule_signoff_subflows` depend on Conformal/Calibre/Tempus/Quantus
+conventions WOLF has no visibility into.
+`report_early_summary_innovus`/`report_early_paths`/
+`report_late_summary_innovus` are also extension points -- not because
+nothing is known about them, but because the real read-only Innovus
+command for a timing *summary* (`timeDesign`, in some modes) can also
+perform real optimization as a side effect, and guessing the wrong flag
+combination risks silently changing the design rather than just erroring.
+
+None of this is driven by `wolf run` yet -- there is no Innovus
+equivalent of `run_genus`/`allocate_genus_run` on the Python side. The
+Tcl is real and forkable (`wolf flow init`) today; wiring an actual
+`wolf run -from floorplan -to postroute` is separate, future work.
+
 ## The Flowtool project descriptor (flow.yaml)
 
 WOLF ships its own generic `flow.yaml` Flowtool project descriptor
