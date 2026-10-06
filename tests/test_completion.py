@@ -64,6 +64,14 @@ class CompletionProtocolTests(unittest.TestCase):
         self.assertEqual(candidates(self.parser, ["run", "--backend=o"]),
                          ["--backend=orfs"])
 
+    def test_stage_names_complete_for_run_from_and_to(self):
+        """-from/-to (the flow stage range flags) complete against the
+        real, fixed stage names Cadence Genus runs validate against
+        (STAGE_ORDER) -- the one thing that makes "which stage do I
+        even pass here" discoverable without reading the flow Tcl."""
+        self.assertEqual(candidates(self.parser, ["run", "-from", ""]), ["syn_generic", "syn_map", "syn_opt"])
+        self.assertEqual(candidates(self.parser, ["run", "-to", "syn_"]), ["syn_generic", "syn_map", "syn_opt"])
+
     def test_package_identifiers_complete_for_info_and_install(self):
         self.assertEqual(candidates(self.parser, ["install", "r"]), ["rtl/aes", "rtl/ibex", "rtl/ibex-fabulous-mvp"])
         self.assertEqual(candidates(self.parser, ["package", "info", "p"]), ["pdk/asap7"])

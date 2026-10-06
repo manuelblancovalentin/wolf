@@ -98,11 +98,23 @@ def _positional_count(parser: argparse.ArgumentParser, words: list[str]) -> int:
     return count
 
 
+def _run_stage_names() -> tuple[str, ...]:
+    """The real stage names -from/-to accept -- a fixed, small set
+    (STAGE_ORDER) WOLF's own Cadence Genus backend already validates
+    against regardless of which flow (bundled default or a
+    flow.package) is active, so no flow-Tcl parsing is needed here to
+    offer them as completions."""
+    from wolf.backend.cadence_genus import STAGE_ORDER
+    return STAGE_ORDER
+
+
 def _value_candidates(path: tuple[str, ...], option: str) -> Iterable[str]:
     if path == ("run",) and option == "--environment":
         return _environment_names()
     if path == ("run",) and option == "--backend":
         return backend_names()
+    if path == ("run",) and option in ("-from", "-to"):
+        return _run_stage_names()
     if path == ("status",) and option == "--environment":
         return _environment_names()
     return ()
