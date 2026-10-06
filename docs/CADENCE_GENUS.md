@@ -19,7 +19,9 @@ however faithful the netlist is.
 
 Every step this run performs -- and Flowtool, not WOLF, sequences and
 checkpoints them -- is defined in real, version-controlled Tcl:
-[`flows/cadence-genus/flow.tcl`](../flows/cadence-genus/flow.tcl) and
+[`flows/cadence-genus/synthesis.tcl`](../flows/cadence-genus/synthesis.tcl),
+[`flows/cadence-genus/common_flows.tcl`](../flows/cadence-genus/common_flows.tcl),
+[`flows/cadence-genus/common_steps.tcl`](../flows/cadence-genus/common_steps.tcl), and
 [`flows/cadence-genus/presentation.tcl`](../flows/cadence-genus/presentation.tcl).
 Open them, read them, or clone them:
 
@@ -39,64 +41,80 @@ provides its own `flow.tcl`).
 
 ### Steps
 
+Every real Cadence Stylus reference-flow step this flow performs is its
+own separately named, separately checkpointable `create_flow_step` --
+deliberately *not* merged into one big elaboration step, so a project can
+comment out, reorder, or override any single one without touching the
+rest, matching the reference flow's own step-by-step YAML structure:
+
 ```text
-create_flow_step -name elaborate   -owner design  { ... } -write_db
-create_flow_step -name syn_generic -owner cadence { ... } -write_db
-create_flow_step -name syn_map     -owner cadence { ... } -write_db
-create_flow_step -name syn_opt     -owner cadence { ... } -write_db
+syn_generic:  block_start avoid_module_renaming read_mmmc apply_clock_derate
+              read_physical read_hdl elaborate uniquify_modules
+              preserve_blocks preserve_instances read_power_intent
+              run_init_design read_def init_genus set_dont_use
+              prevent_flattening max_routing_layer commit_power_intent
+              create_cost_group run_syn_generic block_finish report_synth
+syn_map:      block_start init_genus set_dont_use run_syn_map block_finish
+              report_synth genus_to_lec
+syn_opt:      block_start init_genus run_syn_opt block_finish report_synth
+              genus_to_lec genus_to_clp genus_to_innovus
+              build_sim_testbench build_xsim_files
+report_synth: report_start init_genus report_area_genus
+              report_timing_summary_late_genus report_late_paths
+              report_power_genus report_hierarchy_genus
+              report_messages_genus report_finish
 ```
 
-`elaborate` is `-owner design` because what RTL is read and how it
-elaborates is the one part of this flow every design customizes; the three
-synthesis steps are `-owner cadence` because they need no per-design
-customization. `-write_db` on all four means Flowtool checkpoints
-immediately after each step's real work, in the same live session -- see
+(`report_synth` is itself a reusable sub-flow, referenced by name inside
+each of the three stages above -- it runs after every stage, not only the
+last one, so PPA is visible at each point. See
+[`synthesis.tcl`](../flows/cadence-genus/synthesis.tcl) and
+[`common_flows.tcl`](../flows/cadence-genus/common_flows.tcl).)
+
+`-write_db` sits on `elaborate`, `run_init_design`, `run_syn_generic`,
+`run_syn_map`, `run_syn_opt`, `block_finish`, and `genus_to_innovus` --
+Flowtool checkpoints immediately after each one's real work, in the same
+live session -- see
 [Checkpointing and resuming a run](#checkpointing-and-resuming-a-run).
+`init_genus`/`set_dont_use` re-run at the start of `syn_map`/`syn_opt` too
+(not only `syn_generic`), since each stage now executes as its own
+Flowtool/Genus invocation (see
+[Why -interactive and friends apply per stage](#why-interactive-and-friends-apply-per-stage))
+that restores a checkpoint rather than inheriting a live session.
 
-`elaborate`'s body: configure resources, load technology/overrides, read
-physical views and elaborate (physical-aware automatically whenever LEF
-views are configured -- see
-[Physical views, floorplan DEF, and MMMC](#physical-views-floorplan-def-and-mmmc)),
-read constraints, check the design. `syn_generic`'s body: mark PDK-declared
-dont-use cells, group the standard Cadence Genus synthesis cost paths, run
-`syn_generic`, report area, write the generic netlist. `syn_map`/`syn_opt`
-run `syn_map`/`syn_opt`, report area, write their netlist; `syn_opt`
-additionally does the final `check_design`/hierarchy/message reports.
+### Steps WOLF does not resolve a value for yet
 
-### What was intentionally left out, and why
+`apply_clock_derate`, `preserve_blocks`, `preserve_instances`,
+`read_power_intent`, `max_routing_layer`, and `commit_power_intent` are
+real, always-present, always-run steps -- not commented out, not left
+undefined -- but each is guarded on a `wolf_*` value
+(`wolf_clock_derate_early`/`_late`, `wolf_preserve_blocks`,
+`wolf_preserve_instances`, `wolf_power_intent_file`,
+`wolf_max_routing_layers`) that `flow-config.tcl` always emits empty today,
+since no PDK/environment/design field resolves one yet. A guarded step
+quietly skips (prints which value is missing) rather than erroring; wiring
+one in later means resolving the value in `wolf.environment`/
+`wolf.backend.cadence_genus`, not editing `synthesis.tcl`.
 
-The reference production TSMC65 flow (read for structure only, never
-copied) does considerably more than this. Dropped, with the specific
-reason for each:
+`genus_to_lec`, `genus_to_clp`, `build_sim_testbench`, and
+`build_xsim_files` are real, always-invokable steps too, but their bodies
+are intentionally left as extension points (banner + `wolf_inject_for_step`
+only, same precedent as the reference flow's own `block_start`) rather
+than WOLF fabricating Conformal LEC/CLP dofile syntax or a testbench/
+compile-script shape it has no visibility into. Fill one in via
+`backend.cadence-flowtool.inject.<step>.<pre|post>`, or fork this flow
+(`wolf flow init`) and write the real command directly.
 
-- **MMMC generation** (library sets per threshold-voltage/track, RC
-  corners, delay corners, constraint modes, analysis views, all generated
-  from a `setup.yaml` MMMC section): this is a genuine multi-corner
-  technology-model feature. WOLF's technology model today is single
-  corner/single flat SDC; adding real MMMC needs that model expanded first,
-  not guessed at here. Tracked as a follow-up, not implemented.
-- **`apply_clock_derate`**: depends on the same multi-corner analysis-view
-  machinery as MMMC: no analysis views yet, nothing to derate per-view.
-- **`uniquify_modules`/`preserve_blocks`/`preserve_instances`**: these
-  implement a specific hierarchy-preservation *policy* (which modules/
-  instances a project chooses to keep un-flattened) driven by
-  project-specific config lists (`setup.yaml`'s `preserve_modules` etc.)
-  that WOLF's environment schema has no equivalent of; nothing to hang this
-  off without inventing that config surface first.
-- **`read_power_intent`** (UPF/CPF): no power-intent input exists anywhere
-  in WOLF's resolved context yet; would need its own new config field,
-  analogous to how `constraints.floorplan_def` was added for DEF.
-- **`genus_to_lec`/`genus_to_clp`** (LEC/CLP equivalence-checking
-  integration): these schedule *separate* verification flows/tools
-  (`write_do_lec`, `write_clp_script`) entirely outside synthesis itself,
-  gated by feature flags this flow doesn't model.
+Still genuinely not modeled anywhere in WOLF's resolved context, and so
+not present even as a guarded extension point: multi-corner MMMC
+*generation* beyond what `wolf.environment`'s technology catalog already
+resolves (named analysis views/delay corners are supported; see
+[Physical views, floorplan DEF, and MMMC](#physical-views-floorplan-def-and-mmmc)).
 
-Kept (added on top of what an earlier revision of this flow had), per
-explicit instruction that these belong in WOLF's own default flow:
 **`read_physical`/`init_design`** (physical-aware synthesis, gated
 automatically on the technology package declaring LEF views) and
-**`read_def`** (a floorplan DEF, via the new `constraints.floorplan_def`
-field) -- see
+**`read_def`** (a floorplan DEF, via `constraints.floorplan_def`) are both
+real and resolved today -- see
 [Physical views, floorplan DEF, and MMMC](#physical-views-floorplan-def-and-mmmc).
 
 ## The Flowtool project descriptor (flow.yaml)
@@ -353,12 +371,13 @@ for the real design.
 ## Physical views, floorplan DEF, and MMMC
 
 When the technology package declares `physical.technology_lefs` and/or
-`physical.cell_lefs`, the `elaborate` step becomes physical-aware
-automatically: it loads those LEFs before elaboration and runs `init_design`
-right after. Declaring `constraints.floorplan_def` in `wolf.yaml`
-additionally reads a placed floorplan DEF once the physical design is
-initialized; it is rejected up front if no physical views are configured,
-since there would be no physical database for the DEF to load into.
+`physical.cell_lefs`, the `read_physical` step becomes active automatically
+and loads those LEFs before `elaborate`; `run_init_design` then runs
+`init_design` right after elaboration. Declaring `constraints.floorplan_def`
+in `wolf.yaml` additionally reads a placed floorplan DEF (the `read_def`
+step) once the physical design is initialized; it is rejected up front if
+no physical views are configured, since there would be no physical
+database for the DEF to load into.
 
 ```yaml
 constraints:
@@ -411,13 +430,13 @@ single corner's own split files) rather than cross-corner contamination.
 
 Once MMMC is active, two Genus behaviors are not optional, and `synthesis.tcl`
 accounts for both (each confirmed against the real failure before fixing it):
-`init_elaborate` always calls `init_design` (Genus otherwise refuses
+`run_init_design` always calls `init_design` (Genus otherwise refuses
 `syn_generic` with "Please use init_design command prior to syn_gen
 command", regardless of whether physical/LEF views are configured), and
 `create_cost_group` calls `set_interactive_constraint_modes [all_constraint_modes]`
 before its `group_path` calls (Genus otherwise refuses with "SDC command
 requires a constraint mode specification" once more than one constraint
-mode exists). `init_elaborate` also skips its own plain `read_sdc` when MMMC
+mode exists). `elaborate` also skips its own plain `read_sdc` when MMMC
 is active, since each corner's `create_constraint_mode -sdc_files` already
 points at the same generated `constraints.sdc`.
 
@@ -425,21 +444,6 @@ points at the same generated `constraints.sdc`.
 (it writes its own `<design>.mmmc.tcl` alongside the netlist/SDC/init
 script, listing every corner) -- `genus_to_innovus` needed no changes for
 this.
-
-### Physical views, floorplan DEF, and MMMC
-
-When the technology package declares `physical.technology_lefs` and/or
-`physical.cell_lefs`, the `elaborate` step becomes physical-aware
-automatically: it loads those LEFs before elaboration and runs `init_design`
-right after. Declaring `constraints.floorplan_def` in `wolf.yaml`
-additionally reads a placed floorplan DEF once the physical design is
-initialized; it is rejected up front if no physical views are configured,
-since there would be no physical database for the DEF to load into.
-
-```yaml
-constraints:
-  floorplan_def: ./floorplans/demo.def
-```
 
 ## Extra constraints (`constraints.files`/`constraints.lines`)
 

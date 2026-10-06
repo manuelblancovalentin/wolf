@@ -845,6 +845,16 @@ def prepare_genus_inputs(
         f"set wolf_cell_lefs {_tcl_list(tuple(str(path) for path in cell_lefs))}\n"
         f"set wolf_floorplan_def "
         f"{_tcl_quote(str(context.floorplan_def)) if context.floorplan_def else '\"\"'}\n"
+        # Not resolved from any PDK/environment field yet -- always empty,
+        # so the guarded steps in synthesis.tcl that read these quietly
+        # skip rather than running on a fabricated value. See
+        # synthesis.tcl's own header for what each one would feed.
+        f"set wolf_clock_derate_early \"\"\n"
+        f"set wolf_clock_derate_late \"\"\n"
+        f"set wolf_preserve_blocks {{}}\n"
+        f"set wolf_preserve_instances {{}}\n"
+        f"set wolf_power_intent_file \"\"\n"
+        f"set wolf_max_routing_layers \"\"\n"
         f"array set wolf_inject {{}}\n"
         f"{inject_lines}",
         encoding="utf-8",

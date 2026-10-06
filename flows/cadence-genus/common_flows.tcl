@@ -45,14 +45,27 @@ set_db flow_header_tcl {
     file mkdir [file normalize [file join [get_db flow_report_directory] [get_db flow_report_name]]]
 }
 
+# report_synth: run after every synthesis stage below, not only the last
+# one -- see synthesis.tcl's own header on how its steps pick up a
+# per-stage report filename automatically via [get_db flow_report_name].
+create_flow -name report_synth -owner wolf -tool genus -tool_options -disable_user_startup \
+    {report_start init_genus report_area_genus report_timing_summary_late_genus \
+     report_late_paths report_power_genus report_hierarchy_genus report_messages_genus \
+     report_finish}
+
 create_flow -name syn_generic -owner wolf -tool genus -tool_options -disable_user_startup \
-    {block_start init_elaborate set_dont_use create_cost_group run_syn_generic block_finish}
+    {block_start avoid_module_renaming read_mmmc apply_clock_derate \
+     read_physical read_hdl elaborate uniquify_modules preserve_blocks preserve_instances \
+     read_power_intent run_init_design read_def init_genus set_dont_use prevent_flattening \
+     max_routing_layer commit_power_intent create_cost_group run_syn_generic block_finish \
+     report_synth}
 
 create_flow -name syn_map -owner wolf -tool genus -tool_options -disable_user_startup \
-    {block_start run_syn_map block_finish}
+    {block_start init_genus set_dont_use run_syn_map block_finish report_synth genus_to_lec}
 
 create_flow -name syn_opt -owner wolf -tool genus -tool_options -disable_user_startup \
-    {block_start run_syn_opt block_finish genus_to_innovus}
+    {block_start init_genus run_syn_opt block_finish report_synth genus_to_lec genus_to_clp \
+     genus_to_innovus build_sim_testbench build_xsim_files}
 
 create_flow -name floorplan -owner wolf -tool innovus -tool_options -disable_user_startup \
     {block_start init_implementation init_floorplan add_tracks block_finish}
