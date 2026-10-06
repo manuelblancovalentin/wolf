@@ -43,7 +43,9 @@ from wolf.package.installer import PackageInstaller
 from wolf.package.registry import PackageRegistry
 from wolf.package.store import PackageStore
 from wolf.paths import builtin_flow_root, environments_dir
-from wolf.project_tree import PER_DESIGN_INPUT_CATEGORIES, ProjectTreeScan, scan_design, scan_project_tree
+from wolf.project_tree import (
+    PER_DESIGN_INPUT_CATEGORIES, ProjectTreeScan, scaffold_project_tree, scan_design, scan_project_tree,
+)
 
 
 _MODULE_RE = re.compile(r"^\s*module\s+([A-Za-z_][A-Za-z0-9_$]*)", re.MULTILINE)
@@ -1579,7 +1581,18 @@ class EnvWizardApp(App[None]):
         finally:
             temporary.unlink(missing_ok=True)
 
-        self.notify(f"Saved WOLF environment {self._name!r} at {self._path}")
+        message = f"Saved WOLF environment {self._name!r} at {self._path}"
+        if self.project_root and self.design_name and Path(self.project_root).is_dir():
+            # The moment a project root exists and a design name is
+            # known, its standard tree is a contract, not something the
+            # user has to remember to scaffold separately -- same
+            # directories `wolf env auto-setup` creates, created here on
+            # every save, idempotently (an already-complete tree is left
+            # untouched).
+            created = scaffold_project_tree(Path(self.project_root), self.design_name)
+            if created:
+                message += f"; created {len(created)} missing project director{'y' if len(created) == 1 else 'ies'}"
+        self.notify(message)
         self._dirty = False
         self._update_subtitle()
         if close:

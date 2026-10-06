@@ -205,7 +205,14 @@ fill in by hand.
 Saving also copies any RTL source that isn't already living under
 `<project_root>/inputs/hdl/<design_name>/` into that directory, rewriting
 the stored path to the copy -- a source added by browsing to some file
-elsewhere ends up owned by the project, not left pointing outside it.
+elsewhere ends up owned by the project, not left pointing outside it. And
+whenever project root exists and a design name is known, saving scaffolds
+every missing standard directory for it (`wolf.project_tree.
+scaffold_project_tree`, the same convention `wolf env auto-setup` itself
+creates) -- a project the scan found only partially populated (hdl there,
+constraints not written yet, say) gets the rest filled in automatically,
+not left as a diagnosis you have to act on by hand with a separate
+`wolf env auto-setup` call.
 
 The Technology entry opens a submenu (PDK package, then track, then vth(s),
 then metal stack) that stays open across all four picks and shows each

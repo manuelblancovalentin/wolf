@@ -1,13 +1,17 @@
-"""Read-only inspection of a WOLF project root's inputs/outputs/workspace
-tree, against the same convention `wolf env auto-setup` scaffolds.
+"""Inspection and scaffolding of a WOLF project root's inputs/outputs/
+workspace tree, against the one convention both `wolf env auto-setup` and
+`wolf env menu` scaffold.
 
-Pure filesystem inspection, no caching, no Textual dependency -- safe to
-import from both the `wolf env menu` wizard and any future `wolf`
-subcommand. A later `.wolf` project metadata file (not built yet) is meant
-to make repeat scans cheap by recording what was already found instead of
-re-walking the tree every time; nothing here depends on that existing.
+No caching, no Textual dependency -- safe to import from both the
+`wolf env menu` wizard and any `wolf` subcommand. A later `.wolf` project
+metadata file (not built yet) is meant to make repeat scans cheap by
+recording what was already found instead of re-walking the tree every
+time; nothing here depends on that existing.
 
-Never writes anything. Every function here only reads.
+Every function here is read-only except `scaffold_project_tree`, the one
+explicit writer -- it only ever creates directories (mkdir, never deletes
+or overwrites), and is safe to call repeatedly (idempotent, same as
+`wolf env auto-setup` itself already was).
 """
 
 from __future__ import annotations
@@ -27,6 +31,36 @@ PER_DESIGN_INPUT_CATEGORIES = ("calibre", "constraints", "env", "floorplans", "h
 SHARED_LIB_SUBDIRS = ("gds", "lef", "spice", "timing", "verilog")
 
 _HDL_SUFFIXES = (".v", ".sv", ".vhd", ".vhdl")
+
+
+def scaffold_project_tree(project_root: Path, design_name: str) -> list[Path]:
+    """Create every directory a project root is expected to have for one
+    design -- project_root itself, inputs/, outputs/ (+ outputs/<design>),
+    workspace/, inputs/<category>/<design> for every
+    PER_DESIGN_INPUT_CATEGORIES, and inputs/lib/<subdir> for every
+    SHARED_LIB_SUBDIRS -- matching exactly what `wolf env auto-setup`
+    scaffolds. Only creates; never deletes or overwrites, and an
+    already-complete tree is left untouched (mkdir(..., exist_ok=True)),
+    so calling this on every save is as safe as calling it once by hand.
+    Returns the paths that were actually newly created (empty if the
+    tree was already complete).
+    """
+    planned: list[Path] = [
+        project_root,
+        project_root / "inputs",
+        project_root / "outputs",
+        project_root / "outputs" / design_name,
+        project_root / "workspace",
+    ]
+    for category in PER_DESIGN_INPUT_CATEGORIES:
+        planned.append(project_root / "inputs" / category / design_name)
+    for shared in SHARED_LIB_SUBDIRS:
+        planned.append(project_root / "inputs" / "lib" / shared)
+
+    created = [path for path in planned if not path.is_dir()]
+    for path in planned:
+        path.mkdir(parents=True, exist_ok=True)
+    return created
 
 
 def _design_candidates_in_category(category_dir: Path, category: str) -> dict[str, Path]:

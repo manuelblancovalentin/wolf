@@ -19,7 +19,7 @@ from wolf.environment import (
 )
 from wolf.legacy import LegacyCommandError, run_env
 from wolf.paths import environments_dir
-from wolf.project_tree import PER_DESIGN_INPUT_CATEGORIES, SHARED_LIB_SUBDIRS
+from wolf.project_tree import PER_DESIGN_INPUT_CATEGORIES, SHARED_LIB_SUBDIRS, scaffold_project_tree
 from wolf import ui
 
 
@@ -259,16 +259,12 @@ def command_auto_setup(args: argparse.Namespace) -> int:
         planned.append(project_root / "inputs" / category / design_name)
     for shared in SHARED_LIB_SUBDIRS:
         planned.append(project_root / "inputs" / "lib" / shared)
-
-    created = [path for path in planned if not path.is_dir()]
-    for path in planned:
-        path.mkdir(parents=True, exist_ok=True)
+    created = set(scaffold_project_tree(project_root, design_name))
 
     for path in planned:
         relative = path.relative_to(project_root) if path != project_root else Path(".")
         ui.key_value(str(relative), "created" if path in created else "already present")
     ui.success(f"Project directory structure ready at {project_root}")
-    return 0
     return 0
 
 

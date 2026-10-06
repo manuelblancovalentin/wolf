@@ -502,6 +502,60 @@ class EnvWizardEndToEndTests(unittest.TestCase):
         self.assertEqual(
             document["constraints"], {"files": [str((constraints_dir / "top.constraints.sdc").resolve())]},
         )
+        # Saving must have scaffolded every missing standard directory --
+        # not just left the scan's "missing: ..." list as a diagnosis.
+        for category in ("calibre", "env", "floorplans", "scripts", "tb"):
+            self.assertTrue((existing_root / "inputs" / category / "top").is_dir(), category)
+        self.assertTrue((existing_root / "outputs" / "top").is_dir())
+        self.assertTrue((existing_root / "workspace").is_dir())
+        for lib_subdir in ("gds", "lef", "spice", "timing", "verilog"):
+            self.assertTrue((existing_root / "inputs" / "lib" / lib_subdir).is_dir(), lib_subdir)
+
+    def test_saving_scaffolds_missing_directories_for_a_brand_new_design(self):
+        """Pointing at an existing project root with no tree at all yet
+        (a new design, not found by the scan) must still get its
+        standard directories on save -- "if proj_dir exists, create
+        those folders the moment the user commits to saving" is the
+        contract, not something that only applies to designs the scan
+        already recognized."""
+        existing_root = self.root / "brand-new"
+        existing_root.mkdir()
+
+        async def drive():
+            app = EnvWizardApp("smoketest7")
+            async with app.run_test() as pilot:
+                main_list = app.query_one(OptionList)
+                self._select(main_list, "Project root: not set")
+                await pilot.press("enter")
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "Type a path manually")
+                await pilot.press("enter")
+                await pilot.pause()
+                app.screen.query_one(Input).value = str(existing_root)
+                await pilot.press("enter")
+                await pilot.pause()
+                # Nothing found -- esc continues manually.
+                await pilot.press("escape")
+                await pilot.pause()
+
+                self._select(app.screen.query_one(OptionList), "Design name / top: not set")
+                await pilot.press("enter")
+                await pilot.pause()
+                app.screen.query_one(Input).value = "newdesign"
+                await pilot.press("enter")  # top module name
+                await pilot.pause()
+                await pilot.press("enter")  # design name: blank = same as top
+                await pilot.pause()
+
+                await pilot.press("s")
+                await pilot.pause()
+
+        asyncio.run(drive())
+
+        for category in ("calibre", "constraints", "env", "floorplans", "hdl", "scripts", "tb"):
+            self.assertTrue((existing_root / "inputs" / category / "newdesign").is_dir(), category)
+        self.assertTrue((existing_root / "outputs" / "newdesign").is_dir())
+        self.assertTrue((existing_root / "workspace").is_dir())
 
 
 if __name__ == "__main__":
