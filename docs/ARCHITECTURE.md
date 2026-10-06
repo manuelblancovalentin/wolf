@@ -189,7 +189,7 @@ the run; backend Tcl generation does not depend on the caller's filesystem or
 working directory. Private technology packages can provide the same interface
 without placing proprietary collateral in the WOLF repository.
 
-The context is immutable for a run once materialized. A changed resolved composition creates a new implementation run rather than silently changing the meaning of an existing run.
+The context is immutable for a run once materialized. A changed resolved composition creates a new implementation run rather than silently changing the meaning of an existing run -- except the stage range and execution details a backend explicitly marks volatile when freezing provenance (see `wolf.provenance.freeze_run_manifest`'s `volatile_keys`), since continuing the *same* run to a later stage is expected to change those without that being a new run.
 
 ### Canonical and backend configuration
 

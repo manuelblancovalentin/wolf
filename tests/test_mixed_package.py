@@ -357,6 +357,25 @@ class MixedLanguagePackageTests(unittest.TestCase):
         self.assertEqual(frozen["execution"]["working_directory"], str(run.resolve()))
         self.assertEqual(frozen["execution"]["tool"], "flowtool")
 
+    def test_continuing_a_run_with_a_later_stage_range_reuses_it_not_rejected(self):
+        """The whole point of not passing --clean: an earlier invocation's
+        Flowtool checkpoints are still there for a later -from (see
+        run_genus's own docstring). from_stage/to_stage naturally differ
+        between invocations of the *same* run -- that must not be
+        mistaken for a genuinely different run identity and rejected."""
+        context = self._context()
+        completed = Mock(returncode=0)
+        with patch("wolf.backend.cadence_genus.validate_genus", return_value=(GenusValidation("flowtool", True, "/opt/cadence/flowtool"),)), \
+             patch("wolf.backend.cadence_genus.subprocess.run", return_value=completed):
+            status1, run1 = run_genus(context, clean=True, from_stage="syn_generic", to_stage="syn_generic")
+            status2, run2 = run_genus(context, clean=False, from_stage="syn_map", to_stage="syn_map")
+        self.assertEqual(status1, 0)
+        self.assertEqual(status2, 0)
+        self.assertEqual(run1, run2)
+        frozen = yaml.safe_load((run2 / "wolf.resolved.yaml").read_text())
+        self.assertEqual(frozen["from_stage"], "syn_map")
+        self.assertEqual(frozen["to_stage"], "syn_map")
+
     def test_genus_validation_fails_before_allocating_run(self):
         context = self._context()
         with patch("wolf.backend.cadence_genus.validate_genus", return_value=(GenusValidation("flowtool", False, "unavailable"),)), \

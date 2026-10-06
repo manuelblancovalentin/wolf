@@ -1035,6 +1035,12 @@ def run_genus(
     from wolf.provenance import freeze_run_manifest
     freeze_run_manifest(
         resolved_source, run_directory,
+        # Continuing the same run with a later -from/-to is the whole
+        # point of not passing --clean (see this function's own
+        # docstring) -- these are exactly the fields that trivially
+        # differ just from picking a different stage range or
+        # re-invoking, not from the run actually being a different one.
+        volatile_keys=("from_stage", "to_stage", "synthesis_stages", "outputs", "execution"),
         generated_directory=inputs.directory,
         generated_files={
             **({"genus_technology": str(inputs.technology_script)} if inputs.technology_script else {}),

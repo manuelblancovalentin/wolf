@@ -68,6 +68,31 @@ def materialize_run_manifest(
     return data
 
 
+def _write_immutable(destination: Path, payload: bytes) -> None:
+    """Atomically replace destination's content: write to a sibling temp
+    file, chmod read-only, then hardlink it into place -- the same
+    write-once mechanism a brand-new manifest already used, just also
+    used here to update an existing one (first making the existing file
+    writable long enough to remove it)."""
+    run_directory = destination.parent
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{destination.name}.", suffix=".tmp", dir=run_directory
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.chmod(temporary, 0o444)
+        if destination.exists():
+            os.chmod(destination, 0o644)
+            destination.unlink()
+        os.link(temporary, destination)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 def freeze_run_manifest(
     source: Path,
     run_directory: Path,
@@ -78,8 +103,23 @@ def freeze_run_manifest(
     container_image: Optional[str] = None,
     generated_directory: Optional[Path] = None,
     generated_files: Optional[Mapping[str, str]] = None,
+    volatile_keys: Sequence[str] = (),
 ) -> Path:
-    """Atomically create, or verify, an immutable resolved run manifest."""
+    """Atomically create, or verify, a resolved run manifest.
+
+    A run is a durable identity that may accumulate append-only
+    executions and stage results (continuing to a later -from/-to is the
+    common case, not a new run) -- `volatile_keys` names the top-level
+    keys that are expected to legitimately differ between invocations of
+    the *same* run (e.g. from_stage/to_stage/execution, which trivially
+    change just from picking a different stage range) without that
+    meaning the run's actual identity changed. When every key outside
+    `volatile_keys` still matches the manifest already on disk, this
+    updates it in place instead of rejecting the run; a real identity
+    difference (different RTL, different technology, ...) still raises.
+    Callers that pass nothing (the default) get the original fully
+    strict, byte-for-byte comparison.
+    """
     run_directory = run_directory.expanduser().resolve()
     destination = (destination or run_directory / RUN_MANIFEST_FILENAME).resolve()
     if destination.parent != run_directory:
@@ -95,34 +135,32 @@ def freeze_run_manifest(
     )
     payload = yaml.safe_dump(data, sort_keys=False).encode("utf-8")
     if destination.exists():
+        if destination.read_bytes() == payload:
+            return destination
+        if volatile_keys:
+            existing = yaml.safe_load(destination.read_bytes())
+            identity_matches = isinstance(existing, dict) and all(
+                existing.get(key) == data.get(key)
+                for key in data
+                if key not in volatile_keys
+            ) and set(existing) - set(volatile_keys) == set(data) - set(volatile_keys)
+            if identity_matches:
+                _write_immutable(destination, payload)
+                return destination
+        raise ValueError(
+            f"allocated run already has different immutable provenance: {destination}; "
+            "select a new run identity"
+        )
+
+    run_directory.mkdir(parents=True, exist_ok=True)
+    try:
+        _write_immutable(destination, payload)
+    except FileExistsError:
         if destination.read_bytes() != payload:
             raise ValueError(
                 f"allocated run already has different immutable provenance: {destination}; "
                 "select a new run identity"
             )
-        return destination
-
-    run_directory.mkdir(parents=True, exist_ok=True)
-    descriptor, temporary_name = tempfile.mkstemp(
-        prefix=f".{RUN_MANIFEST_FILENAME}.", suffix=".tmp", dir=run_directory
-    )
-    temporary = Path(temporary_name)
-    try:
-        with os.fdopen(descriptor, "wb") as stream:
-            stream.write(payload)
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.chmod(temporary, 0o444)
-        try:
-            os.link(temporary, destination)
-        except FileExistsError:
-            if destination.read_bytes() != payload:
-                raise ValueError(
-                    f"allocated run already has different immutable provenance: {destination}; "
-                    "select a new run identity"
-                )
-    finally:
-        temporary.unlink(missing_ok=True)
     return destination
 
 

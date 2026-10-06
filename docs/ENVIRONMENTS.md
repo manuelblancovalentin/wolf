@@ -174,7 +174,13 @@ run. During real execution, the exact allocated run receives an immutable
 `wolf.resolved.yaml` before backend files are materialized or stages start.
 Generated backend files are then associated with paths recorded in that frozen
 snapshot. Failed runs retain both the directory and manifest. Reusing a run
-with different resolved provenance is rejected rather than overwriting history.
+with different resolved provenance is rejected rather than overwriting
+history -- except for fields a backend explicitly marks volatile (Cadence
+Genus: `from_stage`/`to_stage`/`synthesis_stages`/`outputs`/`execution`),
+which are expected to legitimately differ between invocations of the *same*
+run (continuing to a later `-from` without `--clean`, the documented way to
+pick up where an earlier invocation's Flowtool checkpoints left off) and get
+updated in place instead of being treated as a different run identity.
 
 ## Editing, cloning, and legacy compatibility
 

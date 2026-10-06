@@ -66,6 +66,35 @@ class RunProvenanceTests(unittest.TestCase):
             freeze_run_manifest(self.source, run)
         self.assertEqual(destination.read_bytes(), original)
 
+    def test_volatile_keys_allow_updating_in_place_when_identity_is_unchanged(self):
+        """A run is a durable identity that may accumulate append-only
+        executions (a later -from/-to, say) -- a key explicitly named
+        volatile is allowed to differ between invocations of the *same*
+        run without that being mistaken for a different run."""
+        run = self.root / "run"
+        destination = freeze_run_manifest(self.source, run, volatile_keys=("backend",))
+        self.assertFalse(destination.stat().st_mode & stat.S_IWUSR)
+
+        data = yaml.safe_load(self.source.read_text(encoding="utf-8"))
+        data["backend"] = {"name": "orfs", "overrides": {"make": {"THREADS": "8"}}}
+        self.source.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+        updated = freeze_run_manifest(self.source, run, volatile_keys=("backend",))
+        self.assertEqual(updated, destination)
+        frozen = yaml.safe_load(destination.read_text(encoding="utf-8"))
+        self.assertEqual(frozen["backend"]["overrides"], {"make": {"THREADS": "8"}})
+        # Still read-only after being updated in place.
+        self.assertFalse(destination.stat().st_mode & stat.S_IWUSR)
+
+    def test_volatile_keys_still_reject_a_real_identity_change(self):
+        run = self.root / "run"
+        freeze_run_manifest(self.source, run, volatile_keys=("backend",))
+
+        data = yaml.safe_load(self.source.read_text(encoding="utf-8"))
+        data["packages"][0]["revision"] = "later-revision"
+        self.source.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "different immutable provenance"):
+            freeze_run_manifest(self.source, run, volatile_keys=("backend",))
+
 
 if __name__ == "__main__":
     unittest.main()
