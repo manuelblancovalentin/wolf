@@ -74,15 +74,25 @@ class ComponentReference:
 
 @dataclass(frozen=True)
 class SourceEntry:
-    """One design.sources entry: a portable package reference or a local path.
+    """One design.sources entry: a portable package reference, a local
+    single file, or a local manifest.toml bundle.
 
     A package entry (e.g. rtl/ibex) is reproducible anywhere `wolf install`
     can resolve it. A path entry is not portable -- cloning or sharing the
-    environment elsewhere does not carry that file along.
+    environment elsewhere does not carry that file along. A manifest entry
+    points at a local manifest.toml (the same schema a published rtl
+    package's own metadata.design.manifests.package already uses --
+    vhdl_packages/vhdl_sources/verilog_sources/fabulous_library_sources/
+    work_library_sources/include_dirs/defines/vhdl_standard) sitting
+    directly in the project tree, not wrapped in an installed package --
+    also not portable the way a package entry is, but preserves the
+    manifest's own compile order and named-library split, which neither a
+    bare path entry nor a directory scan can recover.
     """
 
     package: Optional[str] = None
     path: Optional[str] = None
+    manifest: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -157,14 +167,15 @@ def _parse_source_entries(value: Any, field: str) -> tuple[SourceEntry, ...]:
     for index, item in enumerate(value):
         item_field = f"{field}[{index}]"
         mapping = _mapping(item, item_field)
-        _known_fields(mapping, {"package", "path"}, item_field)
+        _known_fields(mapping, {"package", "path", "manifest"}, item_field)
         package = _optional_string(mapping.get("package"), f"{item_field}.package")
         path = _optional_string(mapping.get("path"), f"{item_field}.path")
-        if bool(package) == bool(path):
-            raise ValueError(f"{item_field} must set exactly one of package or path")
+        manifest_entry = _optional_string(mapping.get("manifest"), f"{item_field}.manifest")
+        if sum(bool(value) for value in (package, path, manifest_entry)) != 1:
+            raise ValueError(f"{item_field} must set exactly one of package, path, or manifest")
         if package and PackageId.parse(package).kind != "rtl":
             raise ValueError(f"{item_field}.package must identify an rtl package")
-        entries.append(SourceEntry(package=package, path=path))
+        entries.append(SourceEntry(package=package, path=path, manifest=manifest_entry))
     return tuple(entries)
 
 
@@ -1073,11 +1084,40 @@ def _checksum_inventory(path: Path) -> dict[str, str]:
 def _design_inputs(manifest: Any, installed: Any) -> tuple[
     tuple[ResolvedSource, ...], tuple[Path, ...], tuple[str, ...], Optional[str], dict[str, str]
 ]:
-    """Resolve generic ordered source metadata, including published TOML bundles."""
+    """Resolve an installed rtl package's generic ordered source metadata,
+    including a published TOML bundle (see _resolve_manifest_bundle)."""
     metadata = manifest.metadata.get("design", {})
     if not isinstance(metadata, dict):
         metadata = {}
     root = installed.content_path.resolve()
+    return _resolve_manifest_bundle(metadata, root)
+
+
+def _local_manifest_sources(manifest_path: Path) -> tuple[
+    tuple[ResolvedSource, ...], tuple[Path, ...], tuple[str, ...], Optional[str], dict[str, str]
+]:
+    """Resolve a local design.sources[].manifest entry -- a manifest.toml
+    sitting directly in the project tree (e.g.
+    inputs/hdl/<design>/manifest.toml), not wrapped in an installed rtl
+    package. Reuses _resolve_manifest_bundle exactly as an installed
+    package's own metadata.design.manifests.package would, by
+    constructing the same {"manifests": {"package": ...}} shape, rooted
+    at the manifest file's own directory -- same schema, same
+    ordering/library-split rules, no separate checksum inventory (a local
+    manifest declares none of its own)."""
+    if not manifest_path.is_file():
+        raise ValueError(f"design.sources manifest does not exist: {manifest_path}")
+    root = manifest_path.parent.resolve()
+    metadata = {"manifests": {"package": manifest_path.name}}
+    return _resolve_manifest_bundle(metadata, root)
+
+
+def _resolve_manifest_bundle(metadata: Mapping[str, Any], root: Path) -> tuple[
+    tuple[ResolvedSource, ...], tuple[Path, ...], tuple[str, ...], Optional[str], dict[str, str]
+]:
+    """Resolve generic ordered source metadata, including published TOML
+    bundles -- shared by an installed rtl package (_design_inputs) and a
+    local design.sources[].manifest entry (_local_manifest_sources)."""
     checksum_path = root / str(metadata.get("checksums", ""))
     checksums = _checksum_inventory(checksum_path)
     checksum_root = checksum_path.parent.resolve()
@@ -1222,6 +1262,17 @@ def _resolve_source_entries(
             defines.extend(pkg_defines)
             vhdl_standard = vhdl_standard or pkg_standard
             checksums.update(pkg_checksums)
+        elif entry.manifest:
+            manifest_path = resolve_stored_path(entry.manifest, profile.path.parent)
+            bundle_sources, bundle_includes, bundle_defines, bundle_standard, bundle_checksums = (
+                _local_manifest_sources(manifest_path)
+            )
+            for source in bundle_sources:
+                sources.append(replace(source, order=len(sources)))
+            include_directories.extend(bundle_includes)
+            defines.extend(bundle_defines)
+            vhdl_standard = vhdl_standard or bundle_standard
+            checksums.update(bundle_checksums)
         else:
             path = resolve_stored_path(entry.path, profile.path.parent)
             if not path.is_file():

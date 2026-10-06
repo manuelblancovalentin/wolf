@@ -197,11 +197,91 @@ workspace:
         self.assertEqual(context.source_files, (local_file.resolve(),))
         self.assertEqual(context.package_revisions["rtl/ibex"], "rtl-rev")
 
+    def test_design_sources_manifest_entry_resolves_a_local_manifest_toml_bundle(self):
+        """A local manifest.toml (the same schema a published rtl package's
+        own metadata.design.manifests.package already uses) sitting
+        directly in the project tree, not wrapped in an installed
+        package -- same ordering and FABULOUS_EFPGA/work library split a
+        published package would get."""
+        design_dir = self.environment / "inputs" / "hdl" / "mixed"
+        manifests_dir = design_dir / "manifests"
+        manifests_dir.mkdir(parents=True)
+        for relative in ("pkg.vhd", "impl.vhd", "fab.v", "work.sv"):
+            (design_dir / relative).write_text("-- fixture\n", encoding="utf-8")
+        (manifests_dir / "vhdl-packages.flist").write_text("pkg.vhd\n", encoding="utf-8")
+        (manifests_dir / "vhdl-sources.flist").write_text("impl.vhd\n", encoding="utf-8")
+        (manifests_dir / "verilog-sources.flist").write_text("fab.v\nwork.sv\n", encoding="utf-8")
+        (manifests_dir / "fabulous-verilog-sources.flist").write_text("fab.v\n", encoding="utf-8")
+        (manifests_dir / "work-verilog-sources.flist").write_text("work.sv\n", encoding="utf-8")
+        (design_dir / "manifest.toml").write_text(
+            "\n".join([
+                'schema_version = 1', 'name = "mixed-rtl"', 'top = "foo"',
+                'vhdl_standard = "93"',
+                'vhdl_packages = "manifests/vhdl-packages.flist"',
+                'vhdl_sources = "manifests/vhdl-sources.flist"',
+                'verilog_sources = "manifests/verilog-sources.flist"',
+                'fabulous_library_sources = "manifests/fabulous-verilog-sources.flist"',
+                'work_library_sources = "manifests/work-verilog-sources.flist"',
+                "",
+            ]),
+            encoding="utf-8",
+        )
+        text = """schema: wolf.environment/v1
+name: demo
+design:
+  name: mixed
+  top: foo
+  sources:
+    - manifest: inputs/hdl/mixed/manifest.toml
+technology:
+  package: pdk/asap7
+flow:
+  package: flow/orfs
+workspace:
+  root: ./work
+"""
+        context = resolve_declarative_environment(
+            load_environment(self._write(text, "manifest-bundle.yaml")),
+            state_root=self.state,
+            environment_directory=self.environment,
+        )
+        self.assertEqual([source.path.name for source in context.sources],
+                          ["pkg.vhd", "impl.vhd", "fab.v", "work.sv"])
+        self.assertEqual([source.language for source in context.sources],
+                          ["vhdl", "vhdl", "verilog", "systemverilog"])
+        self.assertEqual([source.library for source in context.sources],
+                          ["work", "work", "FABULOUS_EFPGA", "work"])
+        self.assertEqual(context.vhdl_standard, "93")
+
+    def test_design_sources_manifest_entry_rejects_a_missing_manifest_toml(self):
+        text = """schema: wolf.environment/v1
+name: demo
+design:
+  name: mixed
+  top: foo
+  sources:
+    - manifest: inputs/hdl/mixed/manifest.toml
+technology:
+  package: pdk/asap7
+flow:
+  package: flow/orfs
+workspace:
+  root: ./work
+"""
+        with self.assertRaisesRegex(ValueError, "does not exist"):
+            resolve_declarative_environment(
+                load_environment(self._write(text, "manifest-missing.yaml")),
+                state_root=self.state,
+                environment_directory=self.environment,
+            )
+
     def test_design_sources_entry_requires_exactly_one_of_package_or_path(self):
         cases = (
             ("design:\n  name: mixed\n  sources:\n    - package: rtl/ibex\n      path: extra/foo.sv\n",
              "exactly one"),
             ("design:\n  name: mixed\n  sources:\n    - {}\n", "exactly one"),
+            ("design:\n  name: mixed\n  sources:\n    - package: rtl/ibex\n      manifest: m.toml\n",
+             "exactly one"),
         )
         for index, (design_block, message) in enumerate(cases):
             text = f"""schema: wolf.environment/v1

@@ -108,6 +108,8 @@ def _scan_modules(sources: list[dict]) -> list[str]:
 def _source_label(entry: dict) -> str:
     if entry.get("package"):
         return f"rtl package: {entry['package']}"
+    if entry.get("manifest"):
+        return f"rtl manifest: {entry['manifest']}"
     return f"local path: {entry.get('path', '')}"
 
 
@@ -676,6 +678,8 @@ class _SourcesScreen(ModalScreen[Optional[list]]):
         entry = self._sources[int(event.option_id)]
         if entry.get("path"):
             _open_in_editor(self.app, Path(entry["path"]))
+        elif entry.get("manifest"):
+            _open_in_editor(self.app, Path(entry["manifest"]))
         else:
             self.app.notify(f"{entry.get('package')} is an installed package, not a single file.")
 
@@ -698,6 +702,25 @@ class _SourcesScreen(ModalScreen[Optional[list]]):
                         self._sources.append({"path": _absolute(value)})
                         self._refresh()
                 self.app.push_screen(_TextScreen("Path to an RTL file"), handle_path)
+            elif method == "manifest":
+                existing = next(
+                    (Path(e["manifest"]).parent for e in reversed(self._sources) if e.get("manifest")), None
+                )
+                start = str(existing or Path.home())
+
+                def handle_manifest_browse(paths: Optional[list]) -> None:
+                    if paths:
+                        for path in paths:
+                            if not any(e.get("manifest") == path for e in self._sources):
+                                self._sources.append({"manifest": path})
+                        self._refresh()
+                self.app.push_screen(
+                    _BrowseScreen(
+                        start, suffixes=(".toml",), title="Browse for a manifest.toml",
+                        label="manifest(s)",
+                    ),
+                    handle_manifest_browse,
+                )
             elif method == "package":
                 entries = [
                     _package_choice(manifest) for manifest in PackageRegistry().manifests()
@@ -722,6 +745,7 @@ class _SourcesScreen(ModalScreen[Optional[list]]):
             _PickScreen("Add a source", [
                 ("Browse filesystem", "browse"),
                 ("Type a path manually", "manual"),
+                ("RTL manifest (manifest.toml)", "manifest"),
                 ("Installed rtl package", "package"),
             ]),
             handle_method,

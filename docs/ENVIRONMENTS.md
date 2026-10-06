@@ -53,8 +53,8 @@ references must use the corresponding `rtl`, `pdk`, and `flow` package kinds.
 
 `design.package` names a single installed `rtl` package as the whole source
 list, as above. A design can instead be assembled from several places with
-`design.sources`, a list where each entry is either a portable package
-reference or a local path:
+`design.sources`, a list where each entry is a portable package reference,
+a local path, or a local manifest bundle:
 
 ```yaml
 design:
@@ -63,17 +63,35 @@ design:
   sources:
     - package: rtl/ibex
     - path: extra/foo.sv
+    - manifest: inputs/hdl/mixed/manifest.toml
 ```
 
-Each entry sets exactly one of `package` or `path`. A `package` entry is
-fully portable: installing that same package anywhere reproduces it. A
-`path` entry is not -- it names a file on this machine, outside any package,
-and is not carried along when the environment is cloned or shared. `path` is
-resolved the same way other stored paths are: relative to the profile's own
-directory, made absolute on import. When `design.sources` is present it
-replaces `design.package`'s source resolution entirely; `design.sources`
-carries no implicit name or top, so set `design.name` (and `design.top` if
-needed) explicitly alongside it.
+Each entry sets exactly one of `package`, `path`, or `manifest`. A `package`
+entry is fully portable: installing that same package anywhere reproduces
+it. A `path` entry is not -- it names a file on this machine, outside any
+package, and is not carried along when the environment is cloned or shared.
+`path` is resolved the same way other stored paths are: relative to the
+profile's own directory, made absolute on import.
+
+A `manifest` entry points at a local `manifest.toml` -- the exact schema a
+published `rtl` package's own `metadata.design.manifests.package` already
+uses (`vhdl_packages`/`vhdl_sources`/`verilog_sources`/
+`fabulous_library_sources`/`work_library_sources`/`include_dirs`/
+`defines`/`vhdl_standard`, each naming an ordered `.flist` file relative to
+the manifest), sitting directly in the project tree rather than wrapped in
+an installed package. Real ESP-derived RTL (e.g. a FABulous eFPGA
+integration) is typically already published with exactly this manifest
+shape; a `manifest` entry resolves it with the same compile order and
+named-library split (`FABULOUS_EFPGA` vs. `work`) a published package
+would get, which neither a bare `path` entry nor a directory scan can
+recover -- a directory scan has no way to know which file must compile
+before which, or which files belong to which named library. Like `path`,
+it is not portable on its own; the manifest and everything its `.flist`s
+reference travel with the project tree, not with the environment profile.
+
+When `design.sources` is present it replaces `design.package`'s source
+resolution entirely; `design.sources` carries no implicit name or top, so
+set `design.name` (and `design.top` if needed) explicitly alongside it.
 
 ## Project directory structure
 
