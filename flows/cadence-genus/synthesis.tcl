@@ -86,6 +86,9 @@ create_flow_step -name read_mmmc -owner wolf {
 
     if {$::wolf_max_cpus_per_server ne ""} {
         set_db max_cpus_per_server $::wolf_max_cpus_per_server
+        wolf_info "max_cpus_per_server: using $::wolf_max_cpus_per_server CPU(s) (resources.threads/GENUS_NUM_CPUS)"
+    } else {
+        wolf_info "max_cpus_per_server: not set (resources.threads/GENUS_NUM_CPUS not configured) -- using Genus's own default"
     }
     if {$::wolf_technology_script ne ""} {
         source $::wolf_technology_script
@@ -271,6 +274,7 @@ create_flow_step -name init_genus -owner wolf {
     wolf_inject_for_step init_genus pre
     if {$::wolf_max_cpus_per_server ne ""} {
         set_db max_cpus_per_server $::wolf_max_cpus_per_server
+        wolf_info "max_cpus_per_server: using $::wolf_max_cpus_per_server CPU(s) (resources.threads/GENUS_NUM_CPUS)"
     }
     wolf_inject_for_step init_genus post
     puts [wolf_sep]
