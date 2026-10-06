@@ -347,6 +347,14 @@ def _setup_yaml_tokens(
     institution-specific directory convention, say) is deliberately not
     included here -- see _render_setup_yaml's technology.generic fallback
     and its error for anything still unresolved after that.
+
+    TRACKS/VTHS render as yaml lists (even for a single value), not bare
+    scalars -- confirmed real usage: a real legacy setup.yaml's own
+    `vths: ${VTHS}` (VTHS a bash array) is consumed by synthesis.tcl's
+    `foreach trk [get_flow_config tracks] { foreach vth [get_flow_config
+    vths] { ... } }`, unioning every (track, vth) pair's library/lef
+    files -- so a run mixing lvt+rvt library sets needs the real list,
+    not a single name.
     """
     technology = context.technology
     tokens = {
@@ -362,10 +370,14 @@ def _setup_yaml_tokens(
         tokens["PDK_DIR"] = str(technology.root)
         if technology.metal_stack:
             tokens["METAL_STACK"] = technology.metal_stack
-        if technology.track:
-            tokens["TRACKS"] = technology.track
-        if technology.vth:
-            tokens["VTHS"] = technology.vth
+        selected_tracks = technology.selected_tracks or (
+            (technology.track,) if technology.track else ()
+        )
+        selected_vths = technology.selected_vths or ((technology.vth,) if technology.vth else ())
+        if selected_tracks:
+            tokens["TRACKS"] = yaml.safe_dump(list(selected_tracks), default_flow_style=True).strip()
+        if selected_vths:
+            tokens["VTHS"] = yaml.safe_dump(list(selected_vths), default_flow_style=True).strip()
     return tokens
 
 
@@ -891,6 +903,8 @@ def prepare_genus_inputs(
             "name": context.technology.name,
             "track": context.technology.track,
             "vth": context.technology.vth,
+            "selected_tracks": list(context.technology.selected_tracks),
+            "selected_vths": list(context.technology.selected_vths),
             "metal_stack": context.technology.metal_stack,
             "timing_corner": context.technology.timing_corner,
             "timing_libraries": [str(path) for path in context.technology.timing_libraries],

@@ -172,22 +172,50 @@ def _technology_tracks(package: str) -> dict:
     return tracks if isinstance(tracks, dict) else {}
 
 
-def _technology_metal_stacks(package: str, track: str, vth: str) -> list[str]:
-    """Every named metal stack declared for one track/vth's lef/
-    qrc_techfiles -- must match wolf.environment's own
-    _STACK_KEYED_FIELDS. Empty means this vth has no named stacks at
-    all (a flat lef list, or none declared yet) -- nothing to pick,
-    WOLF resolves it without technology.metal_stack."""
+def _technology_track_names(package: str) -> list[str]:
+    return sorted(_technology_tracks(package))
+
+
+def _technology_vth_names(package: str, track: str) -> list[str]:
+    """Every vth declared under one track -- track and vth are picked as
+    separate steps (not a combined "track/vth" choice), since a real run
+    may select several vths at once (confirmed real usage: mixing
+    lvt+rvt library sets so Genus can pick cells from whichever fits a
+    given path) while track stays a single choice."""
+    tracks = _technology_tracks(package)
+    track_data = tracks.get(track, {})
+    vths = track_data.get("vths", {}) if isinstance(track_data, dict) else {}
+    return sorted(vths) if isinstance(vths, dict) else []
+
+
+def _technology_metal_stacks_for_vth(package: str, track: str, vth: str) -> set:
     tracks = _technology_tracks(package)
     track_data = tracks.get(track, {})
     vth_data = track_data.get("vths", {}).get(vth, {}) if isinstance(track_data, dict) else {}
     if not isinstance(vth_data, dict):
-        return []
+        return set()
     stacks: set = set()
     for key in ("lef", "qrc_techfiles"):
         value = vth_data.get(key)
         if isinstance(value, dict):
             stacks.update(value)
+    return stacks
+
+
+def _technology_metal_stacks(package: str, track: str, vths: tuple) -> list[str]:
+    """Every named metal stack declared for every one of the selected
+    vths' own lef/qrc_techfiles (must match wolf.environment's own
+    _STACK_KEYED_FIELDS) -- the intersection across all of them, not the
+    union, so a stack picked here is guaranteed to actually exist for
+    every vth the run selected, not just some of them. Empty means at
+    least one selected vth has no named stacks at all (a flat lef list,
+    or none declared yet) -- nothing to pick, WOLF resolves it without
+    technology.metal_stack."""
+    if not vths:
+        return []
+    stacks = _technology_metal_stacks_for_vth(package, track, vths[0])
+    for vth in vths[1:]:
+        stacks &= _technology_metal_stacks_for_vth(package, track, vth)
     return sorted(stacks)
 
 
@@ -773,22 +801,75 @@ class _ConstraintFilesScreen(ModalScreen[Optional[list]]):
         self.dismiss(self._files)
 
 
+class _MultiPickScreen(ModalScreen[Optional[list]]):
+    """A checklist, not a single pick -- 'enter' toggles the highlighted
+    item's membership, 'esc' finishes with whatever's checked (possibly
+    none, possibly all). Used for vth selection: a real run commonly
+    mixes more than one vth's library set in the same synthesis (Genus
+    then picks cells from whichever fits a given path), confirmed real
+    usage (a legacy `vths: ${VTHS}` setup.yaml token, VTHS a bash array)
+    -- unlike track or metal stack, which stay single picks."""
+
+    BINDINGS = [("escape", "done", "Done")]
+
+    def __init__(self, title: str, names: list[str], selected: tuple):
+        super().__init__()
+        self._title = title
+        self._names = names
+        self._selected = set(selected) & set(names)
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="dialog"):
+            yield Static(self._title, id="dialog-title")
+            yield OptionList(*self._options())
+            yield Static("enter: toggle — esc: done", id="dialog-hint")
+
+    def _options(self) -> list[Option]:
+        return [
+            Option(f"[{'x' if name in self._selected else ' '}] {name}", id=name)
+            for name in self._names
+        ]
+
+    def _refresh(self) -> None:
+        option_list = self.query_one(OptionList)
+        highlighted = option_list.highlighted
+        option_list.clear_options()
+        for option in self._options():
+            option_list.add_option(option)
+        option_list.highlighted = highlighted
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        event.stop()
+        name = event.option_id
+        if name in self._selected:
+            self._selected.remove(name)
+        else:
+            self._selected.add(name)
+        self._refresh()
+
+    def action_done(self) -> None:
+        self.dismiss(sorted(self._selected))
+
+
 class _TechnologyScreen(ModalScreen[Optional[dict]]):
-    """Pick a PDK package, then its track/vth, then its metal stack --
+    """Pick a PDK package, then its track, then its vth(s) (a checklist,
+    not a single pick -- see _MultiPickScreen), then its metal stack --
     stays open after each pick and refreshes its own labels in place
     (the same "mutable until done" shape _SourcesScreen/
     _ConstraintFilesScreen already use), instead of bouncing back to the
     main menu after every single pick the way a single-shot _PickScreen
     would. escape finishes with whatever's set so far, never None -- the
-    main menu applies it unconditionally."""
+    main menu applies it unconditionally. Track and vth are picked
+    separately, not as one combined "track/vth" choice -- they're not a
+    one-to-one pairing once more than one vth can be selected."""
 
     BINDINGS = [("escape", "done", "Done")]
 
-    def __init__(self, package: Optional[str], track: Optional[str], vth: Optional[str], metal_stack: Optional[str]):
+    def __init__(self, package: Optional[str], track: Optional[str], vths: tuple, metal_stack: Optional[str]):
         super().__init__()
         self._package = package
         self._track = track
-        self._vth = vth
+        self._vths = tuple(vths)
         self._metal_stack = metal_stack
 
     def compose(self) -> ComposeResult:
@@ -798,10 +879,11 @@ class _TechnologyScreen(ModalScreen[Optional[dict]]):
             yield Static("enter: edit — esc: done", id="dialog-hint")
 
     def _options(self) -> list[Option]:
-        track_vth_label = f"{self._track} / {self._vth}" if self._track else "not set"
+        vth_label = ", ".join(self._vths) if self._vths else "not set"
         return [
             Option(f"PDK package: {self._package or 'not set'}", id="package"),
-            Option(f"Track / vth: {track_vth_label}", id="track_vth"),
+            Option(f"Track: {self._track or 'not set'}", id="track"),
+            Option(f"VTH(s): {vth_label}", id="vths"),
             Option(f"Metal stack: {self._metal_stack or 'not set'}", id="metal_stack"),
         ]
 
@@ -815,8 +897,10 @@ class _TechnologyScreen(ModalScreen[Optional[dict]]):
         event.stop()
         if event.option_id == "package":
             self._pick_package()
-        elif event.option_id == "track_vth":
-            self._pick_track_vth()
+        elif event.option_id == "track":
+            self._pick_track()
+        elif event.option_id == "vths":
+            self._pick_vths()
         elif event.option_id == "metal_stack":
             self._pick_metal_stack()
 
@@ -841,50 +925,65 @@ class _TechnologyScreen(ModalScreen[Optional[dict]]):
                     # carry over -- keeping a stale selection around would
                     # silently resolve against the wrong package's vocabulary.
                     self._track = None
-                    self._vth = None
+                    self._vths = ()
                     self._metal_stack = None
                 self._package = value
                 self._refresh()
             _maybe_install(self.app, value, finish)
         self.app.push_screen(_PickScreen("Pick a technology (PDK) package", choices, details), handle)
 
-    def _pick_track_vth(self) -> None:
+    def _pick_track(self) -> None:
         if not self._package:
             self.app.notify("Pick a PDK package first.", severity="warning")
             return
-        tracks = _technology_tracks(self._package)
+        tracks = _technology_track_names(self._package)
         if not tracks:
             self.app.notify(
-                f"{self._package} declares a flat technology (no named tracks/vths) "
+                f"{self._package} declares a flat technology (no named tracks) "
                 "-- nothing to pick.", severity="warning",
             )
             return
-        choices = [
-            (f"{track} / {vth}", f"{track}/{vth}")
-            for track, track_data in sorted(tracks.items())
-            for vth in sorted(track_data.get("vths", {})) if isinstance(track_data, dict)
-        ]
 
         def handle(value: Optional[str]) -> None:
             if value is None:
                 return
-            track, vth = value.split("/", 1)
-            if (track, vth) != (self._track, self._vth):
+            if value != self._track:
+                self._vths = ()
                 self._metal_stack = None
-            self._track = track
-            self._vth = vth
+            self._track = value
             self._refresh()
-        self.app.push_screen(_PickScreen("Pick a track / vth", choices), handle)
+        self.app.push_screen(_PickScreen("Pick a track", [(name, name) for name in tracks]), handle)
+
+    def _pick_vths(self) -> None:
+        if not self._package:
+            self.app.notify("Pick a PDK package first.", severity="warning")
+            return
+        if not self._track:
+            self.app.notify("Pick a track first.", severity="warning")
+            return
+        names = _technology_vth_names(self._package, self._track)
+        if not names:
+            self.app.notify(f"{self._track} declares no vths -- nothing to pick.", severity="warning")
+            return
+
+        def handle(selected: Optional[list]) -> None:
+            if selected is None:
+                return
+            if set(selected) != set(self._vths):
+                self._metal_stack = None
+            self._vths = tuple(selected)
+            self._refresh()
+        self.app.push_screen(_MultiPickScreen(f"Pick vth(s) for {self._track}", names, self._vths), handle)
 
     def _pick_metal_stack(self) -> None:
-        if not self._track or not self._vth:
-            self.app.notify("Pick a track/vth first.", severity="warning")
+        if not self._vths:
+            self.app.notify("Pick at least one vth first.", severity="warning")
             return
-        stacks = _technology_metal_stacks(self._package, self._track, self._vth)
+        stacks = _technology_metal_stacks(self._package, self._track, self._vths)
         if not stacks:
             self.app.notify(
-                f"{self._track}/{self._vth} declares no named metal stacks "
-                "-- nothing to pick, WOLF resolves it without technology.metal_stack.",
+                f"No metal stack is declared for every one of {', '.join(self._vths)} -- "
+                "nothing to pick, WOLF resolves it without technology.metal_stack.",
                 severity="warning",
             )
             return
@@ -898,7 +997,8 @@ class _TechnologyScreen(ModalScreen[Optional[dict]]):
 
     def action_done(self) -> None:
         self.dismiss({
-            "package": self._package, "track": self._track, "vth": self._vth, "metal_stack": self._metal_stack,
+            "package": self._package, "track": self._track, "vths": self._vths,
+            "metal_stack": self._metal_stack,
         })
 
 
@@ -1028,7 +1128,7 @@ class EnvWizardApp(App[None]):
         self.design_top: Optional[str] = None
         self.technology_package: Optional[str] = None
         self.technology_track: Optional[str] = None
-        self.technology_vth: Optional[str] = None
+        self.technology_vths: tuple = ()
         self.technology_metal_stack: Optional[str] = None
         self.flow_package: Optional[str] = None
         self.backend: Optional[str] = None
@@ -1049,7 +1149,7 @@ class EnvWizardApp(App[None]):
             if profile.technology:
                 self.technology_package = profile.technology.package
                 self.technology_track = profile.technology.track
-                self.technology_vth = profile.technology.vth
+                self.technology_vths = profile.technology.vths
                 self.technology_metal_stack = profile.technology.metal_stack
             if profile.flow and profile.flow.package:
                 self.flow_package = profile.flow.package
@@ -1092,7 +1192,8 @@ class EnvWizardApp(App[None]):
         design_label = " / ".join(filter(None, (self.design_name, self.design_top))) or "not set"
         technology_label = self.technology_package or "not set"
         if self.technology_package and self.technology_track:
-            technology_label += f" ({self.technology_track}/{self.technology_vth}"
+            vth_label = "+".join(self.technology_vths) if self.technology_vths else "?"
+            technology_label += f" ({self.technology_track}/{vth_label}"
             technology_label += f", {self.technology_metal_stack})" if self.technology_metal_stack else ")"
         flow_label = self.flow_package or (f"bundled default, backend={self.backend}" if self.backend else "not set")
         workspace_label = self.workspace_root or (
@@ -1296,13 +1397,13 @@ class EnvWizardApp(App[None]):
                 return
             self.technology_package = result["package"]
             self.technology_track = result["track"]
-            self.technology_vth = result["vth"]
+            self.technology_vths = result["vths"]
             self.technology_metal_stack = result["metal_stack"]
             self._refresh()
         self.push_screen(
             _TechnologyScreen(
                 self.technology_package, self.technology_track,
-                self.technology_vth, self.technology_metal_stack,
+                self.technology_vths, self.technology_metal_stack,
             ),
             handle,
         )
@@ -1434,8 +1535,13 @@ class EnvWizardApp(App[None]):
             technology: dict = {"package": self.technology_package}
             if self.technology_track:
                 technology["track"] = self.technology_track
-            if self.technology_vth:
-                technology["vth"] = self.technology_vth
+            if self.technology_vths:
+                # A single vth is still written as a plain string -- the
+                # common case, and the prettier/more familiar yaml -- a
+                # list only when more than one was actually picked.
+                technology["vth"] = (
+                    self.technology_vths[0] if len(self.technology_vths) == 1 else list(self.technology_vths)
+                )
             if self.technology_metal_stack:
                 technology["metal_stack"] = self.technology_metal_stack
             document["technology"] = technology

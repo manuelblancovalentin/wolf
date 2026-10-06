@@ -46,8 +46,21 @@ class ComponentReference:
     package: Optional[str] = None
     name: Optional[str] = None
     top: Optional[str] = None
+    # track/vth: the primary (first-listed) selection, used to resolve the
+    # one flattened variant (lef/gds/qrc_techfiles/timing_corners, ...)
+    # most of the rest of this module still works with. tracks/vths: every
+    # name actually selected -- a real flow mixes multiple vth libraries
+    # in one synthesis run (confirmed against real Tcl: synthesis.tcl's
+    # `foreach trk [get_flow_config tracks] { foreach vth [get_flow_config
+    # vths] { ... } }`, unioning library/lef files across the full
+    # cross product), so technology.track/technology.vth accept a list as
+    # well as a single string -- see _track_or_vth_selection. A single
+    # string is exactly the one-element case: track/vth equal tracks[0]/
+    # vths[0].
     track: Optional[str] = None
     vth: Optional[str] = None
+    tracks: tuple[str, ...] = ()
+    vths: tuple[str, ...] = ()
     metal_stack: Optional[str] = None
 
 
@@ -106,6 +119,27 @@ def _optional_string(value: Any, field: str) -> Optional[str]:
     return value
 
 
+def _track_or_vth_selection(value: Any, field: str) -> tuple[Optional[str], tuple[str, ...]]:
+    """technology.track/technology.vth accept either one name (the
+    original, still the common shape) or a list of names (multi-vth
+    mixing -- confirmed real usage: `vths: ${VTHS}` in a real setup.yaml
+    template, with VTHS a bash array, consumed by synthesis.tcl's
+    `foreach trk [get_flow_config tracks] { foreach vth [get_flow_config
+    vths] { ... } }`, unioning every (track, vth) pair's library/lef
+    files into one library_set). A single string is exactly the
+    one-element-list case: primary is that name, the full selection is
+    (name,)."""
+    if value is None:
+        return None, ()
+    if isinstance(value, str):
+        if not value:
+            raise ValueError(f"{field} must be a nonempty string")
+        return value, (value,)
+    if isinstance(value, list) and value and all(isinstance(item, str) and item for item in value):
+        return value[0], tuple(value)
+    raise ValueError(f"{field} must be a nonempty string or a list of nonempty strings")
+
+
 def _parse_source_entries(value: Any, field: str) -> tuple[SourceEntry, ...]:
     if value is None:
         return ()
@@ -144,15 +178,16 @@ def _component(
     name = _optional_string(mapping.get("name"), f"{field}.name")
     top = _optional_string(mapping.get("top"), f"{field}.top") if field == "design" else None
     is_technology = field == "technology"
-    track = _optional_string(mapping.get("track"), f"{field}.track") if is_technology else None
-    vth = _optional_string(mapping.get("vth"), f"{field}.vth") if is_technology else None
+    track, tracks = _track_or_vth_selection(mapping.get("track"), f"{field}.track") if is_technology else (None, ())
+    vth, vths = _track_or_vth_selection(mapping.get("vth"), f"{field}.vth") if is_technology else (None, ())
     metal_stack = (
         _optional_string(mapping.get("metal_stack"), f"{field}.metal_stack") if is_technology else None
     )
     if not any((package, name, top)) and not extra_satisfied:
         raise ValueError(f"{field} must define at least one value")
     return ComponentReference(
-        package=package, name=name, top=top, track=track, vth=vth, metal_stack=metal_stack,
+        package=package, name=name, top=top, track=track, vth=vth, tracks=tracks, vths=vths,
+        metal_stack=metal_stack,
     )
 
 
@@ -864,6 +899,8 @@ def _technology_inputs(
         if not isinstance(generic, dict):
             raise ValueError("technology.generic must be a mapping")
         track, vth, variant = _select_track_vth(metadata["tracks"], reference)
+        selected_tracks = reference.tracks if (reference and reference.tracks) else (track,)
+        selected_vths = reference.vths if (reference and reference.vths) else (vth,)
         timing_corners, corner_qrc_files, technology_lefs, gds_files, verilog_models, \
             spice_models, qrc_techfiles, qrc_corners, metal_stack = _technology_variant(
                 root, track, vth, variant, reference,
@@ -887,6 +924,7 @@ def _technology_inputs(
         )
     else:
         catalog_library_sets, catalog_lef_files, catalog_gds_files = (), (), ()
+        selected_tracks, selected_vths = (), ()
         metal_stack = None
         if reference is not None and (reference.track or reference.vth or reference.metal_stack):
             raise ValueError(
@@ -935,7 +973,8 @@ def _technology_inputs(
         raise ValueError("technology.synthesis.dont_use must be a list of nonempty cell name patterns")
     return ResolvedTechnology(
         package=str(manifest.identifier), revision=manifest.revision, name=name,
-        root=root, track=track, vth=vth, metal_stack=metal_stack,
+        root=root, track=track, vth=vth,
+        selected_tracks=selected_tracks, selected_vths=selected_vths, metal_stack=metal_stack,
         timing_corner=corner, timing_libraries=libraries,
         timing_corners=timing_corners,
         technology_lefs=technology_lefs, cell_lefs=cell_lefs, rc_files=rc_files,

@@ -240,9 +240,34 @@ class GenusSetupYamlFragmentTests(GenusFixtureTestCase):
         setup_text = inputs.setup_yaml.read_text(encoding="utf-8")
         self.assertIn(f"pdk_dir: {self.root}", setup_text)
         self.assertIn("metal_stack: 9lmT2", setup_text)
-        self.assertIn("tracks: 9T", setup_text)
-        self.assertIn("vths: lvt", setup_text)
+        # Rendered as yaml lists, not bare scalars -- a real flow's own
+        # synthesis.tcl loops `foreach trk [get_flow_config tracks] {
+        # foreach vth [get_flow_config vths] { ... } }`, so even a single
+        # value needs to actually be a list for a run selecting several
+        # vths (lvt+rvt, say) to work the same way.
+        self.assertIn("tracks: [9T]", setup_text)
+        self.assertIn("vths: [lvt]", setup_text)
         self.assertNotIn("${", setup_text)
+
+    def test_multiple_selected_vths_render_as_a_real_list(self):
+        """Confirmed real usage: a legacy setup.yaml's own `vths: ${VTHS}`
+        token (VTHS a bash array) selects more than one vth so Genus can
+        pick cells from whichever fits a given path -- selected_vths
+        carries that full selection even though track/vth (the primary,
+        used to resolve lef/gds/qrc/timing_corners) stays a single
+        name."""
+        fragment = self._fragment("tracks: ${TRACKS}\nvths: ${VTHS}\n")
+        technology = ResolvedTechnology(
+            package="pdk/demo", revision="1", name="demo", root=self.root,
+            track="9T", vth="lvt", selected_tracks=("9T",), selected_vths=("lvt", "rvt"),
+            setup_yaml_fragment=fragment,
+        )
+        inputs = prepare_genus_inputs(
+            self._context(technology=technology), self.root / "backend" / "cadence-genus",
+        )
+        setup_text = inputs.setup_yaml.read_text(encoding="utf-8")
+        self.assertIn("tracks: [9T]", setup_text)
+        self.assertIn("vths: [lvt, rvt]", setup_text)
 
     def test_technology_generic_is_a_fallback_source_for_unknown_tokens(self):
         fragment = self._fragment("io_lib_dir: ${IO_LIB_DIR}\n")

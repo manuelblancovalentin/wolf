@@ -166,10 +166,26 @@ class ResolvedTechnology:
     A technology package may declare its views flat (one implicit track/vth,
     today's shape) or nested under several named tracks/vths (e.g. 9T/lvt,
     9T/hvt, 7T/rvt) when it needs more than one. Either way, resolution
-    always flattens down to exactly one selected variant's data here --
-    `track`/`vth` record which one (None for a flat-declared package), and
-    every other field below is that variant's data, in the same shape
-    backends already consume regardless of how it was declared.
+    always flattens down to exactly one PRIMARY selected variant's data
+    here -- `track`/`vth` record which one (None for a flat-declared
+    package), and every other field below is that variant's data, in the
+    same shape backends already consume regardless of how it was declared.
+
+    `selected_tracks`/`selected_vths` are the real, possibly-plural
+    selection a run actually wants (confirmed real usage: mixing
+    lvt/rvt/hvt library sets in one synthesis run so Genus picks cells
+    from whichever vth fits a given path -- a real legacy `vths: ${VTHS}`
+    setup.yaml token, consumed by `synthesis.tcl`'s own `foreach trk
+    [get_flow_config tracks] { foreach vth [get_flow_config vths] { ... }
+    }`, unioning every (track, vth) pair's library/lef files together).
+    They default to `(track,)`/`(vth,)` -- the primary, singular case --
+    when technology.track/technology.vth was given as one name rather
+    than a list. The catalog fields below (catalog_library_sets,
+    catalog_lef_files, catalog_gds_files) already cover every track/vth
+    the whole package declares regardless of selection; selected_tracks/
+    selected_vths exist so a get_flow_config-driven flow's own `tracks`/
+    `vths` setup.yaml keys can tell it which subset of that catalog to
+    actually touch.
     """
 
     package: str
@@ -178,6 +194,8 @@ class ResolvedTechnology:
     root: Path
     track: Optional[str] = None
     vth: Optional[str] = None
+    selected_tracks: tuple[str, ...] = ()
+    selected_vths: tuple[str, ...] = ()
     metal_stack: Optional[str] = None
     timing_corner: str = "typical"
     timing_libraries: tuple[Path, ...] = ()

@@ -207,13 +207,25 @@ Saving also copies any RTL source that isn't already living under
 the stored path to the copy -- a source added by browsing to some file
 elsewhere ends up owned by the project, not left pointing outside it.
 
-The Technology entry opens a submenu (PDK package, then track/vth, then
-metal stack) that stays open across all three picks and shows each one's
-current value -- escape applies whatever's set so far to the main menu,
-rather than bouncing back there after every single pick. `q`/escape at the
-top level asks for confirmation (defaulting to No) whenever there are
-unsaved changes; a plain enter or a second escape on that prompt cancels
-the quit and returns to the main menu, only an explicit move to Yes exits.
+The Technology entry opens a submenu (PDK package, then track, then vth(s),
+then metal stack) that stays open across all four picks and shows each
+one's current value -- escape applies whatever's set so far to the main
+menu, rather than bouncing back there after every single pick. Track and
+vth are picked separately, not as one combined choice: vth is a checklist
+(`enter` toggles, `esc` finishes), since a real run commonly mixes more
+than one vth's library set in the same synthesis so Genus can pick cells
+from whichever fits a given path (confirmed real usage: a legacy
+`vths: ${VTHS}` setup.yaml token, `VTHS` a bash array). `technology.vth` in
+`wolf.yaml` accepts either one name or a list -- a single string is exactly
+the one-element-list case, so every existing single-vth environment is
+unaffected. Metal stack only offers stacks declared for *every* selected
+vth (the intersection, not the union), so whatever's picked is guaranteed
+valid for the whole selection.
+
+`q`/escape at the top level asks for confirmation (defaulting to No)
+whenever there are unsaved changes; a plain enter or a second escape on
+that prompt cancels the quit and returns to the main menu, only an
+explicit move to Yes exits.
 
 Profiles also remain human-readable and may be edited directly. A narrow
 structured setter updates existing paths:

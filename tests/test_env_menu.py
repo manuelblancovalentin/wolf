@@ -60,6 +60,10 @@ class EnvWizardEndToEndTests(unittest.TestCase):
                         "lef": ["lef/flat.lef"],
                         "timing": {"corners": {"typical": {"libraries": ["lib/x.lib"]}}},
                     },
+                    "hvt": {
+                        "lef": {"7lmT1": ["lef/z.lef"], "8lmT1": ["lef/w.lef"]},
+                        "timing": {"corners": {"typical": {"libraries": ["lib/x.lib"]}}},
+                    },
                 }}},
             }},
         }
@@ -138,11 +142,22 @@ class EnvWizardEndToEndTests(unittest.TestCase):
                 await pilot.press("enter")
                 await pilot.pause()
 
-                self._select(app.screen.query_one(OptionList), "Track / vth: not set")
+                self._select(app.screen.query_one(OptionList), "Track: not set")
                 await pilot.press("enter")
                 await pilot.pause()
-                self._select(app.screen.query_one(OptionList), "9T / lvt")
+                self._select(app.screen.query_one(OptionList), "9T")
                 await pilot.press("enter")
+                await pilot.pause()
+
+                # VTH(s) is a checklist -- toggle lvt on, then finish the
+                # checklist with esc (not enter, which only toggles here).
+                self._select(app.screen.query_one(OptionList), "VTH(s): not set")
+                await pilot.press("enter")
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "[ ] lvt")
+                await pilot.press("enter")
+                await pilot.pause()
+                await pilot.press("escape")
                 await pilot.pause()
 
                 self._select(app.screen.query_one(OptionList), "Metal stack: not set")
@@ -156,7 +171,7 @@ class EnvWizardEndToEndTests(unittest.TestCase):
                 # main menu, rather than bouncing there after every pick.
                 self.assertEqual(
                     [o.prompt for o in app.screen.query_one(OptionList).options],
-                    ["PDK package: pdk/testpdk", "Track / vth: 9T / lvt", "Metal stack: 7lmT1"],
+                    ["PDK package: pdk/testpdk", "Track: 9T", "VTH(s): lvt", "Metal stack: 7lmT1"],
                 )
                 await pilot.press("escape")
                 await pilot.pause()
@@ -224,32 +239,47 @@ class EnvWizardEndToEndTests(unittest.TestCase):
                 def tech_options() -> list[str]:
                     return [o.prompt for o in app.screen.query_one(OptionList).options]
 
-                self._select(app.screen.query_one(OptionList), "Track / vth: not set")
+                self._select(app.screen.query_one(OptionList), "Track: not set")
                 await pilot.press("enter")
                 await pilot.pause()
                 # No PDK package picked yet -- warns, stays on the (still
                 # open) Technology submenu rather than opening a picker.
                 self.assertEqual(len(app.screen_stack), depth_before)
-                self.assertIn("Track / vth: not set", tech_options())
+                self.assertIn("Track: not set", tech_options())
+
+                self._select(app.screen.query_one(OptionList), "VTH(s): not set")
+                await pilot.press("enter")
+                await pilot.pause()
+                # No track picked yet either -- same guard.
+                self.assertEqual(len(app.screen_stack), depth_before)
 
                 self._select(app.screen.query_one(OptionList), "Metal stack: not set")
                 await pilot.press("enter")
                 await pilot.pause()
-                # No track/vth picked yet either -- same guard.
+                # No vth picked yet either -- same guard.
                 self.assertEqual(len(app.screen_stack), depth_before)
 
-                # Pick the package, then a vth with no named stacks (flat lef).
+                # Pick the package, the track, then a vth with no named
+                # stacks (flat lef).
                 self._select(app.screen.query_one(OptionList), "PDK package: not set")
                 await pilot.press("enter")
                 await pilot.pause()
                 self._select(app.screen.query_one(OptionList), "pdk/testpdk (installed)")
                 await pilot.press("enter")
                 await pilot.pause()
-                self._select(app.screen.query_one(OptionList), "Track / vth: not set")
+                self._select(app.screen.query_one(OptionList), "Track: not set")
                 await pilot.press("enter")
                 await pilot.pause()
-                self._select(app.screen.query_one(OptionList), "9T / rvt")
+                self._select(app.screen.query_one(OptionList), "9T")
                 await pilot.press("enter")
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "VTH(s): not set")
+                await pilot.press("enter")
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "[ ] rvt")
+                await pilot.press("enter")
+                await pilot.pause()
+                await pilot.press("escape")
                 await pilot.pause()
 
                 self._select(app.screen.query_one(OptionList), "Metal stack: not set")
@@ -294,6 +324,83 @@ class EnvWizardEndToEndTests(unittest.TestCase):
         created = Path(document["project"]["root"])
         self.assertEqual(created.name, "new-project")
         self.assertTrue(created.is_dir())
+
+    def test_multiple_vths_write_a_list_and_metal_stack_is_their_intersection(self):
+        """Confirmed real usage: a run mixes more than one vth's library
+        set in one synthesis (Genus picks cells from whichever fits a
+        given path). lvt declares stacks {6lmT1, 7lmT1}, hvt declares
+        {7lmT1, 8lmT1} -- picking both must only offer 7lmT1 for metal
+        stack, the one declared for both, not the union."""
+        project_root = self.root / "project6"
+
+        async def drive():
+            app = EnvWizardApp("smoketest6")
+            async with app.run_test() as pilot:
+                main_list = app.query_one(OptionList)
+                self._select(main_list, "Project root: not set")
+                await pilot.press("enter")
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "Type a path manually")
+                await pilot.press("enter")
+                await pilot.pause()
+                app.screen.query_one(Input).value = str(project_root)
+                await pilot.press("enter")
+                await pilot.pause()
+
+                self._select(main_list, "Technology (PDK): not set")
+                await pilot.press("enter")
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "PDK package: not set")
+                await pilot.press("enter")
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "pdk/testpdk (installed)")
+                await pilot.press("enter")
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "Track: not set")
+                await pilot.press("enter")
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "9T")
+                await pilot.press("enter")
+                await pilot.pause()
+
+                self._select(app.screen.query_one(OptionList), "VTH(s): not set")
+                await pilot.press("enter")
+                await pilot.pause()
+                checklist = [o.prompt for o in app.screen.query_one(OptionList).options]
+                self.assertEqual(checklist, ["[ ] hvt", "[ ] lvt", "[ ] rvt"])
+                self._select(app.screen.query_one(OptionList), "[ ] lvt")
+                await pilot.press("enter")
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "[ ] hvt")
+                await pilot.press("enter")
+                await pilot.pause()
+                # Both now checked.
+                checked = [o.prompt for o in app.screen.query_one(OptionList).options]
+                self.assertEqual(checked, ["[x] hvt", "[x] lvt", "[ ] rvt"])
+                await pilot.press("escape")  # finish the checklist
+                await pilot.pause()
+
+                self._select(app.screen.query_one(OptionList), "Metal stack: not set")
+                await pilot.press("enter")
+                await pilot.pause()
+                stack_choices = [o.prompt for o in app.screen.query_one(OptionList).options]
+                self.assertEqual(stack_choices, ["7lmT1"])
+                self._select(app.screen.query_one(OptionList), "7lmT1")
+                await pilot.press("enter")
+                await pilot.pause()
+
+                await pilot.press("escape")  # done with Technology
+                await pilot.pause()
+                await pilot.press("s")
+                await pilot.pause()
+
+        asyncio.run(drive())
+
+        document = yaml.safe_load((self.state / "envs" / "smoketest6" / "wolf.yaml").read_text(encoding="utf-8"))
+        self.assertEqual(
+            document["technology"],
+            {"package": "pdk/testpdk", "track": "9T", "vth": ["hvt", "lvt"], "metal_stack": "7lmT1"},
+        )
 
     def test_quit_with_unsaved_changes_requires_confirming_yes(self):
         """escape is also the "go back one level" key everywhere else in

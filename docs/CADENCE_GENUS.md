@@ -175,7 +175,8 @@ so it's rendered differently, in three steps:
    | `${CONSTRAINTS_FILES}` | this run's generated `constraints.sdc`, as an inline yaml list |
    | `${FLOORPLAN_FILE}` | `constraints.floorplan_def`, if set |
    | `${PDK_DIR}` | the selected technology package's installed root |
-   | `${METAL_STACK}` / `${TRACKS}` / `${VTHS}` | the technology's resolved `metal_stack`/`track`/`vth`, if set |
+   | `${METAL_STACK}` | the technology's resolved `metal_stack`, if set |
+   | `${TRACKS}` / `${VTHS}` | the selected track(s)/vth(s), as an inline yaml list -- confirmed real usage: a legacy `vths: ${VTHS}` setup.yaml token (`VTHS` a bash array) is consumed by `synthesis.tcl`'s own `foreach trk [get_flow_config tracks] { foreach vth [get_flow_config vths] { ... } }`, unioning every (track, vth) pair's library/lef files -- so even a single selected value renders as a one-element list, not a bare scalar |
    | `${WORKSPACE_DIR}` / `${SCRIPTS_DIR}` / `${RUNDIR}` | resolved workspace root / scripts.\<N\> directory / this run's own directory |
 
    Anything the fragment references outside that set falls back to

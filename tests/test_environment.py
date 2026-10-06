@@ -899,5 +899,87 @@ class SignoffCatalogTests(DeclarativeEnvironmentTests):
             self._resolve()
 
 
+class MultiVthSelectionTests(DeclarativeEnvironmentTests):
+    """technology.track/technology.vth accept a list, not just one name
+    -- confirmed real usage: mixing lvt/rvt library sets in one synthesis
+    run (`vths: ${VTHS}`, a bash array, in a real legacy setup.yaml
+    template, consumed by synthesis.tcl's own `foreach trk [get_flow_config
+    tracks] { foreach vth [get_flow_config vths] { ... } }`). A single
+    string stays exactly the one-element-list case -- zero behavior
+    change for every existing single-vth environment."""
+
+    def _write_file(self, name, package="tsmc65-multivth"):
+        path = self.state / "packages" / "pdk" / package / "pdk-rev" / "source" / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"-- {name} --\n", encoding="utf-8")
+        return path
+
+    def _multivth_package(self):
+        self._package("pdk", "tsmc65-multivth", "pdk-rev", {"technology": {
+            "name": "tsmc65-multivth", "tracks": {"9T": {"vths": {
+                "lvt": {
+                    "lef": ["lef/lvt.lef"],
+                    "timing": {"corners": {"typical": {"libraries": ["lib/lvt_typical.lib"]}}},
+                },
+                "rvt": {
+                    "lef": ["lef/rvt.lef"],
+                    "timing": {"corners": {"typical": {"libraries": ["lib/rvt_typical.lib"]}}},
+                },
+            }}}},
+        })
+        for relative in ("lef/lvt.lef", "lef/rvt.lef", "lib/lvt_typical.lib", "lib/rvt_typical.lib"):
+            self._write_file(relative)
+
+    def _resolve(self, *, vth):
+        text = self._complete_yaml().replace(
+            "package: pdk/asap7", f"package: pdk/tsmc65-multivth\n  track: 9T\n  vth: {vth}",
+        )
+        return resolve_declarative_environment(
+            load_environment(self._write(text, "multivth.yaml")),
+            state_root=self.state, environment_directory=self.environment,
+        )
+
+    def test_single_vth_string_resolves_to_a_one_element_selection(self):
+        self._multivth_package()
+        context = self._resolve(vth="lvt")
+        self.assertEqual(context.technology.vth, "lvt")
+        self.assertEqual(context.technology.selected_vths, ("lvt",))
+        self.assertEqual(context.technology.selected_tracks, ("9T",))
+
+    def test_vth_list_resolves_primary_plus_full_selection(self):
+        self._multivth_package()
+        context = self._resolve(vth="[lvt, rvt]")
+        # Primary (used to resolve lef/gds/qrc/timing_corners) is the
+        # first-listed name -- the same single flattened variant every
+        # other field on ResolvedTechnology already assumes.
+        self.assertEqual(context.technology.vth, "lvt")
+        self.assertTrue(str(context.technology.technology_lefs[0]).endswith("lvt.lef"))
+        # The full selection carries every name, for setup.yaml's own
+        # plural vths: token.
+        self.assertEqual(context.technology.selected_vths, ("lvt", "rvt"))
+
+    def test_vth_list_with_a_non_string_entry_is_rejected(self):
+        self._multivth_package()
+        text = self._complete_yaml().replace(
+            "package: pdk/asap7", "package: pdk/tsmc65-multivth\n  track: 9T\n  vth: [lvt, 7]",
+        )
+        with self.assertRaisesRegex(ValueError, "technology.vth must be a nonempty string or a list"):
+            resolve_declarative_environment(
+                load_environment(self._write(text, "badvth.yaml")),
+                state_root=self.state, environment_directory=self.environment,
+            )
+
+    def test_empty_vth_list_is_rejected(self):
+        self._multivth_package()
+        text = self._complete_yaml().replace(
+            "package: pdk/asap7", "package: pdk/tsmc65-multivth\n  track: 9T\n  vth: []",
+        )
+        with self.assertRaisesRegex(ValueError, "technology.vth must be a nonempty string or a list"):
+            resolve_declarative_environment(
+                load_environment(self._write(text, "emptyvth.yaml")),
+                state_root=self.state, environment_directory=self.environment,
+            )
+
+
 if __name__ == "__main__":
     unittest.main()
