@@ -70,8 +70,18 @@ _SCRIPTS_DIR_RE = re.compile(r"^scripts\.(\d+)$")
 # it is a step *inside* the syn_generic flow now (real Flowtool -from/-to
 # selects by flow name, not by step name within one), matching how the
 # real Stylus flow this was adapted from also only exposes
-# syn_generic/syn_map/syn_opt as resumable flows.
-STAGE_ORDER = ("syn_generic", "syn_map", "syn_opt")
+# syn_generic/syn_map/syn_opt/floorplan/prects/cts/postcts/route/postroute
+# as resumable flows -- the exact same split the reference flow's own
+# `synthesis`/`implementation` top-level flows draw.
+#
+# Both sections run through the exact same mechanism (run_genus allocates
+# one numbered run and invokes the real `flowtool` binary once per stage,
+# never `genus`/`innovus` directly) -- there is no separate "Innovus
+# path"; a stage name here is just which named Flowtool flow this
+# invocation selects.
+SYNTHESIS_STAGES = ("syn_generic", "syn_map", "syn_opt")
+IMPLEMENTATION_STAGES = ("floorplan", "prects", "cts", "postcts", "route", "postroute")
+STAGE_ORDER = SYNTHESIS_STAGES + IMPLEMENTATION_STAGES
 
 # `flow.name` values remain supported as shorthand for the common "run
 # everything through X" range -- not a separate mechanism.
@@ -99,7 +109,18 @@ def _resolve_stage_range(
 
     An explicit -from/-to pair (checkpoint reuse's real primitive) always
     wins. Without one, `flow.name` is shorthand for "all stages through X";
-    with neither given at all, the default is the complete synthesis flow.
+    with neither given at all, the default is the complete synthesis flow
+    (unchanged: adding IMPLEMENTATION_STAGES to STAGE_ORDER must not make
+    an existing bare `wolf run`/`-from syn_map` suddenly run all the way
+    through postroute).
+
+    A single explicit endpoint fills the other end with the *same
+    section's* boundary, not the global STAGE_ORDER edge -- `-from
+    syn_map` alone still means "through syn_opt", and `-from floorplan`
+    alone means "through postroute", not one default blindly spanning
+    both. Giving both endpoints explicitly may still cross sections (e.g.
+    `-from syn_generic -to postroute` for the whole `block`), matching the
+    reference flow's own `block` flow spanning `synthesis`+`implementation`.
     """
     if from_stage is None and to_stage is None:
         flow_name = context.flow_name or FLOW_GENUS_SYN_OPT
@@ -110,14 +131,29 @@ def _resolve_stage_range(
                 f"unsupported cadence-flowtool flow {flow_name!r}; expected one of "
                 + ", ".join(sorted(_FLOW_NAME_STAGE_RANGE))
             ) from None
-    from_stage = from_stage or STAGE_ORDER[0]
-    to_stage = to_stage or STAGE_ORDER[-1]
+    if from_stage is None:
+        from_stage = (
+            SYNTHESIS_STAGES[0] if to_stage in SYNTHESIS_STAGES else IMPLEMENTATION_STAGES[0]
+        )
+    if to_stage is None:
+        to_stage = (
+            SYNTHESIS_STAGES[-1] if from_stage in SYNTHESIS_STAGES else IMPLEMENTATION_STAGES[-1]
+        )
     for stage in (from_stage, to_stage):
         if stage not in STAGE_ORDER:
             raise ValueError(f"unsupported stage {stage!r}; expected one of {STAGE_ORDER}")
     if STAGE_ORDER.index(from_stage) > STAGE_ORDER.index(to_stage):
         raise ValueError(f"-from {from_stage!r} comes after -to {to_stage!r}")
     return from_stage, to_stage
+
+
+def _requires_physical_views(from_stage: str, to_stage: str) -> bool:
+    """Any stage from floorplan onward needs LEF/RC before Flowtool is
+    even invoked -- Innovus cannot do anything physical without them,
+    unlike Genus's synthesis stages where physical views are optional."""
+    start = STAGE_ORDER.index(from_stage)
+    end = STAGE_ORDER.index(to_stage)
+    return any(stage in IMPLEMENTATION_STAGES for stage in STAGE_ORDER[start:end + 1])
 
 
 def _tcl_scalar(value: Any) -> str:
@@ -668,6 +704,10 @@ def prepare_genus_inputs(
     if not context.design_top:
         raise ValueError("Cadence Genus preparation requires design.top")
     resolved_from_stage, resolved_to_stage = _resolve_stage_range(context, from_stage, to_stage)
+    # Kept named synthesis_stages for provenance/manifest compatibility --
+    # a frozen wolf.resolved.yaml key -- even though a range reaching into
+    # IMPLEMENTATION_STAGES now legitimately lands non-synthesis stage
+    # names in here too.
     synthesis_stages = STAGE_ORDER[
         STAGE_ORDER.index(resolved_from_stage):STAGE_ORDER.index(resolved_to_stage) + 1
     ]
@@ -891,8 +931,11 @@ def prepare_genus_inputs(
         setup_yaml = None
     flow_yaml.write_text(_render_template(flow_template, placeholders), encoding="utf-8")
 
+    # None for an implementation-only range -- floorplan/prects/cts/
+    # postcts/route/postroute don't write_hdl a netlist the way the three
+    # Genus synthesis stages do.
     netlist_relative: str | None = None
-    if synthesis_stages:
+    if synthesis_stages and synthesis_stages[-1] in _SYNTHESIS_STAGE_NETLIST_SUFFIX:
         suffix = _SYNTHESIS_STAGE_NETLIST_SUFFIX[synthesis_stages[-1]]
         netlist_relative = f"outputs/{context.design_name}.{suffix}.v"
 
@@ -986,8 +1029,8 @@ def prepare_genus_inputs(
     )
 
 
-def validate_genus_or_raise(context: ResolvedContext) -> str:
-    checks = validate_genus(context)
+def validate_genus_or_raise(context: ResolvedContext, *, physical: bool = False) -> str:
+    checks = validate_genus(context, physical=physical)
     failures = [f"{item.name}: {item.detail}" for item in checks if not item.available]
     if failures:
         raise ValueError("Cadence Genus validation failed: " + "; ".join(failures))
@@ -998,17 +1041,28 @@ def run_genus(
     context: ResolvedContext, *, clean: bool = False, interactive: bool = False,
     from_stage: Optional[str] = None, to_stage: Optional[str] = None,
 ) -> tuple[int, Path]:
-    """Allocate, prepare, freeze provenance, and execute one Flowtool run.
+    """Allocate, prepare, freeze provenance, and execute one Flowtool run --
+    for any stage in STAGE_ORDER, Genus (syn_generic/syn_map/syn_opt) or
+    Innovus (floorplan/prects/cts/postcts/route/postroute) alike.
 
-    Execution goes through the real `flowtool` binary, not `genus` directly,
-    so the create_flow_step/-write_db checkpointing in
-    flows/cadence-genus/common_steps.tcl is meaningful: Flowtool's own engine saves
-    each step's checkpoint and, on a later -from, loads the nearest
-    preceding one automatically -- WOLF does not reimplement that itself.
+    Execution always goes through the real `flowtool` binary, never
+    `genus`/`innovus` directly, so the create_flow_step/-write_db
+    checkpointing in flows/cadence-genus/common_steps.tcl is meaningful:
+    Flowtool's own engine saves each step's checkpoint and, on a later
+    -from, loads the nearest preceding one automatically -- WOLF does not
+    reimplement that itself, and does not care which tool a given stage
+    happens to run under; that distinction lives entirely in the Tcl flow
+    definitions, not here.
     A run without -c/--clean reuses the same numbered run directory, so an
-    earlier invocation's checkpoints are still there for a later -from.
+    earlier invocation's checkpoints are still there for a later -from --
+    this is exactly how `-from syn_opt` (Genus) and a later `-from
+    floorplan` (Innovus) share one run directory and one provenance
+    record.
     """
-    flowtool = validate_genus_or_raise(context)
+    resolved_from_stage, resolved_to_stage = _resolve_stage_range(context, from_stage, to_stage)
+    flowtool = validate_genus_or_raise(
+        context, physical=_requires_physical_views(resolved_from_stage, resolved_to_stage),
+    )
     run_directory = allocate_genus_run(context, clean=clean)
     inputs = prepare_genus_inputs(
         context, run_directory, interactive=interactive,

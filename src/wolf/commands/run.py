@@ -185,13 +185,20 @@ def command_run(args: argparse.Namespace) -> int:
     backend = get_backend(context.backend)
     if context.format == "declarative-v1" and context.backend == "cadence-flowtool":
         if args.plan:
-            checks = backend.validate_genus(context)
+            from wolf.backend.cadence_genus import (
+                _requires_physical_views, _resolve_stage_range, allocate_genus_run,
+            )
+            resolved_from, resolved_to = _resolve_stage_range(context, args.from_stage, args.to_stage)
+            checks = backend.validate_genus(
+                context, physical=_requires_physical_views(resolved_from, resolved_to),
+            )
             failures = [f"{item.name}: {item.detail}" for item in checks if not item.available]
             if failures:
                 raise ValueError("Cadence Genus validation failed: " + "; ".join(failures))
             _summary(context, from_stage=args.from_stage, to_stage=args.to_stage)
-            from wolf.backend.cadence_genus import allocate_genus_run
-            ui.key_value("Genus run directory", allocate_genus_run(context, clean=getattr(args, "clean", False)))
+            ui.key_value(
+                "Flowtool run directory", allocate_genus_run(context, clean=getattr(args, "clean", False)),
+            )
             return 0
         _summary(context, from_stage=args.from_stage, to_stage=args.to_stage)
         if not ui.confirm(

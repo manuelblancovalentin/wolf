@@ -145,10 +145,28 @@ command for a timing *summary* (`timeDesign`, in some modes) can also
 perform real optimization as a side effect, and guessing the wrong flag
 combination risks silently changing the design rather than just erroring.
 
-None of this is driven by `wolf run` yet -- there is no Innovus
-equivalent of `run_genus`/`allocate_genus_run` on the Python side. The
-Tcl is real and forkable (`wolf flow init`) today; wiring an actual
-`wolf run -from floorplan -to postroute` is separate, future work.
+`wolf run -from floorplan -to postroute` (or any single implementation
+stage) drives this exactly the way `-from syn_generic -to syn_opt` drives
+Genus: `run_genus`/`allocate_genus_run` are not Genus-specific despite the
+name -- `STAGE_ORDER` now spans `SYNTHESIS_STAGES +
+IMPLEMENTATION_STAGES`, and the same per-stage loop invokes the real
+`flowtool` binary once per stage regardless of which section it's in,
+never `genus`/`innovus` directly. A synthesis-only or implementation-only
+`-from` with no `-to` still defaults to the end of its *own* section
+(`-from syn_map` still means "through syn_opt"; `-from floorplan` alone
+means "through postroute") -- adding the implementation stages to
+`STAGE_ORDER` does not change what an existing bare `-from`/`-to` meant.
+Giving both ends explicitly can still cross sections (`-from syn_generic
+-to postroute` for the whole `block`).
+
+Continuing from synthesis into implementation reuses the exact same
+numbered run and provenance record -- `wolf run -from syn_opt` today,
+`wolf run -from floorplan` tomorrow, same `<design>.<N>` directory, same
+`wolf.resolved.yaml` (see `volatile_keys` in
+[ENVIRONMENTS.md](ENVIRONMENTS.md)). A stage from `floorplan` onward is
+rejected up front (before Flowtool is even invoked) if the technology
+package declares no LEF/RC -- Innovus cannot do anything physical without
+them, unlike Genus's synthesis stages where physical views are optional.
 
 ## The Flowtool project descriptor (flow.yaml)
 

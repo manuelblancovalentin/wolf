@@ -9,7 +9,10 @@ from unittest.mock import patch, Mock
 import yaml
 
 from wolf.backend.orfs_native import prepare_native_orfs
-from wolf.backend.cadence_genus import GenusValidation, prepare_genus_inputs, run_genus, validate_genus
+from wolf.backend.cadence_genus import (
+    GenusValidation, _requires_physical_views, _resolve_stage_range, prepare_genus_inputs,
+    run_genus, validate_genus,
+)
 from wolf.context import ResolvedTechnology
 from wolf.environment import load_environment, resolve_declarative_environment
 
@@ -430,6 +433,73 @@ class MixedLanguagePackageTests(unittest.TestCase):
         ])
         frozen = yaml.safe_load((run / "wolf.resolved.yaml").read_text())
         self.assertEqual(len(frozen["execution"]["commands"]), 3)
+
+    def test_stage_range_defaults_stay_within_the_same_section(self):
+        """Adding the Innovus implementation stages to STAGE_ORDER must not
+        change what a bare synthesis -from/-to already meant: -from
+        syn_map alone still means "through syn_opt", not "through
+        postroute" just because postroute is now a later STAGE_ORDER
+        entry. A bare implementation -from gets the equivalent same-
+        section default (through postroute, not back through syn_opt)."""
+        context = self._context()
+        self.assertEqual(_resolve_stage_range(context, "syn_map", None), ("syn_map", "syn_opt"))
+        self.assertEqual(_resolve_stage_range(context, None, "syn_map"), ("syn_generic", "syn_map"))
+        self.assertEqual(_resolve_stage_range(context, "floorplan", None), ("floorplan", "postroute"))
+        self.assertEqual(_resolve_stage_range(context, None, "cts"), ("floorplan", "cts"))
+        # Both ends given explicitly may still cross sections.
+        self.assertEqual(
+            _resolve_stage_range(context, "syn_generic", "postroute"), ("syn_generic", "postroute"),
+        )
+
+    def test_implementation_stages_require_physical_views(self):
+        self.assertFalse(_requires_physical_views("syn_generic", "syn_opt"))
+        self.assertTrue(_requires_physical_views("floorplan", "floorplan"))
+        self.assertTrue(_requires_physical_views("syn_generic", "postroute"))
+
+    def test_planning_an_implementation_stage_without_lef_rc_fails_validation(self):
+        context = self._context()
+        checks = validate_genus(context, physical=True)
+        self.assertFalse(next(item for item in checks if item.name == "technology LEF").available)
+
+    def test_genus_runs_an_implementation_stage_through_flowtool_not_innovus_directly(self):
+        context = self._technology_context()
+        completed = Mock(returncode=0)
+        with patch("wolf.backend.cadence_genus.validate_genus", return_value=(
+            GenusValidation("flowtool", True, "/opt/cadence/flowtool"),
+        )), patch("wolf.backend.cadence_genus.subprocess.run", return_value=completed) as execute:
+            status, run = run_genus(
+                context, clean=True, from_stage="floorplan", to_stage="floorplan",
+            )
+        self.assertEqual(status, 0)
+        command = execute.call_args.args[0]
+        # The real flowtool binary, never genus/innovus directly.
+        self.assertEqual(command[0], "/opt/cadence/flowtool")
+        self.assertEqual(command[command.index("-from") + 1], "floorplan")
+        self.assertEqual(command[command.index("-to") + 1], "floorplan")
+        frozen = yaml.safe_load((run / "wolf.resolved.yaml").read_text())
+        self.assertEqual(frozen["from_stage"], "floorplan")
+        self.assertEqual(frozen["to_stage"], "floorplan")
+
+    def test_continuing_from_synthesis_into_implementation_reuses_the_same_run(self):
+        """The whole point of this: `-from syn_opt` today, `-from
+        floorplan` later, picking up the same numbered run and provenance
+        record -- not a separate "Innovus run"."""
+        context = self._technology_context()
+        completed = Mock(returncode=0)
+        with patch("wolf.backend.cadence_genus.validate_genus", return_value=(
+            GenusValidation("flowtool", True, "/opt/cadence/flowtool"),
+        )), patch("wolf.backend.cadence_genus.subprocess.run", return_value=completed):
+            status1, run1 = run_genus(
+                context, clean=True, from_stage="syn_generic", to_stage="syn_opt",
+            )
+            status2, run2 = run_genus(
+                context, clean=False, from_stage="floorplan", to_stage="floorplan",
+            )
+        self.assertEqual((status1, status2), (0, 0))
+        self.assertEqual(run1, run2)
+        frozen = yaml.safe_load((run2 / "wolf.resolved.yaml").read_text())
+        self.assertEqual(frozen["from_stage"], "floorplan")
+        self.assertEqual(frozen["to_stage"], "floorplan")
 
     def test_nested_bundle_resolves_all_347_sources_and_checksums(self):
         nested = self.state / "packages" / "rtl" / "nested" / "nested-rev" / "source" / "packages" / "demo"
