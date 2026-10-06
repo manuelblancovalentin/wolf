@@ -436,13 +436,20 @@ _STACK_KEYED_FIELDS = ("lef", "qrc_techfiles")
 
 def _vth_metal_stacks(data: Mapping[str, Any], field: str) -> Optional[tuple[str, ...]]:
     """If this vth declares lef/qrc_techfiles per named metal stack (a
-    mapping) rather than one flat list, return the shared stack names --
-    every stack-keyed field that's present must declare the exact same
-    set, so lef/qrc_techfiles can never silently disagree about which
-    stack is which. Returns None when none of them use the mapping form
-    at all (a single-stack vth, unchanged from before this existed).
+    mapping) rather than one flat list, return every stack name any of
+    them declares. lef and qrc_techfiles are allowed to disagree about
+    which stacks they each have files for -- real PDK data routinely
+    does (a qrc captable existing for a stack with no LEF declared yet,
+    say) -- the same "a field with nothing for this stack just resolves
+    empty, not an error" tolerance _catalog_stack_files already extends
+    to the full-package catalog; _technology_variant's own stack_paths
+    and _resolve_qrc_techfiles apply that same tolerance per field once
+    a stack is actually selected. Returns None when none of them use the
+    mapping form at all (a single-stack vth, unchanged from before this
+    existed).
     """
-    stack_names: Optional[tuple[str, ...]] = None
+    stack_names: set = set()
+    seen_mapping = False
     for key in _STACK_KEYED_FIELDS:
         value = data.get(key)
         if value is None:
@@ -451,22 +458,11 @@ def _vth_metal_stacks(data: Mapping[str, Any], field: str) -> Optional[tuple[str
             names = tuple(sorted(value))
             if not names:
                 raise ValueError(f"technology.{field}.{key} must be a nonempty mapping")
-            if stack_names is None:
-                stack_names = names
-            elif names != stack_names:
-                raise ValueError(
-                    f"technology.{field}.{key} declares metal stacks {list(names)}, which "
-                    f"doesn't match this vth's other stack-keyed fields {list(stack_names)}"
-                )
-        elif isinstance(value, list):
-            if stack_names is not None:
-                raise ValueError(
-                    f"technology.{field}.{key} must declare the same named metal stacks as "
-                    f"this vth's other fields ({list(stack_names)}), not a flat list"
-                )
-        else:
+            stack_names.update(names)
+            seen_mapping = True
+        elif not isinstance(value, list):
             raise ValueError(f"technology.{field}.{key} must be a list or a mapping of metal stacks")
-    return stack_names
+    return tuple(sorted(stack_names)) if seen_mapping else None
 
 
 def _select_metal_stack(
@@ -709,6 +705,13 @@ def _technology_variant(
         def stack_paths(key: str) -> tuple[Path, ...]:
             value = data.get(key)
             if value is None:
+                return ()
+            if isinstance(value, list):
+                # Not stack-keyed at all for this field (lef/qrc_techfiles
+                # are allowed to disagree about which ones use the mapping
+                # form -- see _vth_metal_stacks).
+                return _paths_under(root, value, f"{field}.{key}")
+            if metal_stack not in value:
                 return ()
             return _paths_under(root, value[metal_stack], f"{field}.{key}.{metal_stack}")
         lef = stack_paths("lef")

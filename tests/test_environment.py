@@ -636,7 +636,13 @@ class MetalStackTests(DeclarativeEnvironmentTests):
                 state_root=self.state, environment_directory=self.environment,
             )
 
-    def test_mismatched_stack_keys_across_fields_is_rejected(self):
+    def test_mismatched_stack_keys_across_fields_resolve_whichever_has_the_selected_stack(self):
+        """lef and qrc_techfiles are allowed to declare different stack
+        sets -- confirmed real PDK data: a vth's qrc_techfiles having
+        captables for stacks that vth's own lef doesn't declare (yet, or
+        at all) is a normal, valid state, not an authoring mistake to
+        reject. Picking a stack that only one of the two fields has just
+        resolves that field and leaves the other empty."""
         self._package("pdk", "tsmc65-mismatch", "pdk-rev", {"technology": {
             "name": "tsmc65-mismatch", "tracks": {"9T": {"vths": {"lvt": {
                 "lef": {"9lmT2": ["lef/x.lef"]},
@@ -646,12 +652,26 @@ class MetalStackTests(DeclarativeEnvironmentTests):
         }})
         for relative in ("lef/x.lef", "qrc/x.captable", "lib/x.lib"):
             self._write_file(relative, package="tsmc65-mismatch")
-        text = self._complete_yaml().replace("package: pdk/asap7", "package: pdk/tsmc65-mismatch")
-        with self.assertRaisesRegex(ValueError, "doesn't match"):
-            resolve_declarative_environment(
-                load_environment(self._write(text, "mismatch.yaml")),
-                state_root=self.state, environment_directory=self.environment,
-            )
+
+        text_9lm = self._complete_yaml().replace(
+            "package: pdk/asap7", "package: pdk/tsmc65-mismatch\n  metal_stack: 9lmT2",
+        )
+        context = resolve_declarative_environment(
+            load_environment(self._write(text_9lm, "mismatch-9lm.yaml")),
+            state_root=self.state, environment_directory=self.environment,
+        )
+        self.assertEqual([p.name for p in context.technology.technology_lefs], ["x.lef"])
+        self.assertEqual(context.technology.qrc_techfiles, ())
+
+        text_7lm = self._complete_yaml().replace(
+            "package: pdk/asap7", "package: pdk/tsmc65-mismatch\n  metal_stack: 7lmT1",
+        )
+        context = resolve_declarative_environment(
+            load_environment(self._write(text_7lm, "mismatch-7lm.yaml")),
+            state_root=self.state, environment_directory=self.environment,
+        )
+        self.assertEqual(context.technology.technology_lefs, ())
+        self.assertEqual([p.name for p in context.technology.qrc_techfiles], ["x.captable"])
 
     def test_qrc_techfiles_are_keyed_by_stack_and_named_rc_corner(self):
         """Unlike gds, a real captable is named per metal stack AND per

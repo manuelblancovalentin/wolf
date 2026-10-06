@@ -126,11 +126,15 @@ but `wolf pdk menu` flattens it to the new shape automatically the
 moment you open that vth.)
 
 Instead of a flat list, declare each of `lef`/`qrc_techfiles` as a
-mapping of stack name to its file list (as in the example above). Both
-that are present must declare the *same* set of stack names -- WOLF
-rejects a vth where `lef` has `{9lmT2, 7lmT1}` but `qrc_techfiles` only
-has `{9lmT2}`, rather than silently resolving an inconsistent pair. A
-vth with only one stack can still use a flat list (no selection needed,
+mapping of stack name to its file list (as in the example above). `lef`
+and `qrc_techfiles` are allowed to declare different stack sets -- real
+PDK data routinely does (a qrc captable existing for a stack that vth's
+own `lef` doesn't declare yet, or at all, is a normal, valid state, not
+an authoring mistake). Picking a stack that only one of the two fields
+actually has just resolves that field and leaves the other empty, the
+same tolerance the full-package catalog (`wolf pdk info`, the
+`get_flow_config` export) already extends to a track/vth missing a file.
+A vth with only one stack can still use a flat list (no selection needed,
 exactly like a single-corner technology).
 
 An environment picks the stack via `technology.metal_stack`:
