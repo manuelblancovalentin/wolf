@@ -1007,7 +1007,10 @@ class _AnalysisViewFlagsScreen(ModalScreen[dict]):
     def compose(self) -> ComposeResult:
         with Vertical(id="dialog"):
             yield Static(self._title, id="dialog-title")
-            yield OptionList(*self._options())
+            # markup=False: a literal "[ ]"/"[x]" checkbox prefix would
+            # otherwise be parsed as Rich markup (an unrecognized tag),
+            # which silently drops it instead of displaying it.
+            yield OptionList(*self._options(), markup=False)
             yield Static("enter: toggle highlighted — esc: done", id="dialog-hint")
 
     def _options(self) -> list[Option]:
