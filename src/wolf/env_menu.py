@@ -1240,7 +1240,9 @@ class EnvWizardApp(App[None]):
                 self.design_name = profile.design.name
                 self.design_top = profile.design.top
             self.sources = [
-                {"package": entry.package} if entry.package else {"path": entry.path}
+                {"package": entry.package} if entry.package
+                else {"manifest": entry.manifest} if entry.manifest
+                else {"path": entry.path}
                 for entry in profile.design_sources
             ]
             if profile.technology:

@@ -576,6 +576,81 @@ class EnvWizardEndToEndTests(unittest.TestCase):
         )
 
 
+class ReopenManifestSourceTests(unittest.TestCase):
+    """Reopening an existing environment whose design.sources already used
+    a manifest entry, then re-saving without touching RTL at all, must not
+    corrupt that entry. Regression: the wizard's own load path only knew
+    about package/path when rebuilding self.sources from the loaded
+    profile, silently dropping a manifest entry's real reference and
+    turning it into {"path": None} -- which then failed to save with
+    "design.sources[0] must set exactly one of package, path, or
+    manifest", even though nothing about the RTL was being changed."""
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory(prefix="wolf-reopen-manifest-")
+        self.root = Path(self.temporary.name)
+        self.state = self.root / "state"
+        self.state.mkdir(parents=True)
+        self.variables = patch.dict(os.environ, {"WOLF_HOME": str(self.state)})
+        self.variables.start()
+
+        design_dir = self.root / "rtl"
+        design_dir.mkdir()
+        (design_dir / "top.v").write_text("module top; endmodule\n", encoding="utf-8")
+        (design_dir / "manifest.toml").write_text(
+            'schema_version = 1\nname = "demo"\ntop = "top"\n'
+            'verilog_sources = "manifests/verilog-sources.flist"\n',
+            encoding="utf-8",
+        )
+        (design_dir / "manifests").mkdir()
+        (design_dir / "manifests" / "verilog-sources.flist").write_text("../top.v\n", encoding="utf-8")
+
+        self.env_dir = self.state / "envs" / "reopen-demo"
+        self.env_dir.mkdir(parents=True)
+        (self.env_dir / "wolf.yaml").write_text(
+            "schema: wolf.environment/v1\n"
+            "name: reopen-demo\n"
+            "design:\n"
+            "  name: demo\n"
+            "  top: top\n"
+            "  sources:\n"
+            f"    - manifest: {design_dir / 'manifest.toml'}\n",
+            encoding="utf-8",
+        )
+
+    def tearDown(self):
+        self.variables.stop()
+        self.temporary.cleanup()
+
+    def test_resaving_an_unchanged_manifest_source_does_not_error(self):
+        notifications: list = []
+
+        async def drive():
+            app = EnvWizardApp("reopen-demo")
+            async with app.run_test() as pilot:
+                # The real root cause: the wizard's own load path must
+                # recover the manifest entry, not silently turn it into
+                # {"path": None}.
+                self.assertEqual(app.sources, [{"manifest": str((self.root / "rtl" / "manifest.toml"))}])
+                original_notify = app.notify
+                app.notify = lambda message, **kwargs: (
+                    notifications.append((message, kwargs.get("severity", "information"))),
+                    original_notify(message, **kwargs),
+                )[0]
+                await pilot.press("s")
+                await pilot.pause()
+        asyncio.run(drive())
+        self.assertTrue(notifications, "expected a save notification")
+        self.assertFalse(
+            [n for n in notifications if n[1] == "error"],
+            f"save reported an error: {notifications}",
+        )
+        saved = yaml.safe_load((self.env_dir / "wolf.yaml").read_text(encoding="utf-8"))
+        self.assertEqual(
+            saved["design"]["sources"], [{"manifest": str(self.root / "rtl" / "manifest.toml")}],
+        )
+
+
 class BrowseManifestDetectionTests(unittest.TestCase):
     """The regular browse-filesystem add flow (not a separate menu entry)
     must recognize a real manifest.toml and use it as-is -- a directory
