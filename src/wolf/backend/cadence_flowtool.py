@@ -17,8 +17,8 @@ class CadenceFlowtoolBackend(Backend):
     description = "Cadence Flowtool/Genus/Innovus compatibility backend"
     adapter_filename = "cadence-flowtool.sh"
 
-    def validate_genus(self, context: ResolvedContext):
-        return validate_genus(context)
+    def validate_genus(self, context: ResolvedContext, *, physical: bool = False):
+        return validate_genus(context, physical=physical)
 
     def prepare_genus_inputs(self, context: ResolvedContext, destination) -> GenusInputs:
         return prepare_genus_inputs(context, destination)

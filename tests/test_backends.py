@@ -37,6 +37,19 @@ class BackendRegistryTests(unittest.TestCase):
         self.assertTrue(checks["flowtool"].available)
         self.assertFalse(checks["python3"].available)
 
+    def test_cadence_validate_genus_forwards_the_physical_kwarg(self):
+        """Regression: `wolf run --plan`'s own call site passes
+        physical=... straight through this wrapper to
+        cadence_genus.validate_genus -- a real TypeError
+        ("unexpected keyword argument 'physical'") slipped through
+        because no test exercised this wrapper at all."""
+        context = mock.Mock(technology=None, values={}, package_paths={}, backend_overrides={})
+        backend = get_backend("cadence-flowtool")
+        checks = backend.validate_genus(context, physical=True)
+        self.assertTrue(checks)
+        checks_default = backend.validate_genus(context)
+        self.assertTrue(checks_default)
+
 
 class ShellOrchestrationTests(unittest.TestCase):
     def setUp(self):
