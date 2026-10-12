@@ -10,7 +10,7 @@ import yaml
 
 from wolf.backend.cadence_genus import (
     FLOW_GENUS_SYN_GENERIC, FLOW_GENUS_SYN_MAP, FLOW_GENUS_SYN_OPT,
-    _extract_step_bodies, _period_ns, bundled_flow_digest, flow_descendant_steps,
+    _extract_step_bodies, _period_ns, _tcl_quote, bundled_flow_digest, flow_descendant_steps,
     flow_step_digests, prepare_genus_inputs,
 )
 from wolf.context import (
@@ -520,6 +520,35 @@ class GenusPostsynNetlistAndInjectOverrideTests(GenusFixtureTestCase):
             )
 
 
+class GenusStepStatusFileTests(GenusFixtureTestCase):
+    """prepare_genus_inputs sets wolf_run_directory (presentation.tcl's
+    create_flow_step wrapper needs it to know where to write
+    wolf.step-status) and truncates wolf.step-status fresh on every
+    call, so a step name several stages share is never ambiguous
+    within one invocation's worth of live events."""
+
+    def test_wolf_run_directory_is_set_to_the_run_directory(self):
+        destination = self.root / "backend" / "cadence-genus"
+        inputs = prepare_genus_inputs(self._context(), destination)
+        flow_config = inputs.flow_config_script.read_text(encoding="utf-8")
+        self.assertIn(f"set wolf_run_directory {_tcl_quote(str(destination.resolve()))}", flow_config)
+
+    def test_wolf_step_status_is_created_empty(self):
+        destination = self.root / "backend" / "cadence-genus"
+        prepare_genus_inputs(self._context(), destination)
+        self.assertEqual((destination / "wolf.step-status").read_text(encoding="utf-8"), "")
+
+    def test_a_pre_existing_wolf_step_status_is_truncated_on_the_next_call(self):
+        """Regression: a stale event from an earlier invocation (e.g.
+        block_start, shared by several stages) must not leak into a
+        later invocation's own live view."""
+        destination = self.root / "backend" / "cadence-genus"
+        destination.mkdir(parents=True)
+        (destination / "wolf.step-status").write_text("block_start|success|1\n", encoding="utf-8")
+        prepare_genus_inputs(self._context(), destination)
+        self.assertEqual((destination / "wolf.step-status").read_text(encoding="utf-8"), "")
+
+
 class GenusThreadsTests(GenusFixtureTestCase):
     def test_no_thread_source_leaves_empty_config(self):
         inputs = prepare_genus_inputs(self._context(), self.root / "backend" / "cadence-genus")
@@ -800,6 +829,112 @@ class GenusExtraConstraintsTests(GenusFixtureTestCase):
                 self._context(constraint_files=(self.root / "missing.sdc",)),
                 self.root / "backend" / "cadence-genus",
             )
+
+
+@unittest.skipUnless(TCLSH, "tclsh is not installed")
+class WolfStepStatusWrapperTests(unittest.TestCase):
+    """presentation.tcl wraps Flowtool's own native create_flow_step so
+    every real step writes a live wolf.step-status record as it starts,
+    succeeds, or fails -- real root cause this pins: the step's own
+    body is NOT always create_flow_step's last argument. Several real
+    steps (synthesis.tcl's own elaborate, among others) trail it with a
+    bare -write_db flag -- `create_flow_step -name X -owner wolf {BODY}
+    -write_db` -- which a naive "last argument is the body" wrapper
+    mistakes for the body itself, corrupting the step entirely."""
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory(prefix="wolf-step-status-")
+        self.root = Path(self.temporary.name)
+        self.run_directory = self.root / "run"
+        self.run_directory.mkdir()
+
+    def tearDown(self):
+        self.temporary.cleanup()
+
+    # A native-command stand-in that finds the body the same
+    # newline-based way as the real wrapper, so this test harness
+    # correctly mimics Flowtool's own command regardless of whether a
+    # trailing flag (like -write_db) is present.
+    _NATIVE_STUB = (
+        "proc create_flow_step {args} {\n"
+        "    set i -1\n"
+        "    foreach a $args { incr i; if {[string first \"\\n\" $a] >= 0} { break } }\n"
+        "    uplevel 1 [lindex $args $i]\n"
+        "}\n"
+    )
+
+    def _run(self, extra_tcl: str) -> subprocess.CompletedProcess:
+        presentation = builtin_flow_root("cadence-genus") / "presentation.tcl"
+        script = self.root / "script.tcl"
+        script.write_text(
+            self._NATIVE_STUB
+            + f'source {{{presentation}}}\n'
+            f'set wolf_run_directory {{{self.run_directory}}}\n'
+            + extra_tcl,
+            encoding="utf-8",
+        )
+        return subprocess.run([TCLSH, str(script)], capture_output=True, text=True, check=False)
+
+    def _step_status_lines(self) -> list[str]:
+        path = self.run_directory / "wolf.step-status"
+        return path.read_text(encoding="utf-8").splitlines() if path.is_file() else []
+
+    def test_a_trailing_write_db_flag_does_not_corrupt_the_body(self):
+        """Regression: elaborate's real shape -- this failed with
+        "invalid command name "-write_db"" before the fix, because the
+        wrapper mistook the trailing flag itself for the step body."""
+        result = self._run(
+            "create_flow_step -name elaborate -owner wolf {\n"
+            "    set ::elaborate_ran 1\n"
+            "} -write_db\n"
+            "puts \"elaborate_ran=$::elaborate_ran\"\n"
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertIn("elaborate_ran=1", result.stdout)
+        lines = self._step_status_lines()
+        self.assertEqual([line.split("|")[0:2] for line in lines], [
+            ["elaborate", "starting"], ["elaborate", "success"],
+        ])
+
+    def test_a_categories_flag_before_the_body_is_still_handled(self):
+        result = self._run(
+            "create_flow_step -name block_finish -owner wolf -categories flow {\n"
+            "    set ::ran 1\n"
+            "}\n"
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        lines = self._step_status_lines()
+        self.assertEqual([line.split("|")[0:2] for line in lines], [
+            ["block_finish", "starting"], ["block_finish", "success"],
+        ])
+
+    def test_a_failing_step_writes_failed_and_still_raises(self):
+        result = self._run(
+            "create_flow_step -name bad_step -owner wolf {\n"
+            "    error \"deliberate failure\"\n"
+            "}\n"
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("deliberate failure", result.stdout + result.stderr)
+        lines = self._step_status_lines()
+        self.assertEqual([line.split("|")[0:2] for line in lines], [
+            ["bad_step", "starting"], ["bad_step", "failed"],
+        ])
+
+    def test_no_wolf_run_directory_set_degrades_to_writing_nothing(self):
+        presentation = builtin_flow_root("cadence-genus") / "presentation.tcl"
+        script = self.root / "script.tcl"
+        script.write_text(
+            self._NATIVE_STUB
+            + f'source {{{presentation}}}\n'
+            "create_flow_step -name ok_step -owner wolf {\n"
+            "    set ::ran 1\n"
+            "}\n",
+            encoding="utf-8",
+        )
+        result = subprocess.run([TCLSH, str(script)], capture_output=True, text=True, check=False)
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertEqual(self._step_status_lines(), [])
 
 
 @unittest.skipUnless(TCLSH, "tclsh is not installed")
@@ -1174,6 +1309,50 @@ class FlowIdentityTests(unittest.TestCase):
             case.tearDown()
 
 
+class GenusRunStepEventsTests(unittest.TestCase):
+    """genus_run_step_events reads WOLF's own live per-step record
+    directly off disk (<run_directory>/wolf.step-status), written by
+    presentation.tcl's create_flow_step wrapper -- a plain file read,
+    bare step-name keyed, safe because the file is truncated fresh
+    every flowtool invocation (see stage_step_detail's own docstring)."""
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory(prefix="wolf-genus-step-events-")
+        self.root = Path(self.temporary.name)
+        self.run_directory = self.root / "work" / "demo.1"
+        self.run_directory.mkdir(parents=True)
+
+    def tearDown(self):
+        self.temporary.cleanup()
+
+    def _write_events(self, text: str) -> None:
+        (self.run_directory / "wolf.step-status").write_text(text, encoding="utf-8")
+
+    def test_no_file_yet_returns_empty(self):
+        from wolf.backend.cadence_genus import genus_run_step_events
+        self.assertEqual(genus_run_step_events(self.run_directory), {})
+
+    def test_parses_real_shaped_lines(self):
+        from wolf.backend.cadence_genus import genus_run_step_events
+        self._write_events(
+            "block_start|starting|1700000000\n"
+            "block_start|success|1700000001\n"
+            "init_genus|starting|1700000002\n"
+        )
+        events = genus_run_step_events(self.run_directory)
+        self.assertEqual(events, {"block_start": "complete", "init_genus": "running"})
+
+    def test_a_later_line_for_the_same_name_overwrites_an_earlier_one(self):
+        from wolf.backend.cadence_genus import genus_run_step_events
+        self._write_events("block_start|starting|1\nblock_start|failed|2\n")
+        self.assertEqual(genus_run_step_events(self.run_directory)["block_start"], "failed")
+
+    def test_an_unparseable_line_is_skipped_not_an_error(self):
+        from wolf.backend.cadence_genus import genus_run_step_events
+        self._write_events("not a real line\nblock_start|success|1\n")
+        self.assertEqual(genus_run_step_events(self.run_directory), {"block_start": "complete"})
+
+
 class GenusRunStatusTests(unittest.TestCase):
     """genus_run_status reads Flowtool's own real per-run execution
     record directly off disk (<run_directory>/flow.status) -- a plain
@@ -1459,6 +1638,44 @@ class StageStepDetailTests(unittest.TestCase):
         )
         detail = dict(stage_step_detail(self.run_directory, "syn_map"))
         self.assertEqual(detail["report_synth"], "running")
+
+    def _write_events(self, text: str) -> None:
+        (self.run_directory / "wolf.step-status").write_text(text, encoding="utf-8")
+
+    def test_a_live_wolf_step_status_event_overrides_a_stale_flow_status_entry(self):
+        """Regression, hit for real: flow.status sat unchanged for over
+        an hour while a manually-typed `run_flow` visibly progressed
+        past block_start -- wolf.step-status's own live event for the
+        same bare step name must win."""
+        from wolf.backend.cadence_genus import stage_step_detail
+        self._write_status(
+            "{status error time 1700000000 errors {} "
+            "steps_run {str block.synthesis.syn_map.block_start}}\n"
+        )
+        self._write_events("block_start|success|1700000500\n")
+        detail = dict(stage_step_detail(self.run_directory, "syn_map"))
+        self.assertEqual(detail["block_start"], "complete")
+
+    def test_a_live_event_for_a_nested_sub_flows_own_leaf_also_overrides(self):
+        """The live overlay must reach a nested sub-flow's own leaf
+        descendants too (report_synth's own init_genus), not just a
+        stage's direct members -- real progress through report_synth
+        during a manually-typed run_flow must still show up."""
+        from wolf.backend.cadence_genus import stage_step_detail
+        self._write_events("init_genus|success|1700000500\n")
+        detail = dict(stage_step_detail(self.run_directory, "syn_map"))
+        self.assertEqual(detail["report_synth"], "running")
+
+    def test_no_live_event_for_a_member_falls_back_to_flow_status(self):
+        from wolf.backend.cadence_genus import stage_step_detail
+        self._write_status(
+            "{status success time 1700000000 errors {} "
+            "steps_run {str block.synthesis.syn_map.block_start}}\n"
+        )
+        self._write_events("init_genus|starting|1700000500\n")
+        detail = dict(stage_step_detail(self.run_directory, "syn_map"))
+        self.assertEqual(detail["block_start"], "complete")
+        self.assertEqual(detail["init_genus"], "running")
 
 
 class CadenceFlowtoolBackendStatusTests(unittest.TestCase):

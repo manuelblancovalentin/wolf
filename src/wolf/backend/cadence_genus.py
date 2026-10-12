@@ -751,6 +751,50 @@ def genus_run_status(run_directory: Path) -> tuple[str, dict[str, str]]:
     return raw, states
 
 
+def genus_run_step_events(run_directory: Path) -> dict[str, str]:
+    """Read WOLF's own live per-step status record directly --
+    `<run_directory>/wolf.step-status`, written by presentation.tcl's
+    own create_flow_step wrapper (one real step's own bookkeeping, not
+    Flowtool's) as `<step_name>|<status>|<unix_time>` lines, truncated
+    fresh by `prepare_genus_inputs` at the start of every flowtool
+    invocation.
+
+    This exists specifically because Flowtool's own `flow.status`/
+    `flow.metrics` are confirmed NOT promptly updated per step when a
+    step runs as part of a manually-typed `run_flow` at an interactive
+    Genus/Innovus prompt -- real, observed on an actual run: `flow.status`
+    sat unchanged for well over an hour while the console clearly showed
+    steps completing one after another. wolf.step-status instead reflects
+    each step directly, independent of Flowtool's own buffering.
+
+    Returns {step_name: state}, state one of "running"/"complete"/
+    "failed" via the same vocabulary genus_run_status itself uses.
+    Keyed by bare step name, not a qualified canonical path -- safe
+    because the file is truncated fresh per invocation, so a name
+    several stages share (like block_start) is never ambiguous within
+    it (there is only ever one stage's worth of real events in it at a
+    time). A later record for the same name always overwrites an
+    earlier one, same as genus_run_status. Degrades to {} rather than
+    raising on a missing file -- e.g. before any step has executed yet
+    this invocation."""
+    events_file = run_directory / "wolf.step-status"
+    if not events_file.is_file():
+        return {}
+    events: dict[str, str] = {}
+    for line in events_file.read_text(encoding="utf-8", errors="replace").splitlines():
+        parts = line.split("|")
+        if len(parts) < 2:
+            continue
+        name, status = parts[0], parts[1].lower()
+        if status in _FLOW_STATUS_FAILED_STATES:
+            events[name] = "failed"
+        elif status in _FLOW_STATUS_SUCCESS_STATES:
+            events[name] = "complete"
+        elif status in _FLOW_STATUS_RUNNING_STATES:
+            events[name] = "running"
+    return events
+
+
 def _memory_mb(value: Optional[str]) -> Optional[float]:
     """Flowtool reports memory as a free-text string like "39197 MB" --
     pull out just the leading number, degrading to None (left out of the
@@ -1134,17 +1178,29 @@ def stage_step_detail(
     `rollup_stage_states` itself uses -- "complete" only once every one
     of *its* own real leaf descendants is accounted for, "failed" if
     any is, otherwise "running" once anything has started. Returns ()
-    for an unrecognized stage name or a run with no flow.status yet."""
+    for an unrecognized stage name or a run with no flow.status yet.
+
+    genus_run_step_events' own live, bare-name-keyed data (see its own
+    docstring for why it exists -- Flowtool's own flow.status isn't
+    promptly updated per step during an interactive `run_flow`) always
+    wins over flow.status's canonical-path state for a leaf whose bare
+    name it has an entry for, since it reflects this invocation's real
+    progress even when flow.status itself hasn't caught up yet."""
     if stage not in STAGE_ORDER:
         return ()
     membership = membership if membership is not None else flow_membership()
     _, states = genus_run_status(run_directory)
+    events = genus_run_step_events(run_directory)
     prefix = f"block.{_STAGE_TOPLEVEL_FLOW[stage]}.{stage}"
     detail: list[tuple[str, str]] = []
     for member in membership.get(stage, ()):
         leaf_paths: list[str] = []
         _expand_canonical_paths(prefix, member, membership, leaf_paths)
         known = {path: states[path] for path in leaf_paths if path in states}
+        for path in leaf_paths:
+            bare_name = path.rsplit(".", 1)[-1]
+            if bare_name in events:
+                known[path] = events[bare_name]
         detail.append((member, _rollup_one_state(known, len(leaf_paths))))
     return tuple(detail)
 
@@ -1378,8 +1434,21 @@ def prepare_genus_inputs(
         )
         + "puts [wolf_sep]\n"
     )
+    # Truncated fresh on every invocation (not just the first) -- a
+    # step name several stages share (like block_start) is otherwise
+    # ambiguous in wolf.step-status across invocations the way a
+    # canonical dotted path in Flowtool's own flow.status is not; a
+    # fresh, empty file per invocation means the only entries present
+    # ever belong to whichever stage *this* invocation is actually
+    # running. See presentation.tcl's own create_flow_step wrapper for
+    # why this file exists at all: Flowtool's own flow.status/
+    # flow.metrics are confirmed NOT promptly updated per step when a
+    # step runs as part of a manually-typed `run_flow` at an
+    # interactive prompt.
+    (destination / "wolf.step-status").write_text("", encoding="utf-8")
     flow_config_script.write_text(
         "# Generated by WOLF; resolved values consumed by synthesis.tcl/common_steps.tcl.\n"
+        f"set wolf_run_directory {_tcl_quote(str(destination))}\n"
         f"set wolf_design_name {_tcl_quote(context.design_name)}\n"
         f"set wolf_design_top {_tcl_quote(context.design_top)}\n"
         f"set wolf_reports_dir {_tcl_quote(str(reports_directory))}\n"

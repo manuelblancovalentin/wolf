@@ -650,6 +650,49 @@ finer-than-stage granularity (ORFS, tracked only via
 `wolf.stage-results`) returns no detail, and the watch panel simply
 omits the tree.
 
+### Live per-step status independent of Flowtool's own buffering
+
+Confirmed real on an actual run: Flowtool's own `flow.status`/
+`flow.metrics` are **not** promptly updated per step when a step runs as
+part of a manually-typed `run_flow` at an interactive Genus/Innovus
+prompt -- `flow.status` sat completely unchanged for over an hour while
+the console clearly showed several real steps completing one after
+another (Flowtool's own writes there are tied to its driver loop
+regaining control between steps, not to each step itself; they still
+update promptly for a normal non-interactive `-from`/`-to` invocation,
+or an interactive session where Flowtool itself steps through each
+`create_flow_step` one at a time rather than the user calling `run_flow`
+directly). Left alone, this meant `wolf status --watch`'s expanded tree
+would go stale for exactly as long as a `run_flow` call was in flight --
+precisely when live progress is most useful to see.
+
+`presentation.tcl` fixes this by wrapping Flowtool's own native
+`create_flow_step` (renamed to `::wolf_native_create_flow_step`) so
+every real step -- without any of their own bodies being touched --
+also writes a line to `<run_directory>/wolf.step-status`
+(`<step_name>|starting|<time>`, then `|success|` or `|failed|`) as it
+executes. The body is identified by its own structural property (the
+one argument containing an embedded newline, since every real body in
+this flow is a multi-line `{...}` block) rather than by position --
+confirmed real that several steps (`elaborate`, `run_syn_generic`,
+`block_finish`, ...) trail their own body with a bare `-write_db` flag,
+`create_flow_step -name X -owner wolf {BODY} -write_db`, which a naive
+"body is the last argument" wrapper mistakes for the body itself. A
+real step failure is still re-raised via `return -options` with its
+original error code/info intact, so Flowtool's own error handling sees
+the exact same failure it always would have; a `wolf_write_step_status`
+write failure (disk full, permissions, ...) is reported but never
+allowed to break the real flow.
+
+`genus_run_step_events` reads this file back, keyed by bare step name
+(safe -- not ambiguous the way a bare name would be in `flow.status` --
+because `prepare_genus_inputs` truncates `wolf.step-status` fresh on
+every invocation, so it only ever holds the current invocation's own
+events). `stage_step_detail` overlays it onto `flow.status`'s own
+canonical-path state, for both a stage's direct members and a nested
+sub-flow's own leaf descendants, always preferring the live event when
+one exists.
+
 ## Genus attribute overrides
 
 Some Genus attributes are tool policy rather than package metadata or
