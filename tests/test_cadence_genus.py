@@ -1239,6 +1239,52 @@ class GenusRunStatusTests(unittest.TestCase):
         self.assertEqual(states, {})
         self.assertIn("nothing useful here", raw)
 
+    def test_a_fresh_invocation_demotes_a_stale_failure_for_its_own_stage_range(self):
+        """Regression, hit for real: block_start failed because of a now-
+        fixed WOLF bug (report_flow being called too early); after the
+        fix, flowtool was re-invoked for -from syn_map -to syn_map (an
+        interactive session still sitting at the prompt, nothing logged
+        yet for block_start under the new attempt) -- must read as
+        "running", not stuck showing the old attempt's "failed"."""
+        from wolf.backend.cadence_genus import genus_run_status
+        self._write_status(
+            "{status error time 1700000000 errors {} "
+            "steps_run {str block.synthesis.syn_map.block_start}}\n"
+            "{script flowtool status invoked arguments "
+            "{-from syn_map -to syn_map -interactive}}\n"
+        )
+        _, states = genus_run_status(self.run_directory)
+        self.assertEqual(states["block.synthesis.syn_map.block_start"], "running")
+
+    def test_a_stale_failure_outside_the_fresh_invocations_own_range_is_left_alone(self):
+        """The demotion is scoped to the new invocation's own -from/-to
+        stage range -- an unrelated stage's real failure elsewhere must
+        not be masked just because some other stage was re-invoked."""
+        from wolf.backend.cadence_genus import genus_run_status
+        self._write_status(
+            "{status error time 1700000000 errors {} "
+            "steps_run {str block.synthesis.syn_generic.block_start}}\n"
+            "{script flowtool status invoked arguments "
+            "{-from syn_map -to syn_map -interactive}}\n"
+        )
+        _, states = genus_run_status(self.run_directory)
+        self.assertEqual(states["block.synthesis.syn_generic.block_start"], "failed")
+
+    def test_a_failure_logged_after_the_fresh_invocation_is_not_demoted(self):
+        """If the new attempt itself goes on to fail again for real
+        (a fresh failure record logged after the invocation marker),
+        that must stand -- the demotion only ever fills a gap where
+        nothing fresher has been reported yet."""
+        from wolf.backend.cadence_genus import genus_run_status
+        self._write_status(
+            "{script flowtool status invoked arguments "
+            "{-from syn_map -to syn_map -interactive}}\n"
+            "{status error time 1700000001 errors {} "
+            "steps_run {str block.synthesis.syn_map.block_start}}\n"
+        )
+        _, states = genus_run_status(self.run_directory)
+        self.assertEqual(states["block.synthesis.syn_map.block_start"], "failed")
+
 
 class RollupStageStatesTests(unittest.TestCase):
     """rollup_stage_states fills in a STAGE_ORDER-level state from the

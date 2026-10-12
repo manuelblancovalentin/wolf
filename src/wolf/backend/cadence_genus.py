@@ -672,13 +672,31 @@ def genus_run_status(run_directory: Path) -> tuple[str, dict[str, str]]:
     step. An unparseable or missing status word degrades to leaving that
     record out rather than raising. Returns ("", {}) when no flow.status
     exists yet (e.g. `wolf run --plan` was the only thing that's
-    happened)."""
+    happened).
+
+    One real wrinkle, hit continuing an actual run after fixing a bug
+    that had made it fail mid-stage: Flowtool's own `{script flowtool
+    status invoked arguments {... -from X -to Y ...}}` marker lines are
+    real too, and the most recent one names the stage range a brand new
+    invocation is about to (re)run -- but that fresh attempt may not
+    have logged anything for those canonical paths yet (e.g. it's an
+    interactive session still sitting at a prompt before running its
+    first step). Left alone, a path's stale "failed" from the *previous*
+    attempt would keep showing "failed" even though a new attempt is
+    actively under way and hasn't reported anything of its own yet. The
+    most recent invocation marker, if any, is used to demote a stale
+    "failed" within its own `-from`/`-to` range to "running" when
+    nothing has been logged for that path since -- a new invocation
+    starting is itself real, observed evidence that supersedes the old
+    outcome, not a guess at Flowtool's internals."""
     status_file = run_directory / "flow.status"
     if not status_file.is_file():
         return "", {}
     raw = status_file.read_text(encoding="utf-8", errors="replace")
     states: dict[str, str] = {}
-    for line in raw.splitlines():
+    last_update_index: dict[str, int] = {}
+    last_invocation: Optional[tuple[int, Optional[str], Optional[str]]] = None
+    for index, line in enumerate(raw.splitlines()):
         line = line.strip()
         if not line:
             continue
@@ -689,6 +707,13 @@ def genus_run_status(run_directory: Path) -> tuple[str, dict[str, str]]:
             line = line[1:-1]
         record = _tcl_dict(line)
         if record.get("script") == "flowtool":
+            arguments = _tcl_list_elements(record.get("arguments", ""))
+            from_stage = (
+                arguments[arguments.index("-from") + 1] if "-from" in arguments else None
+            )
+            to_stage = arguments[arguments.index("-to") + 1] if "-to" in arguments else None
+            if from_stage or to_stage:
+                last_invocation = (index, from_stage, to_stage)
             continue  # An invocation-boundary marker, not a step event.
         steps_run = record.get("steps_run")
         path = _tcl_dict(steps_run).get("str") if steps_run else None
@@ -708,6 +733,20 @@ def genus_run_status(run_directory: Path) -> tuple[str, dict[str, str]]:
             states[path] = "complete"
         elif status in _FLOW_STATUS_RUNNING_STATES:
             states[path] = "running"
+        last_update_index[path] = index
+    if last_invocation is not None:
+        invocation_index, from_stage, to_stage = last_invocation
+        if from_stage in STAGE_ORDER:
+            start = STAGE_ORDER.index(from_stage)
+            end = STAGE_ORDER.index(to_stage) if to_stage in STAGE_ORDER else start
+            membership = flow_membership()
+            for stage in STAGE_ORDER[start:end + 1]:
+                for path in stage_canonical_paths(stage, membership):
+                    if (
+                        states.get(path) == "failed"
+                        and last_update_index.get(path, -1) < invocation_index
+                    ):
+                        states[path] = "running"
     return raw, states
 
 
