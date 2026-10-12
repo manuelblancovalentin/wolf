@@ -9,7 +9,7 @@ from typing import Mapping, Optional, Sequence
 from wolf.backend.base import Backend, ValidationItem
 from wolf.backend.cadence_genus import (
     STAGE_ORDER, GenusInputs, genus_run_metrics, genus_run_status, prepare_genus_inputs,
-    rollup_stage_states, run_genus, validate_genus,
+    rollup_stage_states, run_genus, stage_step_detail, validate_genus,
 )
 from wolf.context import ResolvedContext
 
@@ -54,6 +54,12 @@ class CadenceFlowtoolBackend(Backend):
         confirmed real alongside flow.status for any run that has
         actually invoked Flowtool."""
         return genus_run_metrics(Path(run_directory))
+
+    def stage_step_detail(self, run_directory, stage: str):
+        """`wolf status --watch`'s expanded live view hook -- the real
+        create_flow membership tree, qualified by flow.status's own
+        current states (see stage_step_detail's own docstring)."""
+        return stage_step_detail(Path(run_directory), stage)
 
     def validate(
         self, context: Optional[Mapping[str, str]] = None

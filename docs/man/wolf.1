@@ -288,6 +288,16 @@ Show status for an explicit run directory or active-environment run ID.
 .TP
 .B wolf status --json
 Emit the same status model as `wolf.status/v1` JSON.
+.TP
+.B wolf status --watch
+Auto-refresh in place until the run finishes or completes/fails, with a live
+spinner on the actively running stage and (when the backend has finer-than-
+stage detail, e.g. cadence-flowtool) an expanded tree of that stage's own
+real steps. Renders its own panel directly rather than piping plain output
+through the external
+.B watch
+command, which strips Rich's own color/formatting. Mutually exclusive with
+--json.
 .SH SHELL INTEGRATION AND COMPLETION
 Source
 .I shell/wolf.bash

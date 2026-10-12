@@ -52,3 +52,12 @@ class Backend(ABC):
     def infer_stage_results(self, run_directory):
         """Return backend-owned stage evidence for legacy runs."""
         return {}
+
+    def stage_step_detail(self, run_directory, stage: str) -> Sequence[tuple[str, str]]:
+        """Return (label, status) pairs for one stage's own immediate
+        real sub-steps, in execution order, for `wolf status --watch`'s
+        expanded live view of whichever stage is currently running.
+        Defaults to () -- a backend with no finer-than-stage granularity
+        (e.g. ORFS, tracked only via wolf.stage-results) simply has
+        nothing more to show, and the watch panel omits the tree."""
+        return ()

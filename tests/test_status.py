@@ -69,7 +69,7 @@ class StatusTests(unittest.TestCase):
     def test_json_and_human_output_share_model(self):
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
-            command_status(mock.Mock(run=None, environment="golden", json=True))
+            command_status(mock.Mock(run=None, environment="golden", json=True, watch=False))
         document = json.loads(output.getvalue())
         self.assertEqual(document["schema"], "wolf.status/v1")
         self.assertEqual(document["run"]["status"], "failed")
@@ -80,13 +80,13 @@ class StatusTests(unittest.TestCase):
         self.assertIn("place", human.getvalue())
 
     def test_no_run_is_reported_without_creating_state(self):
-        result = command_status(mock.Mock(run=None, environment="missing", json=False))
+        result = command_status(mock.Mock(run=None, environment="missing", json=False, watch=False))
         self.assertEqual(result, 0)
         self.assertFalse((self.root / "state" / "envs" / "missing").exists())
 
     def test_explicit_run_path_and_frozen_provenance_are_read_only(self):
         before = (self.run / "wolf.resolved.yaml").read_bytes()
-        args = mock.Mock(run=str(self.run), environment=None, json=True)
+        args = mock.Mock(run=str(self.run), environment=None, json=True, watch=False)
         self.assertEqual(command_status(args), 0)
         self.assertEqual((self.run / "wolf.resolved.yaml").read_bytes(), before)
 
@@ -94,6 +94,58 @@ class StatusTests(unittest.TestCase):
         parser = build_parser()
         args = parser.parse_args(["status", "--run", str(self.run), "--json"])
         self.assertTrue(args.json)
+
+    def test_watch_flag_is_registered_and_defaults_to_off(self):
+        parser = build_parser()
+        args = parser.parse_args(["status", "--run", str(self.run)])
+        self.assertFalse(args.watch)
+        watching = parser.parse_args(["status", "--run", str(self.run), "--watch"])
+        self.assertTrue(watching.watch)
+
+    def test_watch_and_json_together_is_rejected(self):
+        args = mock.Mock(run=str(self.run), environment=None, json=True, watch=True)
+        with self.assertRaisesRegex(ValueError, "mutually exclusive"):
+            command_status(args)
+
+    def test_watch_exits_once_the_run_reaches_a_terminal_state(self):
+        """The --watch loop must not use the external `watch` command
+        (which strips Rich's own color/formatting) -- it re-renders a
+        fresh panel itself via rich.live.Live until the run's own state
+        settles, then returns an exit code matching success/failure."""
+        from wolf.commands import status as status_module
+
+        statuses = [
+            mock.Mock(state="running", stages=[], backend="orfs"),
+            mock.Mock(state="completed", stages=[], backend="orfs"),
+        ]
+        with mock.patch.object(status_module, "load_status", side_effect=statuses), \
+             mock.patch.object(status_module, "render_live", side_effect=[object(), object()]), \
+             mock.patch.object(status_module.time, "sleep") as sleep_mock, \
+             mock.patch("rich.live.Live") as live_cls:
+            result = status_module._watch(self.run)
+        self.assertEqual(result, 0)
+        sleep_mock.assert_called_once()
+        live_cls.return_value.__enter__.return_value.update.assert_called_once()
+
+    def test_watch_returns_a_nonzero_exit_code_once_the_run_fails(self):
+        from wolf.commands import status as status_module
+
+        statuses = [mock.Mock(state="failed", stages=[], backend="orfs")]
+        with mock.patch.object(status_module, "load_status", side_effect=statuses), \
+             mock.patch.object(status_module, "render_live", return_value=object()), \
+             mock.patch.object(status_module.time, "sleep") as sleep_mock, \
+             mock.patch("rich.live.Live"):
+            result = status_module._watch(self.run)
+        self.assertEqual(result, 1)
+        sleep_mock.assert_not_called()
+
+    def test_watch_exits_cleanly_on_keyboard_interrupt(self):
+        from wolf.commands import status as status_module
+
+        with mock.patch.object(status_module, "load_status", side_effect=KeyboardInterrupt), \
+             mock.patch("rich.live.Live"):
+            result = status_module._watch(self.run)
+        self.assertEqual(result, 0)
 
     def test_historical_orfs_run_infers_completed_stages_without_metadata(self):
         historical = self.root / "historical"

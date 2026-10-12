@@ -132,6 +132,10 @@
 
 `wolf status --run {{/path/to/run}}`
 
+- Auto-refresh in place with a live spinner/tree until the run finishes:
+
+`wolf status --watch`
+
 - Report basic installation and runtime facts:
 
 `wolf doctor`

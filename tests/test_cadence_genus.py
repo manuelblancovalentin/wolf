@@ -1406,6 +1406,61 @@ class StageCanonicalPathsTests(unittest.TestCase):
         self.assertEqual(len(paths), len(flow_descendant_steps("syn_generic")) + 1)
 
 
+class StageStepDetailTests(unittest.TestCase):
+    """stage_step_detail is wolf status --watch's own real backend-local
+    hook for its expanded live view of whichever stage is currently
+    running -- one level of a stage's own direct create_flow members,
+    each paired with its current rolled-up state."""
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory(prefix="wolf-genus-detail-")
+        self.root = Path(self.temporary.name)
+        self.run_directory = self.root / "work" / "demo.1"
+        self.run_directory.mkdir(parents=True)
+
+    def tearDown(self):
+        self.temporary.cleanup()
+
+    def _write_status(self, text: str) -> None:
+        (self.run_directory / "flow.status").write_text(text, encoding="utf-8")
+
+    def test_unrecognized_stage_name_returns_empty(self):
+        from wolf.backend.cadence_genus import stage_step_detail
+        self.assertEqual(stage_step_detail(self.run_directory, "not-a-real-stage"), ())
+
+    def test_no_flow_status_yet_reports_every_member_pending(self):
+        from wolf.backend.cadence_genus import flow_membership, stage_step_detail
+        detail = stage_step_detail(self.run_directory, "syn_map")
+        self.assertEqual(
+            [label for label, _ in detail], list(flow_membership()["syn_map"]),
+        )
+        self.assertTrue(all(state == "pending" for _, state in detail))
+
+    def test_a_running_leaf_member_is_reported_directly(self):
+        from wolf.backend.cadence_genus import stage_step_detail
+        self._write_status(
+            "{status starting time 1700000000 errors {} "
+            "steps_run {str block.synthesis.syn_map.block_start}}\n"
+        )
+        detail = dict(stage_step_detail(self.run_directory, "syn_map"))
+        self.assertEqual(detail["block_start"], "running")
+        self.assertEqual(detail["init_genus"], "pending")
+
+    def test_a_nested_sub_flow_member_rolls_up_its_own_leaf_descendants(self):
+        """report_synth is itself a nested flow inside syn_map, not a
+        leaf -- its own reported state must be the same rollup
+        rollup_stage_states uses for a whole STAGE_ORDER name:
+        "complete" only once every one of its own real leaf descendants
+        is accounted for, here just one ("report_start") out of nine."""
+        from wolf.backend.cadence_genus import stage_step_detail
+        self._write_status(
+            "{status success time 1700000000 errors {} "
+            "steps_run {str block.synthesis.syn_map.report_synth.report_start}}\n"
+        )
+        detail = dict(stage_step_detail(self.run_directory, "syn_map"))
+        self.assertEqual(detail["report_synth"], "running")
+
+
 class CadenceFlowtoolBackendStatusTests(unittest.TestCase):
     def test_stages_returns_the_real_stage_order(self):
         from wolf.backend.cadence_flowtool import CadenceFlowtoolBackend

@@ -618,10 +618,37 @@ own `flow.status`. `stage_canonical_paths` produces exactly that
 qualified form per stage, so `rollup_stage_states` only ever rolls up a
 stage's own steps, never an unrelated stage's run of a same-named one.
 
-A follow-up, not yet done: `extract_metrics(run_directory)` (Flowtool's
-own `flow.metrics`, confirmed present on disk alongside `flow.status` but
-not yet parsed) isn't wired up yet -- `wolf status`'s Metrics section
-stays empty for a Genus run until that's done.
+`extract_metrics(run_directory)` reads Flowtool's own `flow.metrics`
+(confirmed real, present on disk alongside `flow.status`): a single JSON
+object whose top-level `metrics` list describes the *current*
+in-progress snapshot (including `flowtool.status`, Flowtool's own
+free-text one-line summary of what's running right now), `total_real`/
+`total_cpu` are the whole flow's cumulative wall/CPU seconds so far, and
+`snapshots` holds one entry per *completed* child stage at the current
+nesting level with its own real timing. `genus_run_metrics` parses this
+into `wolf status`'s Metrics section (flow elapsed/CPU time, memory,
+peak memory, the live activity line) and an internal
+`stage_elapsed_seconds` convention key that `load_status` uses to fill
+`StageResult.elapsed_seconds` for a Cadence run's completed stages --
+unlike a generically-tracked `wolf.stage-results` run, a Flowtool
+invocation has no other source of real per-stage timing.
+
+### `wolf status --watch`
+
+`watch -n 2 wolf status` strips Rich's own color/formatting (it's piping
+plain terminal output through an external process with no ANSI
+awareness), so `wolf status` instead has its own built-in auto-refresh:
+`--watch` re-renders a fresh panel in place via `rich.live.Live` until
+the run reaches a terminal state, with a live spinner on the actively
+running stage. When something is running, it also asks the active
+backend for `stage_step_detail(run_directory, stage)` -- for Cadence/
+Flowtool, the real `create_flow` membership tree one level under that
+stage, each member's own current state (a leaf step's canonical-path
+state directly, or a nested sub-flow's own rollup) -- and renders it as
+an expanded tree under the stage, spinner included. A backend with no
+finer-than-stage granularity (ORFS, tracked only via
+`wolf.stage-results`) returns no detail, and the watch panel simply
+omits the tree.
 
 ## Genus attribute overrides
 

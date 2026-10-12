@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 import yaml
 
@@ -171,49 +171,82 @@ def load_status(run_directory: Path) -> RunStatus:
     return RunStatus(run, environment, run.name, backend, state, stages, metrics, failed)
 
 
-def render_human(status: RunStatus) -> None:
-    from wolf import ui
+def _format_elapsed(value: float | None) -> str:
+    if value is None:
+        return "-"
+    seconds = int(round(value))
+    minutes, seconds = divmod(seconds, 60)
+    return f"{minutes}m {seconds:02d}s" if minutes else f"{seconds}s"
+
+
+_STATE_STYLES = {"complete": "green", "running": "yellow", "failed": "red"}
+_STATE_MARKERS = {"complete": "●", "running": "●", "failed": "●"}
+
+
+def _status_cell(value: str, *, spin: bool = False):
+    """A styled status cell -- plain `Text` normally, or a live
+    `Spinner` in place of the usual marker when `spin` is set (the
+    --watch panel's own animated "this is active right now" cue; a
+    plain human/JSON render never passes it)."""
+    from rich.spinner import Spinner
+    from rich.text import Text
+
+    style = _STATE_STYLES.get(value, "dim")
+    if spin and value == "running":
+        return Spinner("dots", text=Text(f" {value}", style=style), style=style)
+    marker = _STATE_MARKERS.get(value, "○")
+    return Text(f"{marker} {value}", style=style)
+
+
+def _build_renderable(status: RunStatus):
+    """The full human-readable panel (header fields, Stages table,
+    Metrics table) as one Rich renderable, not yet printed -- shared by
+    the plain one-shot `render_human` and the auto-refreshing
+    `--watch` panel (`wolf.commands.status`), which feeds a fresh one
+    of these into a `rich.live.Live` on every tick instead of piping
+    plain output through an external `watch`, which strips Rich's own
+    color/formatting."""
+    from rich.console import Group
     from rich.table import Table
     from rich.text import Text
 
-    def elapsed(value):
-        if value is None:
-            return "-"
-        seconds = int(round(value))
-        minutes, seconds = divmod(seconds, 60)
-        return f"{minutes}m {seconds:02d}s" if minutes else f"{seconds}s"
+    lines: list[Text] = []
 
-    def status_cell(value):
-        styles = {"complete": "green", "running": "yellow", "failed": "red"}
-        style = styles.get(value, "dim")
-        marker = {"complete": "●", "running": "●", "failed": "●"}.get(value, "○")
-        return Text(f"{marker} {value}", style=style)
+    def kv(key: object, value: object) -> None:
+        line = Text("  ")
+        line.append(str(key), style="bold blue")
+        line.append(": ")
+        line.append(str(value))
+        lines.append(line)
 
-    ui.key_value("Environment", status.environment or "unknown")
-    ui.key_value("Run", status.run_name)
-    ui.key_value("Backend", status.backend)
-    ui.key_value("Status", status.state)
+    kv("Environment", status.environment or "unknown")
+    kv("Run", status.run_name)
+    kv("Backend", status.backend)
+    kv("Status", status.state)
     total_elapsed = sum(stage.elapsed_seconds or 0 for stage in status.stages)
     if total_elapsed:
-        ui.key_value("Elapsed", elapsed(total_elapsed))
+        kv("Elapsed", _format_elapsed(total_elapsed))
     if status.failed_stage:
-        ui.key_value("Failed stage", status.failed_stage)
+        kv("Failed stage", status.failed_stage)
         failed_result = next((stage for stage in status.stages if stage.name == status.failed_stage), None)
         if failed_result and failed_result.exit_code is not None:
-            ui.key_value("Exit code", failed_result.exit_code)
-    ui.key_value("Run directory", status.run_directory)
+            kv("Exit code", failed_result.exit_code)
+    kv("Run directory", status.run_directory)
     current_activity = status.metrics.get("cadence.current_activity")
     if current_activity:
-        ui.key_value("Activity", current_activity)
+        kv("Activity", current_activity)
+    renderables: list[Any] = list(lines)
+
     if status.stages:
-        ui.console.print("\nStages")
+        renderables.append(Text("\nStages"))
         table = Table(show_header=True, header_style="bold cyan", box=None, pad_edge=False)
         table.add_column("Stage")
         table.add_column("Status")
         table.add_column("Elapsed", justify="right")
         for stage in status.stages:
-            table.add_row(stage.name, status_cell(stage.status), elapsed(stage.elapsed_seconds))
-        ui.console.print(table)
+            table.add_row(stage.name, _status_cell(stage.status), _format_elapsed(stage.elapsed_seconds))
+        renderables.append(table)
+
     # label, formatter -- a formatter takes the raw metric value and
     # returns display text; plain str() is the default when a key has
     # no formatter of its own.
@@ -225,8 +258,8 @@ def render_human(status: RunStatus) -> None:
         "electrical.max_slew_violations": ("Max slew violations", str),
         "electrical.max_cap_violations": ("Max cap violations", str),
         "electrical.max_fanout_violations": ("Max fanout violations", str),
-        "cadence.total_real_seconds": ("Flow elapsed", elapsed),
-        "cadence.total_cpu_seconds": ("Flow CPU time", elapsed),
+        "cadence.total_real_seconds": ("Flow elapsed", _format_elapsed),
+        "cadence.total_cpu_seconds": ("Flow CPU time", _format_elapsed),
         "cadence.memory_resident_mb": ("Memory", lambda value: f"{value:g} MB"),
         "cadence.memory_resident_peak_mb": ("Memory (peak)", lambda value: f"{value:g} MB"),
     }
@@ -235,10 +268,90 @@ def render_human(status: RunStatus) -> None:
         if key in status.metrics
     ]
     if available:
-        ui.console.print("\nMetrics")
+        renderables.append(Text("\nMetrics"))
         table = Table(show_header=True, header_style="bold cyan", box=None, pad_edge=False)
         table.add_column("Metric")
         table.add_column("Value", justify="right")
         for label, rendered in available:
             table.add_row(label, rendered)
-        ui.console.print(table)
+        renderables.append(table)
+
+    return Group(*renderables)
+
+
+def render_human(status: RunStatus) -> None:
+    from wolf import ui
+    ui.console.print(_build_renderable(status))
+
+
+def render_live(status: RunStatus, step_detail: Sequence[tuple[str, str]] = ()):
+    """The --watch panel's own renderable: the same fields/tables
+    `render_human` prints, with every "running" stage shown as a live
+    spinner instead of a static marker, plus (when the caller supplies
+    it -- `wolf.commands.status` queries the active backend's own
+    `stage_step_detail` for whichever stage is currently running) an
+    expanded one-level tree of that stage's own real steps, each with
+    its own spinner/marker."""
+    from rich.console import Group
+    from rich.table import Table
+    from rich.text import Text
+    from rich.tree import Tree
+
+    renderables: list[Any] = []
+    kv_lines: list[Text] = []
+
+    def kv(key: object, value: object) -> None:
+        line = Text("  ")
+        line.append(str(key), style="bold blue")
+        line.append(": ")
+        line.append(str(value))
+        kv_lines.append(line)
+
+    kv("Environment", status.environment or "unknown")
+    kv("Run", status.run_name)
+    kv("Backend", status.backend)
+    kv("Status", status.state)
+    total_elapsed = sum(stage.elapsed_seconds or 0 for stage in status.stages)
+    if total_elapsed:
+        kv("Elapsed", _format_elapsed(total_elapsed))
+    if status.failed_stage:
+        kv("Failed stage", status.failed_stage)
+    current_activity = status.metrics.get("cadence.current_activity")
+    if current_activity:
+        kv("Activity", current_activity)
+    renderables.extend(kv_lines)
+
+    if status.stages:
+        renderables.append(Text("\nStages"))
+        table = Table(show_header=True, header_style="bold cyan", box=None, pad_edge=False)
+        table.add_column("Stage")
+        table.add_column("Status")
+        table.add_column("Elapsed", justify="right")
+        for stage in status.stages:
+            table.add_row(
+                stage.name, _status_cell(stage.status, spin=True), _format_elapsed(stage.elapsed_seconds),
+            )
+        renderables.append(table)
+
+    if step_detail:
+        running_stage = next((stage.name for stage in status.stages if stage.status == "running"), "running")
+        tree = Tree(Text(running_stage, style="bold yellow"))
+        for label, state in step_detail:
+            tree.add(_step_label(label, state))
+        renderables.append(Text(""))
+        renderables.append(tree)
+
+    return Group(*renderables)
+
+
+def _step_label(label: str, state: str):
+    """One tree row for `render_live`'s expanded stage view -- a live
+    spinner for the one step actively running, a plain marker for
+    everything else."""
+    from rich.spinner import Spinner
+    from rich.text import Text
+
+    if state == "running":
+        return Spinner("dots", text=Text(f" {label}", style="yellow"), style="yellow")
+    marker = _STATE_MARKERS.get(state, "○")
+    return Text(f"{marker} {label}", style=_STATE_STYLES.get(state, "dim"))

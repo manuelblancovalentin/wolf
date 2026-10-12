@@ -1120,6 +1120,35 @@ def rollup_stage_states(
     return rolled
 
 
+def stage_step_detail(
+    run_directory: Path, stage: str, membership: Optional[dict[str, tuple[str, ...]]] = None,
+) -> tuple[tuple[str, str], ...]:
+    """One level of real detail under `stage` -- its own direct
+    create_flow members, in execution order, each paired with its
+    current state -- for `wolf status --watch`'s expanded live view of
+    whichever stage is currently running.
+
+    A member that's itself a leaf create_flow_step reports its own
+    canonical path's state directly; a member that's a nested sub-flow
+    (e.g. report_synth inside syn_generic) reports the same rollup
+    `rollup_stage_states` itself uses -- "complete" only once every one
+    of *its* own real leaf descendants is accounted for, "failed" if
+    any is, otherwise "running" once anything has started. Returns ()
+    for an unrecognized stage name or a run with no flow.status yet."""
+    if stage not in STAGE_ORDER:
+        return ()
+    membership = membership if membership is not None else flow_membership()
+    _, states = genus_run_status(run_directory)
+    prefix = f"block.{_STAGE_TOPLEVEL_FLOW[stage]}.{stage}"
+    detail: list[tuple[str, str]] = []
+    for member in membership.get(stage, ()):
+        leaf_paths: list[str] = []
+        _expand_canonical_paths(prefix, member, membership, leaf_paths)
+        known = {path: states[path] for path in leaf_paths if path in states}
+        detail.append((member, _rollup_one_state(known, len(leaf_paths))))
+    return tuple(detail)
+
+
 def _effective_genus_defines(context: ResolvedContext) -> tuple[str, ...]:
     """Return stable, de-duplicated package plus Genus policy defines."""
     effective: list[str] = []
