@@ -474,16 +474,15 @@ class GenusPostsynNetlistAndInjectOverrideTests(GenusFixtureTestCase):
         # check the (deliberately escaped) file text.
         if TCLSH:
             # flow-config.tcl's own tail now calls wolf_step/wolf_sep/
-            # report_flow automatically once setup finishes (see
-            # prepare_genus_inputs) -- real Genus/presentation.tcl
-            # commands this narrow round-trip isn't exercising; stub them
-            # out so this stays a focused test of wolf_inject's own
-            # brace round-trip, not the setup-report banner.
+            # wolf_info automatically once setup finishes (see
+            # prepare_genus_inputs) -- real presentation.tcl commands
+            # this narrow round-trip isn't exercising; stub them out so
+            # this stays a focused test of wolf_inject's own brace
+            # round-trip, not the setup-report banner.
             stub_preamble = (
                 "proc wolf_sep {} { return {} }\n"
                 "proc wolf_step {args} {}\n"
                 "proc wolf_info {args} {}\n"
-                "proc report_flow {args} {}\n"
             )
             script = (
                 stub_preamble + flow_config
@@ -1106,7 +1105,7 @@ class FlowMembershipTests(unittest.TestCase):
 
 class FlowIdentityTests(unittest.TestCase):
     """bundled_flow_digest/flow_step_digests back both the automatic
-    report_flow banner flow-config.tcl's own tail prints once setup
+    identity banner flow-config.tcl's own tail prints once setup
     finishes, and the matching WOLF-side banner run.py prints right
     before `wolf run` exits (success or failure)."""
 
@@ -1152,24 +1151,24 @@ class FlowIdentityTests(unittest.TestCase):
             self.assertEqual(len(digest), 12)
         self.assertEqual(len(bundled_flow_digest()), 12)
 
-    def test_flow_config_tail_calls_report_flow_after_every_step_is_registered(self):
-        """The whole point: report_flow runs automatically once setup
-        finishes (every create_flow/create_flow_step above it has already
-        registered), not something the user has to type by hand."""
+    def test_flow_config_tail_prints_the_identity_banner_but_not_report_flow(self):
+        """The identity banner (wolf_step/wolf_info) runs automatically
+        once setup finishes (every create_flow/create_flow_step above it
+        has already registered), not something the user has to type by
+        hand. The real native report_flow command is deliberately NOT
+        called automatically here -- confirmed against a real run that
+        invoking it this early, while Flowtool is still sourcing
+        user_flow_steps, throws Flowtool's own internal Tcl error
+        ("expected boolean value but got \"\"")."""
         case = GenusFixtureTestCase()
         case.setUp()
         try:
             inputs = prepare_genus_inputs(case._context(), case.root / "backend" / "cadence-genus")
             flow_config = inputs.flow_config_script.read_text(encoding="utf-8")
-            self.assertIn("report_flow", flow_config)
+            self.assertNotIn("report_flow", flow_config)
             self.assertIn(f"sha256:{bundled_flow_digest()}", flow_config)
             for name, digest in flow_step_digests().items():
                 self.assertIn(f"{name}: sha256:{digest}", flow_config)
-            # report_flow must be the very last real command -- after
-            # every digest line, not interleaved before setup finishes.
-            self.assertLess(
-                flow_config.rindex("wolf_info"), flow_config.rindex("report_flow"),
-            )
         finally:
             case.tearDown()
 

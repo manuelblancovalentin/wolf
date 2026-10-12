@@ -44,16 +44,26 @@ provides its own `flow.tcl`).
 `flow-config.tcl` is Flowtool's own last `user_flow_steps` entry (see
 `flow.template.yaml`), sourced after every `create_flow`/`create_flow_step`
 above it has already registered -- the natural point for "run this once
-setup finishes, before control passes to the user". Its tail always calls
-the real `report_flow` command automatically (no need to type it by hand
-every time, interactive or not), after printing a content-hash identity
-banner: a short hash for the whole bundled flow plus one per real
-`create_flow_step`, so two runs' logs can tell exactly which step's Tcl
-changed, not just that something did
+setup finishes, before control passes to the user". Its tail prints a
+content-hash identity banner automatically: a short hash for the whole
+bundled flow plus one per real `create_flow_step`, so two runs' logs can
+tell exactly which step's Tcl changed, not just that something did
 (`wolf.backend.cadence_genus.flow_step_digests`). The same banner also
 prints on the WOLF side (`wolf.commands.run._print_flow_identity`) right
 after the run returns -- success or failure -- since nothing inside
 Flowtool's own Tcl session is guaranteed to run on every exit path.
+
+The banner deliberately does **not** also call the real `report_flow`
+command automatically. An earlier version of this did, and it broke a
+real run: `report_flow`, invoked this early while Flowtool is still
+sourcing `user_flow_steps`, throws Flowtool's own internal Tcl error
+("expected boolean value but got `\"\"`") -- some Flowtool db attribute
+`report_flow` depends on apparently isn't initialized yet at this point
+in setup. `report_flow` is a native Flowtool command outside WOLF's
+control, so rather than guess at exactly which attribute or when it
+becomes safe, the fix is to not call it automatically at all; type
+`report_flow` by hand once control reaches the prompt if you want its
+own output.
 
 ### Steps
 
