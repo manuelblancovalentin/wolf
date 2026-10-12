@@ -618,6 +618,27 @@ own `flow.status`. `stage_canonical_paths` produces exactly that
 qualified form per stage, so `rollup_stage_states` only ever rolls up a
 stage's own steps, never an unrelated stage's run of a same-named one.
 
+`genus_run_status` also overlays `wolf.step-status`'s own live,
+bare-name-keyed data (see the "live per-step status" section below) onto
+`flow.status`'s canonical-path states, scoped to the active flowtool
+invocation's own `-from`/`-to` stage range (parsed from `flow.status`'s
+own most recent `{script flowtool status invoked ...}` marker). Two real
+gaps this closes, both hit continuing an actual run: a path whose only
+known state is a *stale* "failed" from a previous, now-fixed attempt is
+demoted to "running" once a fresh invocation covering it starts; and a
+stage `flow.status` has logged **nothing at all** for yet -- not even a
+stale failure -- is *promoted* from absent/"unknown" to "running" the
+moment `wolf.step-status` shows real progress (hit continuing past
+`syn_map` into `syn_opt`: `flow.status` had no `syn_opt` entries
+whatsoever, so `syn_opt` stayed "unknown" and `wolf status --watch`'s
+expanded tree, which only ever queries whichever stage the rollup says
+is "running", never appeared at all, despite `wolf.step-status` already
+showing real progress). Both are deliberately scoped to the active
+invocation's own stage range, not applied blindly across every
+`STAGE_ORDER` name -- `wolf.step-status` is keyed by bare step name, and
+a name several stages share (like `block_start`) would otherwise falsely
+promote an unrelated, not-yet-reached stage too.
+
 `extract_metrics(run_directory)` reads Flowtool's own `flow.metrics`
 (confirmed real, present on disk alongside `flow.status`): a single JSON
 object whose top-level `metrics` list describes the *current*

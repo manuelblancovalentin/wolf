@@ -37,14 +37,16 @@ class CadenceFlowtoolBackend(Backend):
         return STAGE_ORDER
 
     def infer_stage_results(self, run_directory):
-        """`wolf status`'s real backend-local hook -- queries Flowtool's
-        own `flowtool -status` for the already-allocated run rather than
-        guessing stage completion from which output files exist on disk
-        (see genus_run_status's own docstring), then rolls per-step
-        detail up to each STAGE_ORDER name via the real create_flow
-        membership tree (rollup_stage_states) -- load_status only ever
-        asks about stages() names, so step-level detail alone would
-        otherwise be silently dropped if -status doesn't also report a
+        """`wolf status`'s real backend-local hook -- genus_run_status
+        (flow.status's own canonical-path states, overlaid with
+        wolf.step-status's live bare-name data within the current
+        invocation's own stage range -- see its own docstring for why:
+        a stage flow.status hasn't logged anything for yet still needs
+        to show "running" the moment wolf.step-status does), then rolls
+        per-step detail up to each STAGE_ORDER name via the real
+        create_flow membership tree (rollup_stage_states) -- load_status
+        only ever asks about stages() names, so step-level detail alone
+        would otherwise be silently dropped if neither source reports a
         line for the stage name itself."""
         _, states = genus_run_status(Path(run_directory))
         return rollup_stage_states(states)

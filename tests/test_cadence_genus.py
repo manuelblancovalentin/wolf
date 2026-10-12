@@ -1508,6 +1508,55 @@ class GenusRunStatusTests(unittest.TestCase):
         _, states = genus_run_status(self.run_directory)
         self.assertEqual(states["block.synthesis.syn_map.block_start"], "failed")
 
+    def _write_events(self, text: str) -> None:
+        (self.run_directory / "wolf.step-status").write_text(text, encoding="utf-8")
+
+    def test_a_live_event_promotes_a_path_flow_status_never_mentioned_at_all(self):
+        """Regression, hit for real continuing past syn_map into
+        syn_opt: flow.status had logged NOTHING for syn_opt yet (not
+        even a stale failure to demote), but wolf.step-status already
+        showed real progress -- must read as "running", not stay
+        absent (which load_status renders as "unknown")."""
+        from wolf.backend.cadence_genus import genus_run_status
+        self._write_status(
+            "{script flowtool status invoked arguments "
+            "{-from syn_opt -to syn_opt -interactive}}\n"
+        )
+        self._write_events("block_start|starting|1700000500\n")
+        _, states = genus_run_status(self.run_directory)
+        self.assertEqual(states["block.synthesis.syn_opt.block_start"], "running")
+
+    def test_the_live_event_promotion_does_not_bleed_into_an_unrelated_stage(self):
+        """Regression: block_start is shared by syn_generic/syn_map/
+        syn_opt (and the Innovus stages too) -- promoting it live for
+        the ACTIVE invocation's own stage must not also mark every
+        OTHER stage that happens to share the same bare step name as
+        "running"."""
+        from wolf.backend.cadence_genus import genus_run_status
+        self._write_status(
+            "{script flowtool status invoked arguments "
+            "{-from syn_opt -to syn_opt -interactive}}\n"
+        )
+        self._write_events("block_start|starting|1700000500\n")
+        _, states = genus_run_status(self.run_directory)
+        self.assertNotIn("block.synthesis.syn_generic.block_start", states)
+        self.assertNotIn("block.implementation.floorplan.block_start", states)
+
+    def test_a_live_event_outside_the_active_invocations_range_is_ignored(self):
+        """wolf.step-status is truncated per invocation, so this
+        shouldn't happen in practice, but the scoping must still hold:
+        a live event for run_syn_opt (a step name unique to syn_opt)
+        is not applied when the active invocation's own range is
+        syn_generic only."""
+        from wolf.backend.cadence_genus import genus_run_status
+        self._write_status(
+            "{script flowtool status invoked arguments "
+            "{-from syn_generic -to syn_generic -interactive}}\n"
+        )
+        self._write_events("run_syn_opt|starting|1700000500\n")
+        _, states = genus_run_status(self.run_directory)
+        self.assertNotIn("block.synthesis.syn_opt.run_syn_opt", states)
+
 
 class RollupStageStatesTests(unittest.TestCase):
     """rollup_stage_states fills in a STAGE_ORDER-level state from the

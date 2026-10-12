@@ -690,7 +690,19 @@ def genus_run_status(run_directory: Path) -> tuple[str, dict[str, str]]:
     "failed" within its own `-from`/`-to` range to "running" when
     nothing has been logged for that path since -- a new invocation
     starting is itself real, observed evidence that supersedes the old
-    outcome, not a guess at Flowtool's internals."""
+    outcome, not a guess at Flowtool's internals.
+
+    A second, related wrinkle, hit for real continuing past that same
+    fix into the next stage: a stage flow.status has logged *nothing at
+    all* for yet (not even a stale failure to demote) still needs to
+    show as "running" the moment WOLF's own `wolf.step-status` (see
+    genus_run_step_events' own docstring -- written independently of
+    Flowtool's buffering) has a live record for it. That overlay is
+    deliberately scoped to the same invocation's own `-from`/`-to`
+    range as the demotion above, not applied blindly across every
+    STAGE_ORDER name -- wolf.step-status is keyed by bare step name,
+    and a name several stages share (like block_start) would otherwise
+    falsely promote an unrelated, not-yet-reached stage too."""
     status_file = run_directory / "flow.status"
     if not status_file.is_file():
         return "", {}
@@ -742,9 +754,17 @@ def genus_run_status(run_directory: Path) -> tuple[str, dict[str, str]]:
             start = STAGE_ORDER.index(from_stage)
             end = STAGE_ORDER.index(to_stage) if to_stage in STAGE_ORDER else start
             membership = flow_membership()
+            live_events = genus_run_step_events(run_directory)
             for stage in STAGE_ORDER[start:end + 1]:
                 for path in stage_canonical_paths(stage, membership):
-                    if (
+                    bare_name = path.rsplit(".", 1)[-1]
+                    if bare_name in live_events:
+                        # Live, bare-name-keyed evidence always wins
+                        # within this invocation's own stage range,
+                        # whether promoting a path flow.status never
+                        # mentioned at all or correcting a stale one.
+                        states[path] = live_events[bare_name][0]
+                    elif (
                         states.get(path) == "failed"
                         and last_update_index.get(path, -1) < invocation_index
                     ):
