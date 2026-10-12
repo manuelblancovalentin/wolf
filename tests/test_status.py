@@ -9,7 +9,25 @@ from unittest import mock
 
 from wolf.cli import build_parser
 from wolf.commands.status import command_status
-from wolf.status import load_status, render_human, select_run
+from wolf.status import _format_elapsed, load_status, render_human, select_run
+
+
+class FormatElapsedTests(unittest.TestCase):
+    def test_none_renders_as_a_dash(self):
+        self.assertEqual(_format_elapsed(None), "-")
+
+    def test_sub_minute_renders_as_hhmmss(self):
+        self.assertEqual(_format_elapsed(45), "00:00:45")
+
+    def test_hours_and_minutes_render_as_hhmmss(self):
+        self.assertEqual(_format_elapsed(662 * 60 + 15), "11:02:15")
+
+    def test_a_full_day_or_more_gets_a_leading_day_count(self):
+        self.assertEqual(_format_elapsed(86400 + 3661), "1d 01:01:01")
+        self.assertEqual(_format_elapsed(2 * 86400 + 10), "2d 00:00:10")
+
+    def test_under_a_day_never_shows_a_day_prefix(self):
+        self.assertEqual(_format_elapsed(86399), "23:59:59")
 
 
 class StatusTests(unittest.TestCase):

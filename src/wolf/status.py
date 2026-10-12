@@ -172,11 +172,18 @@ def load_status(run_directory: Path) -> RunStatus:
 
 
 def _format_elapsed(value: float | None) -> str:
+    """Human-readable elapsed time -- HH:MM:SS, with a leading "<N>d "
+    only when at least one full day has actually elapsed (a long Genus/
+    Innovus run is routinely many hours, but still almost never a full
+    day, so days stay out of the way until they're real)."""
     if value is None:
         return "-"
     seconds = int(round(value))
+    days, seconds = divmod(seconds, 86400)
+    hours, seconds = divmod(seconds, 3600)
     minutes, seconds = divmod(seconds, 60)
-    return f"{minutes}m {seconds:02d}s" if minutes else f"{seconds}s"
+    prefix = f"{days}d " if days else ""
+    return f"{prefix}{hours:02d}:{minutes:02d}:{seconds:02d}"
 
 
 _STATE_STYLES = {"complete": "green", "running": "yellow", "failed": "red"}
