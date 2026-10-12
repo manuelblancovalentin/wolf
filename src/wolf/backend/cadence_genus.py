@@ -108,8 +108,15 @@ def _resolve_stage_range(
     """Return the (from, to) stage names this run should execute.
 
     An explicit -from/-to pair (checkpoint reuse's real primitive) always
-    wins. Without one, `flow.name` is shorthand for "all stages through X";
-    with neither given at all, the default is the complete synthesis flow
+    wins. Without one, `flow.name` is recognized as shorthand for "all
+    stages through X" only when it's one of the three known
+    genus-syn-*/FLOW_GENUS_SYN_* values -- `flow.name` is also just a
+    plain label in every other case (the bundled default flow's own
+    literal "default", or a real installed flow package's own manifest
+    name, e.g. "orfs" or an institution's own flow name), and must never
+    block the sensible default range just because it doesn't happen to
+    match one of the three shorthands. With neither given and no
+    recognized shorthand, the default is the complete synthesis flow
     (unchanged: adding IMPLEMENTATION_STAGES to STAGE_ORDER must not make
     an existing bare `wolf run`/`-from syn_map` suddenly run all the way
     through postroute).
@@ -124,13 +131,7 @@ def _resolve_stage_range(
     """
     if from_stage is None and to_stage is None:
         flow_name = context.flow_name or FLOW_GENUS_SYN_OPT
-        try:
-            return STAGE_ORDER[0], _FLOW_NAME_STAGE_RANGE[flow_name]
-        except KeyError:
-            raise ValueError(
-                f"unsupported cadence-flowtool flow {flow_name!r}; expected one of "
-                + ", ".join(sorted(_FLOW_NAME_STAGE_RANGE))
-            ) from None
+        return STAGE_ORDER[0], _FLOW_NAME_STAGE_RANGE.get(flow_name, SYNTHESIS_STAGES[-1])
     if from_stage is None:
         from_stage = (
             SYNTHESIS_STAGES[0] if to_stage in SYNTHESIS_STAGES else IMPLEMENTATION_STAGES[0]

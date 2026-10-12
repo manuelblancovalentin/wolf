@@ -1232,6 +1232,19 @@ class EnvWizardApp(App[None]):
         self.project_root: Optional[str] = None
         self.workspace_root: Optional[str] = None
         self.constraint_files: list[str] = []
+        # None of these have wizard UI of their own -- captured on load and
+        # written back unchanged on save (see _save), the same way an
+        # ordinary editor round-trips a field it doesn't render a widget
+        # for. Previously missing entirely: every one of these was silently
+        # dropped the moment an environment was re-saved through this
+        # wizard, however unrelated the actual edit was (confirmed real
+        # case: resources.threads vanishing after only adding an SDC file).
+        self.clocks: list[dict] = []
+        self.constraint_lines: list[str] = []
+        self.floorplan_def: Optional[str] = None
+        self.threads: Optional[int] = None
+        self.backend_overrides: dict = {}
+        self.env_vars: dict = {}
 
         manifest = self._path / ENVIRONMENT_FILENAME
         if manifest.is_file():
@@ -1257,6 +1270,15 @@ class EnvWizardApp(App[None]):
             self.project_root = profile.project_root
             self.workspace_root = profile.workspace_root
             self.constraint_files = list(profile.constraint_files)
+            self.clocks = [
+                {"name": clock.name, "port": clock.port, "period_ps": clock.period_ps}
+                for clock in profile.clocks
+            ]
+            self.constraint_lines = list(profile.constraint_lines)
+            self.floorplan_def = profile.floorplan_def
+            self.threads = profile.threads
+            self.backend_overrides = dict(profile.backend_overrides)
+            self.env_vars = dict(profile.env_vars)
         self.sub_title = self._name
 
     def compose(self) -> ComposeResult:
@@ -1292,7 +1314,9 @@ class EnvWizardApp(App[None]):
             vth_label = "+".join(self.technology_vths) if self.technology_vths else "?"
             technology_label += f" ({self.technology_track}/{vth_label}"
             technology_label += f", {self.technology_metal_stack})" if self.technology_metal_stack else ")"
-        flow_label = self.flow_package or (f"bundled default, backend={self.backend}" if self.backend else "not set")
+        flow_label = self.flow_package or (
+            f"WOLF's bundled flow, backend={self.backend}" if self.backend else "not set"
+        )
         workspace_label = self.workspace_root or (
             f"{self.project_root}/workspace (default)" if self.project_root else "not set"
         )
@@ -1550,7 +1574,7 @@ class EnvWizardApp(App[None]):
         ]
         choices = [(label, identifier) for label, identifier, _ in entries]
         details = {identifier: detail for _, identifier, detail in entries if detail}
-        choices.append(("(none — WOLF's own built-in flow)", ""))
+        choices.append(("WOLF's bundled Genus/Innovus flow (not a package)", ""))
         details[""] = (
             "Not your institutional Stylus flow -- runs WOLF's bundled "
             "elaborate -> syn_generic -> syn_map -> syn_opt Genus script instead."
@@ -1702,13 +1726,33 @@ class EnvWizardApp(App[None]):
             # every single invocation -- previously only ever recorded
             # as "name: default" with the actual backend choice thrown
             # away, silently requiring the CLI override forever after.
-            document["flow"] = {"name": "default", "backend": self.backend}
+            # No "name" field here at all: "default" is not a real flow
+            # identity, it collided with flow.name's own shorthand
+            # lookup for genus-syn-generic/-map/-opt, and broke a bare
+            # `wolf run`/`wolf run --plan` outright (every environment
+            # ever written here had flow.name literally "default").
+            document["flow"] = {"backend": self.backend}
+        constraints: dict = {}
+        if self.clocks:
+            constraints["clocks"] = self.clocks
         if self.constraint_files:
-            document["constraints"] = {"files": self.constraint_files}
+            constraints["files"] = self.constraint_files
+        if self.constraint_lines:
+            constraints["lines"] = self.constraint_lines
+        if self.floorplan_def:
+            constraints["floorplan_def"] = self.floorplan_def
+        if constraints:
+            document["constraints"] = constraints
         if self.project_root:
             document["project"] = {"root": self.project_root}
         if self.workspace_root:
             document["workspace"] = {"root": self.workspace_root}
+        if self.threads:
+            document["resources"] = {"threads": self.threads}
+        if self.backend_overrides:
+            document["backend"] = self.backend_overrides
+        if self.env_vars:
+            document["env"] = self.env_vars
 
         # Every path this wizard collects was already made absolute at pick
         # time (see _absolute()), so there is nothing left for

@@ -576,6 +576,91 @@ class EnvWizardEndToEndTests(unittest.TestCase):
         )
 
 
+class BundledFlowNameTests(unittest.TestCase):
+    """The bundled-default flow must never be written as flow.name:
+    "default" -- "default" is not a real flow identity, it collided with
+    flow.name's own genus-syn-generic/-map/-opt shorthand lookup, and a
+    bare `wolf run`/`wolf run --plan` (no -from/-to) crashed outright on
+    every environment this wizard had ever saved with a bundled flow."""
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory(prefix="wolf-bundled-flow-name-")
+        self.root = Path(self.temporary.name)
+        self.state = self.root / "state"
+        self.state.mkdir(parents=True)
+        self.variables = patch.dict(os.environ, {"WOLF_HOME": str(self.state)})
+        self.variables.start()
+        self.env_dir = self.state / "envs" / "bundled-demo"
+        self.env_dir.mkdir(parents=True)
+        (self.env_dir / "wolf.yaml").write_text(
+            "schema: wolf.environment/v1\nname: bundled-demo\n"
+            "design:\n  name: demo\n  top: demo\n  sources:\n    - path: /dev/null\n",
+            encoding="utf-8",
+        )
+
+    def tearDown(self):
+        self.variables.stop()
+        self.temporary.cleanup()
+
+    def test_saving_a_bundled_flow_backend_writes_no_name_field(self):
+        async def drive():
+            app = EnvWizardApp("bundled-demo")
+            async with app.run_test() as pilot:
+                app.backend = "cadence-flowtool"
+                await pilot.press("s")
+                await pilot.pause()
+        asyncio.run(drive())
+        saved = yaml.safe_load((self.env_dir / "wolf.yaml").read_text(encoding="utf-8"))
+        self.assertEqual(saved["flow"], {"backend": "cadence-flowtool"})
+
+
+class RoundTripUntrackedFieldsTests(unittest.TestCase):
+    """Fields the wizard has no UI for (resources.threads, backend.*
+    overrides, env.*, constraints.clocks/lines/floorplan_def) must survive
+    a save unrelated to them, exactly as an editor round-trips a field it
+    renders no widget for. Regression: reopening ibex-fabulous-small-synth
+    and saving after only adding a second SDC file silently dropped
+    resources.threads: 64 -- every one of these fields was simply never
+    captured into wizard state on load, so _save rebuilt the document
+    without them."""
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory(prefix="wolf-roundtrip-")
+        self.root = Path(self.temporary.name)
+        self.state = self.root / "state"
+        self.state.mkdir(parents=True)
+        self.variables = patch.dict(os.environ, {"WOLF_HOME": str(self.state)})
+        self.variables.start()
+        self.env_dir = self.state / "envs" / "roundtrip-demo"
+        self.env_dir.mkdir(parents=True)
+        (self.env_dir / "wolf.yaml").write_text(
+            "schema: wolf.environment/v1\nname: roundtrip-demo\n"
+            "design:\n  name: demo\n  top: demo\n  sources:\n    - path: /dev/null\n"
+            "flow:\n  backend: cadence-flowtool\n"
+            "resources:\n  threads: 64\n"
+            "env:\n  GENUS_NUM_CPUS: \"64\"\n"
+            "backend:\n  cadence-flowtool:\n    genus:\n      set_db:\n        x: 1\n",
+            encoding="utf-8",
+        )
+
+    def tearDown(self):
+        self.variables.stop()
+        self.temporary.cleanup()
+
+    def test_resources_threads_and_other_untracked_fields_survive_an_unrelated_save(self):
+        async def drive():
+            app = EnvWizardApp("roundtrip-demo")
+            async with app.run_test() as pilot:
+                self.assertEqual(app.threads, 64)
+                await pilot.press("s")
+                await pilot.pause()
+        asyncio.run(drive())
+        saved = yaml.safe_load((self.env_dir / "wolf.yaml").read_text(encoding="utf-8"))
+        self.assertEqual(saved["resources"], {"threads": 64})
+        self.assertEqual(saved["env"], {"GENUS_NUM_CPUS": "64"})
+        self.assertEqual(saved["backend"], {"cadence-flowtool": {"genus": {"set_db": {"x": 1}}}})
+
+
 class ReopenManifestSourceTests(unittest.TestCase):
     """Reopening an existing environment whose design.sources already used
     a manifest entry, then re-saving without touching RTL at all, must not

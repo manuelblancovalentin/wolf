@@ -135,14 +135,17 @@ def _summary(
         ui.key_value(f"Package {package}", revision)
 
     ui.section("Flow workspace")
-    if context.flow_name:
-        flow_label = context.flow_name
-        if context.flow_name == "default" and context.backend == "cadence-flowtool":
-            # "default" alone doesn't say which revision of WOLF's own
-            # bundled flow Tcl actually ran -- a content hash does.
-            from wolf.backend.cadence_genus import bundled_flow_digest
-            flow_label = f"{context.flow_name} (wolf bundled flow, sha256:{bundled_flow_digest()})"
-        ui.key_value("Flow", flow_label)
+    if context.flow_name and context.flow_name != "default":
+        ui.key_value("Flow", context.flow_name)
+    elif context.backend == "cadence-flowtool":
+        # No real flow.name here (nothing to call it but WOLF's own
+        # bundled flow) -- "default" alone wouldn't say which revision
+        # of that Tcl actually ran anyway, so identify it by content
+        # hash instead of a bare, meaningless label. The "== 'default'"
+        # check above only still matters for an environment saved before
+        # this stopped being written to wolf.yaml at all.
+        from wolf.backend.cadence_genus import bundled_flow_digest
+        ui.key_value("Flow", f"wolf bundled flow, sha256:{bundled_flow_digest()}")
     ui.key_value("Workspace root", context.workspace_root)
     ui.key_value("Run directory", context.run_directory)
 

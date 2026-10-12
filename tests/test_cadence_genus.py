@@ -459,12 +459,12 @@ class GenusPostsynNetlistAndInjectOverrideTests(GenusFixtureTestCase):
         inputs = prepare_genus_inputs(
             self._context(backend_overrides={"cadence-flowtool": {
                 **self.flowtool_overrides["cadence-flowtool"],
-                "inject": {"init_elaborate": {"post": ["/tmp/after.tcl", "puts {hi}"]}},
+                "inject": {"elaborate": {"post": ["/tmp/after.tcl", "puts {hi}"]}},
             }}),
             self.root / "backend" / "cadence-genus",
         )
         flow_config = inputs.flow_config_script.read_text(encoding="utf-8")
-        self.assertIn("set wolf_inject(init_elaborate,post)", flow_config)
+        self.assertIn("set wolf_inject(elaborate,post)", flow_config)
         self.assertIn("/tmp/after.tcl", flow_config)
         # The raw file brace-escapes "puts {hi}" to keep it one safe list
         # element (see _tcl_brace_list) -- round-trip through real tclsh to
@@ -473,7 +473,7 @@ class GenusPostsynNetlistAndInjectOverrideTests(GenusFixtureTestCase):
         if TCLSH:
             script = (
                 flow_config
-                + 'foreach s $wolf_inject(init_elaborate,post) { puts "ELEMENT:$s" }\n'
+                + 'foreach s $wolf_inject(elaborate,post) { puts "ELEMENT:$s" }\n'
             )
             path = self.root / "roundtrip.tcl"
             path.write_text(script, encoding="utf-8")
@@ -485,7 +485,7 @@ class GenusPostsynNetlistAndInjectOverrideTests(GenusFixtureTestCase):
             # grouping (not literal backslash-brace text) once evaluated --
             # the actual way wolf_inject consumes it.
             eval_script = (
-                flow_config + 'uplevel #0 [lindex $wolf_inject(init_elaborate,post) 1]\n'
+                flow_config + 'uplevel #0 [lindex $wolf_inject(elaborate,post) 1]\n'
             )
             eval_path = self.root / "roundtrip_eval.tcl"
             eval_path.write_text(eval_script, encoding="utf-8")
@@ -576,11 +576,21 @@ class GenusSynthesisFlowTests(GenusFixtureTestCase):
         self.assertEqual(manifest["synthesis_stages"], ["syn_generic", "syn_map", "syn_opt"])
         self.assertTrue(manifest["outputs"]["netlist"].endswith("demo.opt.v"))
 
-    def test_unsupported_flow_name_is_rejected(self):
-        with self.assertRaisesRegex(ValueError, "unsupported cadence-flowtool flow"):
-            prepare_genus_inputs(
-                self._context(flow_name="not-a-real-flow"), self.root / "backend" / "cadence-genus"
-            )
+    def test_unrecognized_flow_name_falls_back_to_the_complete_synthesis_flow(self):
+        """flow.name is only ever a recognized shorthand for one of the
+        three genus-syn-* values; anything else (the bundled flow's own
+        literal "default", a real installed flow package's own manifest
+        name, a typo) is just a label and must not block the sensible
+        default range -- confirmed real regression: every environment
+        `wolf env menu` ever wrote had flow.name literally "default",
+        which broke a bare `wolf run`/`wolf run --plan` entirely."""
+        for flow_name in ("not-a-real-flow", "default", "orfs"):
+            with self.subTest(flow_name=flow_name):
+                inputs = prepare_genus_inputs(
+                    self._context(flow_name=flow_name), self.root / "backend" / "cadence-genus"
+                )
+                manifest = yaml.safe_load(inputs.manifest.read_text(encoding="utf-8"))
+                self.assertEqual(manifest["synthesis_stages"], ["syn_generic", "syn_map", "syn_opt"])
 
     def test_syn_generic_flow_is_recorded(self):
         inputs = prepare_genus_inputs(
@@ -833,6 +843,12 @@ proc create_analysis_view {args} { puts "STUB create_analysis_view $args" }
 proc set_analysis_view {args} { puts "STUB set_analysis_view $args" }
 proc all_constraint_modes {} { return {} }
 proc set_interactive_constraint_modes {args} { puts "STUB set_interactive_constraint_modes $args" }
+proc uniquify {args} { puts "STUB uniquify $args" }
+proc report_timing {args} { puts "STUB report_timing $args" }
+proc read_power_intent {args} { puts "STUB read_power_intent $args" }
+proc commit_power_intent {args} { puts "STUB commit_power_intent $args" }
+proc set_timing_derate {args} { puts "STUB set_timing_derate $args" }
+proc all_clocks {} { return {} }
 
 # Crude, recursive stand-in for Flowtool's own engine: create_flow and
 # create_flow_step both only REGISTER (name -> ordered member list, or
@@ -901,6 +917,9 @@ proc wolf_test_run_flow {name} {
             "wolf_constraints_file": str(self.root / "constraints.sdc"),
             "wolf_dont_use_cells": "{}", "wolf_technology_lefs": "{}", "wolf_cell_lefs": "{}",
             "wolf_floorplan_def": '""', "wolf_postsyn_netlists": "{}",
+            "wolf_clock_derate_early": '""', "wolf_clock_derate_late": '""',
+            "wolf_preserve_blocks": "{}", "wolf_preserve_instances": "{}",
+            "wolf_power_intent_file": '""', "wolf_max_routing_layers": '""',
         }
         values.update(extra)
         (self.root / "reports").mkdir(exist_ok=True)
@@ -917,13 +936,25 @@ proc wolf_test_run_flow {name} {
     def test_full_synthesis_flow_registers_and_runs_steps_in_order(self):
         output = self._run_flow_tcl(self._base_config(wolf_dont_use_cells='{"*_lvt"}'))
         ordered = (
-            "REGISTER STEP block_start", "REGISTER STEP init_elaborate", "STUB elaborate top",
-            "STUB read_sdc", "REGISTER STEP set_dont_use", "STUB set_db {} .dont_use true",
+            "REGISTER STEP block_start", "REGISTER STEP avoid_module_renaming",
+            "REGISTER STEP read_mmmc", "REGISTER STEP apply_clock_derate",
+            "REGISTER STEP read_physical", "REGISTER STEP read_hdl",
+            "REGISTER STEP elaborate", "STUB elaborate top", "STUB read_sdc",
+            "REGISTER STEP uniquify_modules", "STUB uniquify top",
+            "REGISTER STEP preserve_blocks", "REGISTER STEP preserve_instances",
+            "REGISTER STEP read_power_intent", "REGISTER STEP run_init_design",
+            "REGISTER STEP read_def", "REGISTER STEP init_genus",
+            "REGISTER STEP set_dont_use", "STUB set_db {} .dont_use true",
+            "REGISTER STEP prevent_flattening", "REGISTER STEP max_routing_layer",
+            "REGISTER STEP commit_power_intent",
             "REGISTER STEP create_cost_group", "STUB group_path -name in2out",
             "REGISTER STEP run_syn_generic", "STUB syn_generic", "REGISTER STEP block_finish",
+            "REGISTER STEP report_start", "REGISTER STEP report_area_genus",
+            "REGISTER STEP report_finish",
             "REGISTER STEP run_syn_map", "STUB syn_map",
             "REGISTER STEP run_syn_opt", "STUB syn_opt",
             "REGISTER STEP genus_to_innovus", "STUB update_names", "STUB write_design",
+            "REGISTER STEP build_sim_testbench", "REGISTER STEP build_xsim_files",
         )
         indices = [output.index(fragment) for fragment in ordered]
         self.assertEqual(indices, sorted(indices))
@@ -976,9 +1007,14 @@ proc wolf_test_run_flow {name} {
         self.assertLess(elaborate_index, init_index)
 
     def test_no_physical_views_skips_read_physical_and_init_design(self):
+        """read_physical and run_init_design are always real, registered
+        steps now (each its own banner) -- what must not happen without
+        any LEF configured is the real STUB call underneath either one."""
         output = self._run_flow_tcl(self._base_config(), run="syn_generic")
-        self.assertNotIn("read_physical", output)
-        self.assertNotIn("init_design", output)
+        self.assertNotIn("STUB read_physical", output)
+        self.assertNotIn("STUB init_design", output)
+        self.assertIn("read_physical: no LEF resolved for this technology, skipping", output)
+        self.assertIn("run_init_design: no physical views or MMMC active, skipping", output)
 
     def test_postsyn_netlists_are_read_before_handoff(self):
         output = self._run_flow_tcl(
@@ -994,7 +1030,7 @@ proc wolf_test_run_flow {name} {
         snippet = self.root / "snippet.tcl"
         snippet.write_text(f'puts "INJECTED"\nclose [open {{{marker}}} w]\n', encoding="utf-8")
         config = self._base_config() + (
-            f'set wolf_inject(init_elaborate,post) {{{{{snippet}}}}}\n'
+            f'set wolf_inject(elaborate,post) {{{{{snippet}}}}}\n'
         )
         output = self._run_flow_tcl(config, run="syn_generic")
         self.assertIn("INJECTED", output)
