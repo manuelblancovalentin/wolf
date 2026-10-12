@@ -312,19 +312,9 @@ create_flow_step -name max_routing_layer -owner wolf {
     puts [wolf_sep]
 }
 
-create_flow_step -name commit_power_intent -owner wolf {
-    wolf_step "commit_power_intent"
-    wolf_inject_for_step commit_power_intent pre
-
-    if {$::wolf_power_intent_file ne ""} {
-        commit_power_intent
-    } else {
-        wolf_info "commit_power_intent: no power intent was read, skipping"
-    }
-
-    wolf_inject_for_step commit_power_intent post
-    puts [wolf_sep]
-}
+# commit_power_intent is defined once in common_steps.tcl -- Genus's own
+# syn_generic (below, via common_flows.tcl) and Innovus's floorplan both
+# reference it by that one shared name.
 
 create_flow_step -name create_cost_group -owner wolf {
     wolf_step "Creating cost groups"
@@ -425,16 +415,10 @@ create_flow_step -name report_timing_summary_late_genus -owner wolf {
     wolf_inject_for_step report_timing_summary_late_genus post
 }
 
-create_flow_step -name report_late_paths -owner wolf {
-    wolf_inject_for_step report_late_paths pre
-    # report_timing has no -check flag (confirmed against a real Genus
-    # TUI-204 rejection) -- -nworst alone reports the worst paths across
-    # every active cost group/view, which is what "late paths" means here.
-    set report_late_paths_file [file join $::wolf_reports_dir "late_paths.[get_db flow_report_name].rpt"]
-    report_timing -nworst 5 > $report_late_paths_file
-    wolf_file $report_late_paths_file
-    wolf_inject_for_step report_late_paths post
-}
+# report_late_paths is defined once in common_steps.tcl (identical body,
+# same real fix -- report_timing has no -check flag, confirmed against a
+# real Genus TUI-204 rejection) -- report_synth and the Innovus report_*
+# sub-flows both reference it by that one shared name.
 
 create_flow_step -name report_power_genus -owner wolf {
     wolf_inject_for_step report_power_genus pre

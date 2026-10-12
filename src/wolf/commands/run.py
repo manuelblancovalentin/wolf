@@ -217,6 +217,15 @@ def command_run(args: argparse.Namespace) -> int:
                 from_stage=args.from_stage, to_stage=args.to_stage,
             )
         _final_summary(context, status, 0.0, run_directory=run_directory)
+        # Prints unconditionally, success or failure: run_genus has
+        # already returned by this point (whether every stage completed
+        # or an earlier one failed and broke the loop), so this always
+        # runs right before wolf run itself exits -- the same identity
+        # banner flow-config.tcl's own tail already printed once setup
+        # finished, repeated here on the WOLF side since nothing inside
+        # Flowtool's own Tcl session is guaranteed to run on every exit
+        # path (a crash, Ctrl-C in --interactive, ...).
+        _print_flow_identity()
         return status
     backend_environment = backend.prepare_execution(context)
     _summary(context, from_stage=args.from_stage, to_stage=args.to_stage)
@@ -295,6 +304,22 @@ def _format_elapsed(seconds: float) -> str:
     hours, minutes = divmod(minutes, 60)
     return f"{hours}h {minutes:02d}m {seconds:02d}s" if hours else (
         f"{minutes}m {seconds:02d}s" if minutes else f"{seconds}s")
+
+
+def _print_flow_identity() -> None:
+    """The same bundled-flow/per-step content hashes flow-config.tcl's own
+    tail already prints once setup finishes (see prepare_genus_inputs),
+    printed again on the WOLF side right before `wolf run` exits -- this
+    one is guaranteed to run whether every stage completed or an earlier
+    one failed, which nothing inside Flowtool's own Tcl session can
+    promise (a crash, Ctrl-C mid --interactive, ...). Lets two runs'
+    logs answer "was this literally the same flow Tcl" without digging
+    into the scripts.<N> snapshot by hand."""
+    from wolf.backend.cadence_genus import bundled_flow_digest, flow_step_digests
+    ui.section("Flow identity")
+    ui.key_value("Bundled flow", f"sha256:{bundled_flow_digest()}")
+    for name, digest in sorted(flow_step_digests().items()):
+        ui.key_value(f"  {name}", f"sha256:{digest}")
 
 
 def _final_summary(

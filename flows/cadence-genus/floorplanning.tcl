@@ -108,20 +108,6 @@ create_flow_step -name load_floorplan -owner wolf {
     puts [wolf_sep]
 }
 
-create_flow_step -name commit_power_intent -owner wolf {
-    wolf_step "commit_power_intent"
-    wolf_inject_for_step commit_power_intent pre
-
-    if {$::wolf_power_intent_file ne ""} {
-        commit_power_intent
-    } else {
-        wolf_info "commit_power_intent: no power intent was read, skipping"
-    }
-
-    wolf_inject_for_step commit_power_intent post
-    puts [wolf_sep]
-}
-
 create_flow_step -name add_tracks -owner wolf {
     wolf_inject_for_step add_tracks pre
     #- generate tracks after creating floorplan

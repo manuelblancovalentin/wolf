@@ -8,7 +8,7 @@ import yaml
 
 from wolf.backend.cadence_genus import (
     FLOW_GENUS_SYN_GENERIC, FLOW_GENUS_SYN_MAP, FLOW_GENUS_SYN_OPT,
-    _period_ns, prepare_genus_inputs,
+    _extract_step_bodies, _period_ns, bundled_flow_digest, flow_step_digests, prepare_genus_inputs,
 )
 from wolf.context import (
     CatalogFileList, CatalogLibrarySet, ResolvedContext, ResolvedSource, ResolvedTechnology,
@@ -471,8 +471,20 @@ class GenusPostsynNetlistAndInjectOverrideTests(GenusFixtureTestCase):
         # prove it decodes back to the exact original strings, not just
         # check the (deliberately escaped) file text.
         if TCLSH:
+            # flow-config.tcl's own tail now calls wolf_step/wolf_sep/
+            # report_flow automatically once setup finishes (see
+            # prepare_genus_inputs) -- real Genus/presentation.tcl
+            # commands this narrow round-trip isn't exercising; stub them
+            # out so this stays a focused test of wolf_inject's own
+            # brace round-trip, not the setup-report banner.
+            stub_preamble = (
+                "proc wolf_sep {} { return {} }\n"
+                "proc wolf_step {args} {}\n"
+                "proc wolf_info {args} {}\n"
+                "proc report_flow {args} {}\n"
+            )
             script = (
-                flow_config
+                stub_preamble + flow_config
                 + 'foreach s $wolf_inject(elaborate,post) { puts "ELEMENT:$s" }\n'
             )
             path = self.root / "roundtrip.tcl"
@@ -485,7 +497,7 @@ class GenusPostsynNetlistAndInjectOverrideTests(GenusFixtureTestCase):
             # grouping (not literal backslash-brace text) once evaluated --
             # the actual way wolf_inject consumes it.
             eval_script = (
-                flow_config + 'uplevel #0 [lindex $wolf_inject(elaborate,post) 1]\n'
+                stub_preamble + flow_config + 'uplevel #0 [lindex $wolf_inject(elaborate,post) 1]\n'
             )
             eval_path = self.root / "roundtrip_eval.tcl"
             eval_path.write_text(eval_script, encoding="utf-8")
@@ -1040,6 +1052,76 @@ proc wolf_test_run_flow {name} {
         dont_use_index = output.index("REGISTER STEP set_dont_use")
         self.assertLess(elaborate_index, inject_index)
         self.assertLess(inject_index, dont_use_index)
+
+
+class FlowIdentityTests(unittest.TestCase):
+    """bundled_flow_digest/flow_step_digests back both the automatic
+    report_flow banner flow-config.tcl's own tail prints once setup
+    finishes, and the matching WOLF-side banner run.py prints right
+    before `wolf run` exits (success or failure)."""
+
+    def test_extract_step_bodies_handles_nested_braces(self):
+        text = (
+            "create_flow_step -name outer -owner wolf {\n"
+            "    if {$::x ne \"\"} {\n"
+            "        set_db foo bar\n"
+            "    }\n"
+            "}\n"
+            "create_flow_step -name second -owner wolf {\n"
+            "    puts hi\n"
+            "}\n"
+        )
+        bodies = _extract_step_bodies(text)
+        self.assertEqual(set(bodies), {"outer", "second"})
+        self.assertEqual(bodies["outer"].count("{"), bodies["outer"].count("}"))
+        self.assertIn("set_db foo bar", bodies["outer"])
+        self.assertEqual(bodies["second"], "{\n    puts hi\n}")
+
+    def test_every_real_create_flow_step_gets_exactly_one_digest(self):
+        """Regression: two steps (commit_power_intent, report_late_paths)
+        were each defined twice across different files with identical
+        bodies -- harmless at runtime (same content either way) but a
+        real duplication that silently collapsed to one dict entry here,
+        undercounting. Fixed by keeping one definition per step name."""
+        root = Path(__file__).resolve().parents[1] / "flows" / "cadence-genus"
+        grep_count = sum(
+            (root / name).read_text(encoding="utf-8").count("create_flow_step -name")
+            for name in (
+                "presentation.tcl", "common_flows.tcl", "common_steps.tcl", "synthesis.tcl",
+                "floorplanning.tcl", "cts.tcl", "route.tcl", "postroute.tcl",
+            )
+        )
+        digests = flow_step_digests()
+        self.assertEqual(len(digests), grep_count)
+
+    def test_digests_are_stable_and_short(self):
+        first = flow_step_digests()
+        second = flow_step_digests()
+        self.assertEqual(first, second)
+        for digest in first.values():
+            self.assertEqual(len(digest), 12)
+        self.assertEqual(len(bundled_flow_digest()), 12)
+
+    def test_flow_config_tail_calls_report_flow_after_every_step_is_registered(self):
+        """The whole point: report_flow runs automatically once setup
+        finishes (every create_flow/create_flow_step above it has already
+        registered), not something the user has to type by hand."""
+        case = GenusFixtureTestCase()
+        case.setUp()
+        try:
+            inputs = prepare_genus_inputs(case._context(), case.root / "backend" / "cadence-genus")
+            flow_config = inputs.flow_config_script.read_text(encoding="utf-8")
+            self.assertIn("report_flow", flow_config)
+            self.assertIn(f"sha256:{bundled_flow_digest()}", flow_config)
+            for name, digest in flow_step_digests().items():
+                self.assertIn(f"{name}: sha256:{digest}", flow_config)
+            # report_flow must be the very last real command -- after
+            # every digest line, not interleaved before setup finishes.
+            self.assertLess(
+                flow_config.rindex("wolf_info"), flow_config.rindex("report_flow"),
+            )
+        finally:
+            case.tearDown()
 
 
 if __name__ == "__main__":

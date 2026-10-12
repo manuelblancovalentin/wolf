@@ -155,6 +155,27 @@ create_flow_step -name report_check_design -owner wolf {
     wolf_inject_for_step report_check_design post
 }
 
+#=============================================================================
+# commit_power_intent -- shared by Genus's syn_generic (synthesis.tcl calls
+# it via common_flows.tcl) and Innovus's floorplan (floorplanning.tcl):
+# identical content on both sides (commit whatever UPF/CPF read_power_intent
+# loaded, if any), so defined once here rather than duplicated per tool.
+#=============================================================================
+
+create_flow_step -name commit_power_intent -owner wolf {
+    wolf_step "commit_power_intent"
+    wolf_inject_for_step commit_power_intent pre
+
+    if {$::wolf_power_intent_file ne ""} {
+        commit_power_intent
+    } else {
+        wolf_info "commit_power_intent: no power intent was read, skipping"
+    }
+
+    wolf_inject_for_step commit_power_intent post
+    puts [wolf_sep]
+}
+
 create_flow_step -name report_area_innovus -owner wolf {
     wolf_inject_for_step report_area_innovus pre
     set report_area_innovus_file [file join $::wolf_reports_dir "area.[get_db flow_report_name].rpt"]
