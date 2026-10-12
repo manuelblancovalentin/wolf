@@ -43,7 +43,8 @@ def _live_frame(run):
             detail = get_backend(status.backend).stage_step_detail(run, running_stage)
         except (ValueError, AttributeError, OSError):
             detail = ()
-    return status, render_live(status, detail)
+    active_elapsed = status.metrics.get("cadence.active_stage_elapsed_seconds")
+    return status, render_live(status, detail, active_elapsed)
 
 
 def _watch(run) -> int:

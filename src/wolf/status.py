@@ -291,14 +291,33 @@ def render_human(status: RunStatus) -> None:
     ui.console.print(_build_renderable(status))
 
 
-def render_live(status: RunStatus, step_detail: Sequence[tuple[str, str]] = ()):
+def _live_elapsed_text(value: float) -> Any:
+    """A blinking elapsed-time cell -- the one visual cue that a number
+    is actively ticking up in place, not a stale snapshot (the blink
+    attribute isn't honored by every terminal, but degrades harmlessly
+    to a plain, still-correct elapsed reading where it isn't)."""
+    from rich.text import Text
+    return Text(_format_elapsed(value), style="yellow blink")
+
+
+def render_live(
+    status: RunStatus, step_detail: Sequence[tuple[str, str, float | None]] = (),
+    active_stage_elapsed: float | None = None,
+):
     """The --watch panel's own renderable: the same fields/tables
     `render_human` prints, with every "running" stage shown as a live
     spinner instead of a static marker, plus (when the caller supplies
     it -- `wolf.commands.status` queries the active backend's own
     `stage_step_detail` for whichever stage is currently running) an
     expanded one-level tree of that stage's own real steps, each with
-    its own spinner/marker."""
+    its own spinner/marker.
+
+    `active_stage_elapsed` (from the backend's own `extract_metrics`,
+    key "cadence.active_stage_elapsed_seconds" -- see
+    genus_run_active_elapsed) and a "running" step_detail entry's own
+    elapsed both render as a blinking HH:MM:SS, the one visual cue that
+    distinguishes "this is ticking up live" from the rest of the
+    panel's otherwise-static numbers."""
     from rich.console import Group
     from rich.table import Table
     from rich.text import Text
@@ -335,30 +354,42 @@ def render_live(status: RunStatus, step_detail: Sequence[tuple[str, str]] = ()):
         table.add_column("Status")
         table.add_column("Elapsed", justify="right")
         for stage in status.stages:
-            table.add_row(
-                stage.name, _status_cell(stage.status, spin=True), _format_elapsed(stage.elapsed_seconds),
-            )
+            if stage.status == "running" and active_stage_elapsed is not None:
+                elapsed_cell = _live_elapsed_text(active_stage_elapsed)
+            else:
+                elapsed_cell = _format_elapsed(stage.elapsed_seconds)
+            table.add_row(stage.name, _status_cell(stage.status, spin=True), elapsed_cell)
         renderables.append(table)
 
     if step_detail:
         running_stage = next((stage.name for stage in status.stages if stage.status == "running"), "running")
         tree = Tree(Text(running_stage, style="bold yellow"))
-        for label, state in step_detail:
-            tree.add(_step_label(label, state))
+        for label, state, elapsed in step_detail:
+            tree.add(_step_label(label, state, elapsed))
         renderables.append(Text(""))
         renderables.append(tree)
 
     return Group(*renderables)
 
 
-def _step_label(label: str, state: str):
+def _step_label(label: str, state: str, elapsed: float | None = None):
     """One tree row for `render_live`'s expanded stage view -- a live
-    spinner for the one step actively running, a plain marker for
-    everything else."""
+    spinner for the one step actively running (plus its own blinking
+    elapsed time, when the backend has a live timestamp for it -- see
+    stage_step_detail), a plain marker for everything else. Spinner's
+    own `text` parameter accepts any renderable and draws it right
+    after the spinner glyph on the same line, so the label and elapsed
+    span are built as one combined Text rather than two separate
+    renderables (Rich has no "lay these out on one line" composition
+    for a tree.add() child, which must be a single renderable)."""
     from rich.spinner import Spinner
     from rich.text import Text
 
     if state == "running":
-        return Spinner("dots", text=Text(f" {label}", style="yellow"), style="yellow")
+        line = Text(f" {label}", style="yellow")
+        if elapsed is not None:
+            line.append(" — ", style="dim")
+            line.append(_format_elapsed(elapsed), style="yellow blink")
+        return Spinner("dots", text=line, style="yellow")
     marker = _STATE_MARKERS.get(state, "○")
     return Text(f"{marker} {label}", style=_STATE_STYLES.get(state, "dim"))

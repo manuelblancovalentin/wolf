@@ -1340,17 +1340,60 @@ class GenusRunStepEventsTests(unittest.TestCase):
             "init_genus|starting|1700000002\n"
         )
         events = genus_run_step_events(self.run_directory)
-        self.assertEqual(events, {"block_start": "complete", "init_genus": "running"})
+        self.assertEqual(events, {
+            "block_start": ("complete", 1700000001.0), "init_genus": ("running", 1700000002.0),
+        })
 
     def test_a_later_line_for_the_same_name_overwrites_an_earlier_one(self):
         from wolf.backend.cadence_genus import genus_run_step_events
         self._write_events("block_start|starting|1\nblock_start|failed|2\n")
-        self.assertEqual(genus_run_step_events(self.run_directory)["block_start"], "failed")
+        self.assertEqual(genus_run_step_events(self.run_directory)["block_start"], ("failed", 2.0))
 
     def test_an_unparseable_line_is_skipped_not_an_error(self):
         from wolf.backend.cadence_genus import genus_run_step_events
         self._write_events("not a real line\nblock_start|success|1\n")
-        self.assertEqual(genus_run_step_events(self.run_directory), {"block_start": "complete"})
+        self.assertEqual(genus_run_step_events(self.run_directory), {"block_start": ("complete", 1.0)})
+
+
+class GenusRunActiveElapsedTests(unittest.TestCase):
+    """genus_run_active_elapsed derives how long the current flowtool
+    invocation has actually been running from wolf.step-status's own
+    earliest timestamp -- real wall-clock time since the first real
+    step of this invocation started, independent of flow.metrics'
+    total_real_seconds (confirmed, like flow.status, not promptly
+    updated during a manually-typed run_flow)."""
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory(prefix="wolf-genus-active-elapsed-")
+        self.root = Path(self.temporary.name)
+        self.run_directory = self.root / "work" / "demo.1"
+        self.run_directory.mkdir(parents=True)
+
+    def tearDown(self):
+        self.temporary.cleanup()
+
+    def test_no_file_yet_returns_none(self):
+        from wolf.backend.cadence_genus import genus_run_active_elapsed
+        self.assertIsNone(genus_run_active_elapsed(self.run_directory))
+
+    def test_empty_file_returns_none(self):
+        from wolf.backend.cadence_genus import genus_run_active_elapsed
+        (self.run_directory / "wolf.step-status").write_text("", encoding="utf-8")
+        self.assertIsNone(genus_run_active_elapsed(self.run_directory))
+
+    def test_elapsed_is_measured_from_the_earliest_timestamp(self):
+        from wolf.backend.cadence_genus import genus_run_active_elapsed
+        import time as time_module
+        now = time_module.time()
+        (self.run_directory / "wolf.step-status").write_text(
+            f"block_start|starting|{now - 100}\n"
+            f"block_start|success|{now - 95}\n"
+            f"init_genus|starting|{now - 10}\n",
+            encoding="utf-8",
+        )
+        elapsed = genus_run_active_elapsed(self.run_directory)
+        self.assertIsNotNone(elapsed)
+        self.assertAlmostEqual(elapsed, 100, delta=2)
 
 
 class GenusRunStatusTests(unittest.TestCase):
@@ -1607,13 +1650,22 @@ class StageStepDetailTests(unittest.TestCase):
         from wolf.backend.cadence_genus import stage_step_detail
         self.assertEqual(stage_step_detail(self.run_directory, "not-a-real-stage"), ())
 
+    @staticmethod
+    def _states(detail):
+        return {label: state for label, state, _ in detail}
+
+    @staticmethod
+    def _elapsed(detail):
+        return {label: elapsed for label, _, elapsed in detail}
+
     def test_no_flow_status_yet_reports_every_member_pending(self):
         from wolf.backend.cadence_genus import flow_membership, stage_step_detail
         detail = stage_step_detail(self.run_directory, "syn_map")
         self.assertEqual(
-            [label for label, _ in detail], list(flow_membership()["syn_map"]),
+            [label for label, _, _ in detail], list(flow_membership()["syn_map"]),
         )
-        self.assertTrue(all(state == "pending" for _, state in detail))
+        self.assertTrue(all(state == "pending" for _, state, _ in detail))
+        self.assertTrue(all(elapsed is None for _, _, elapsed in detail))
 
     def test_a_running_leaf_member_is_reported_directly(self):
         from wolf.backend.cadence_genus import stage_step_detail
@@ -1621,7 +1673,7 @@ class StageStepDetailTests(unittest.TestCase):
             "{status starting time 1700000000 errors {} "
             "steps_run {str block.synthesis.syn_map.block_start}}\n"
         )
-        detail = dict(stage_step_detail(self.run_directory, "syn_map"))
+        detail = self._states(stage_step_detail(self.run_directory, "syn_map"))
         self.assertEqual(detail["block_start"], "running")
         self.assertEqual(detail["init_genus"], "pending")
 
@@ -1636,7 +1688,7 @@ class StageStepDetailTests(unittest.TestCase):
             "{status success time 1700000000 errors {} "
             "steps_run {str block.synthesis.syn_map.report_synth.report_start}}\n"
         )
-        detail = dict(stage_step_detail(self.run_directory, "syn_map"))
+        detail = self._states(stage_step_detail(self.run_directory, "syn_map"))
         self.assertEqual(detail["report_synth"], "running")
 
     def _write_events(self, text: str) -> None:
@@ -1653,7 +1705,7 @@ class StageStepDetailTests(unittest.TestCase):
             "steps_run {str block.synthesis.syn_map.block_start}}\n"
         )
         self._write_events("block_start|success|1700000500\n")
-        detail = dict(stage_step_detail(self.run_directory, "syn_map"))
+        detail = self._states(stage_step_detail(self.run_directory, "syn_map"))
         self.assertEqual(detail["block_start"], "complete")
 
     def test_a_live_event_for_a_nested_sub_flows_own_leaf_also_overrides(self):
@@ -1663,7 +1715,7 @@ class StageStepDetailTests(unittest.TestCase):
         during a manually-typed run_flow must still show up."""
         from wolf.backend.cadence_genus import stage_step_detail
         self._write_events("init_genus|success|1700000500\n")
-        detail = dict(stage_step_detail(self.run_directory, "syn_map"))
+        detail = self._states(stage_step_detail(self.run_directory, "syn_map"))
         self.assertEqual(detail["report_synth"], "running")
 
     def test_no_live_event_for_a_member_falls_back_to_flow_status(self):
@@ -1673,9 +1725,41 @@ class StageStepDetailTests(unittest.TestCase):
             "steps_run {str block.synthesis.syn_map.block_start}}\n"
         )
         self._write_events("init_genus|starting|1700000500\n")
-        detail = dict(stage_step_detail(self.run_directory, "syn_map"))
+        detail = self._states(stage_step_detail(self.run_directory, "syn_map"))
         self.assertEqual(detail["block_start"], "complete")
         self.assertEqual(detail["init_genus"], "running")
+
+    def test_a_running_leaf_members_own_elapsed_is_derived_from_its_live_timestamp(self):
+        from wolf.backend.cadence_genus import stage_step_detail
+        import time as time_module
+        self._write_events(f"block_start|starting|{time_module.time() - 42}\n")
+        elapsed = self._elapsed(stage_step_detail(self.run_directory, "syn_map"))
+        self.assertIsNotNone(elapsed["block_start"])
+        self.assertAlmostEqual(elapsed["block_start"], 42, delta=2)
+        # Every other member (not running, or running with no live
+        # timestamp) has no elapsed of its own.
+        self.assertIsNone(elapsed["init_genus"])
+
+    def test_a_nested_sub_flows_own_aggregate_row_never_gets_an_elapsed(self):
+        """There is no single real "start" for a nested sub-flow's own
+        aggregate state the way there is for one real leaf step."""
+        from wolf.backend.cadence_genus import stage_step_detail
+        import time as time_module
+        self._write_events(f"report_start|starting|{time_module.time() - 5}\n")
+        elapsed = self._elapsed(stage_step_detail(self.run_directory, "syn_map"))
+        self.assertIsNone(elapsed["report_synth"])
+
+    def test_a_stage_level_running_state_from_flow_status_alone_has_no_elapsed(self):
+        """flow.status's own "running" state (no live wolf.step-status
+        timestamp backing it) has no live start time to derive
+        elapsed from -- correctly left absent rather than guessed."""
+        from wolf.backend.cadence_genus import stage_step_detail
+        self._write_status(
+            "{status starting time 1700000000 errors {} "
+            "steps_run {str block.synthesis.syn_map.block_start}}\n"
+        )
+        elapsed = self._elapsed(stage_step_detail(self.run_directory, "syn_map"))
+        self.assertIsNone(elapsed["block_start"])
 
 
 class CadenceFlowtoolBackendStatusTests(unittest.TestCase):

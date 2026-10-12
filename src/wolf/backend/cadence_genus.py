@@ -14,6 +14,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import time
 from typing import Any, Mapping, Optional
 
 import yaml
@@ -751,7 +752,7 @@ def genus_run_status(run_directory: Path) -> tuple[str, dict[str, str]]:
     return raw, states
 
 
-def genus_run_step_events(run_directory: Path) -> dict[str, str]:
+def genus_run_step_events(run_directory: Path) -> dict[str, tuple[str, float]]:
     """Read WOLF's own live per-step status record directly --
     `<run_directory>/wolf.step-status`, written by presentation.tcl's
     own create_flow_step wrapper (one real step's own bookkeeping, not
@@ -767,32 +768,62 @@ def genus_run_step_events(run_directory: Path) -> dict[str, str]:
     steps completing one after another. wolf.step-status instead reflects
     each step directly, independent of Flowtool's own buffering.
 
-    Returns {step_name: state}, state one of "running"/"complete"/
-    "failed" via the same vocabulary genus_run_status itself uses.
-    Keyed by bare step name, not a qualified canonical path -- safe
-    because the file is truncated fresh per invocation, so a name
-    several stages share (like block_start) is never ambiguous within
-    it (there is only ever one stage's worth of real events in it at a
-    time). A later record for the same name always overwrites an
-    earlier one, same as genus_run_status. Degrades to {} rather than
-    raising on a missing file -- e.g. before any step has executed yet
-    this invocation."""
+    Returns {step_name: (state, unix_time)}, state one of "running"/
+    "complete"/"failed" via the same vocabulary genus_run_status itself
+    uses, and unix_time the real timestamp of that latest record (used
+    by stage_step_detail to compute how long a still-running step has
+    actually been running). Keyed by bare step name, not a qualified
+    canonical path -- safe because the file is truncated fresh per
+    invocation, so a name several stages share (like block_start) is
+    never ambiguous within it (there is only ever one stage's worth of
+    real events in it at a time). A later record for the same name
+    always overwrites an earlier one, same as genus_run_status.
+    Degrades to {} rather than raising on a missing file -- e.g. before
+    any step has executed yet this invocation."""
     events_file = run_directory / "wolf.step-status"
     if not events_file.is_file():
         return {}
-    events: dict[str, str] = {}
+    events: dict[str, tuple[str, float]] = {}
     for line in events_file.read_text(encoding="utf-8", errors="replace").splitlines():
         parts = line.split("|")
-        if len(parts) < 2:
+        if len(parts) < 3:
             continue
         name, status = parts[0], parts[1].lower()
+        try:
+            event_time = float(parts[2])
+        except ValueError:
+            continue
         if status in _FLOW_STATUS_FAILED_STATES:
-            events[name] = "failed"
+            events[name] = ("failed", event_time)
         elif status in _FLOW_STATUS_SUCCESS_STATES:
-            events[name] = "complete"
+            events[name] = ("complete", event_time)
         elif status in _FLOW_STATUS_RUNNING_STATES:
-            events[name] = "running"
+            events[name] = ("running", event_time)
     return events
+
+
+def genus_run_active_elapsed(run_directory: Path) -> Optional[float]:
+    """How long the current flowtool invocation has actually been
+    running, in seconds -- wolf.step-status is truncated fresh per
+    invocation (see genus_run_step_events' own docstring), so its own
+    earliest logged timestamp marks when this invocation's first real
+    step started. Independent of flow.metrics' own total_real_seconds,
+    which (like flow.status) is confirmed not promptly updated during a
+    manually-typed run_flow either. Returns None when nothing has
+    started yet this invocation (a missing or empty wolf.step-status)."""
+    events_file = run_directory / "wolf.step-status"
+    if not events_file.is_file():
+        return None
+    timestamps: list[float] = []
+    for line in events_file.read_text(encoding="utf-8", errors="replace").splitlines():
+        parts = line.split("|")
+        if len(parts) < 3:
+            continue
+        try:
+            timestamps.append(float(parts[2]))
+        except ValueError:
+            continue
+    return time.time() - min(timestamps) if timestamps else None
 
 
 def _memory_mb(value: Optional[str]) -> Optional[float]:
@@ -1166,11 +1197,12 @@ def rollup_stage_states(
 
 def stage_step_detail(
     run_directory: Path, stage: str, membership: Optional[dict[str, tuple[str, ...]]] = None,
-) -> tuple[tuple[str, str], ...]:
+) -> tuple[tuple[str, str, Optional[float]], ...]:
     """One level of real detail under `stage` -- its own direct
     create_flow members, in execution order, each paired with its
-    current state -- for `wolf status --watch`'s expanded live view of
-    whichever stage is currently running.
+    current state and (when known) how long it's been running -- for
+    `wolf status --watch`'s expanded live view of whichever stage is
+    currently running.
 
     A member that's itself a leaf create_flow_step reports its own
     canonical path's state directly; a member that's a nested sub-flow
@@ -1185,23 +1217,35 @@ def stage_step_detail(
     promptly updated per step during an interactive `run_flow`) always
     wins over flow.status's canonical-path state for a leaf whose bare
     name it has an entry for, since it reflects this invocation's real
-    progress even when flow.status itself hasn't caught up yet."""
+    progress even when flow.status itself hasn't caught up yet. The
+    elapsed seconds (third tuple element) is likewise only ever derived
+    from that same live source -- a leaf member currently "running"
+    whose own start timestamp wolf.step-status recorded -- and is None
+    for anything else (not running, or running per flow.status alone
+    with no live timestamp available; a nested sub-flow's own aggregate
+    row never gets one either, since there is no single real "start" for
+    an aggregate)."""
     if stage not in STAGE_ORDER:
         return ()
     membership = membership if membership is not None else flow_membership()
     _, states = genus_run_status(run_directory)
     events = genus_run_step_events(run_directory)
+    now = time.time()
     prefix = f"block.{_STAGE_TOPLEVEL_FLOW[stage]}.{stage}"
-    detail: list[tuple[str, str]] = []
+    detail: list[tuple[str, str, Optional[float]]] = []
     for member in membership.get(stage, ()):
         leaf_paths: list[str] = []
         _expand_canonical_paths(prefix, member, membership, leaf_paths)
         known = {path: states[path] for path in leaf_paths if path in states}
+        member_elapsed: Optional[float] = None
         for path in leaf_paths:
             bare_name = path.rsplit(".", 1)[-1]
             if bare_name in events:
-                known[path] = events[bare_name]
-        detail.append((member, _rollup_one_state(known, len(leaf_paths))))
+                event_status, event_time = events[bare_name]
+                known[path] = event_status
+                if bare_name == member and event_status == "running":
+                    member_elapsed = now - event_time
+        detail.append((member, _rollup_one_state(known, len(leaf_paths)), member_elapsed))
     return tuple(detail)
 
 

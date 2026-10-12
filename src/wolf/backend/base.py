@@ -53,11 +53,17 @@ class Backend(ABC):
         """Return backend-owned stage evidence for legacy runs."""
         return {}
 
-    def stage_step_detail(self, run_directory, stage: str) -> Sequence[tuple[str, str]]:
-        """Return (label, status) pairs for one stage's own immediate
-        real sub-steps, in execution order, for `wolf status --watch`'s
-        expanded live view of whichever stage is currently running.
-        Defaults to () -- a backend with no finer-than-stage granularity
-        (e.g. ORFS, tracked only via wolf.stage-results) simply has
-        nothing more to show, and the watch panel omits the tree."""
+    def stage_step_detail(
+        self, run_directory, stage: str
+    ) -> Sequence[tuple[str, str, Optional[float]]]:
+        """Return (label, status, elapsed_seconds) triples for one
+        stage's own immediate real sub-steps, in execution order, for
+        `wolf status --watch`'s expanded live view of whichever stage
+        is currently running -- elapsed_seconds is None unless a
+        backend has a live source for how long that one step has
+        actually been running (see cadence_genus.stage_step_detail for
+        the one real implementation). Defaults to () -- a backend with
+        no finer-than-stage granularity (e.g. ORFS, tracked only via
+        wolf.stage-results) simply has nothing more to show, and the
+        watch panel omits the tree."""
         return ()

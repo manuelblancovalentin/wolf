@@ -8,8 +8,8 @@ from typing import Mapping, Optional, Sequence
 
 from wolf.backend.base import Backend, ValidationItem
 from wolf.backend.cadence_genus import (
-    STAGE_ORDER, GenusInputs, genus_run_metrics, genus_run_status, prepare_genus_inputs,
-    rollup_stage_states, run_genus, stage_step_detail, validate_genus,
+    STAGE_ORDER, GenusInputs, genus_run_active_elapsed, genus_run_metrics, genus_run_status,
+    prepare_genus_inputs, rollup_stage_states, run_genus, stage_step_detail, validate_genus,
 )
 from wolf.context import ResolvedContext
 
@@ -52,8 +52,18 @@ class CadenceFlowtoolBackend(Backend):
         """`wolf status`'s real backend-local hook -- parses Flowtool's
         own `flow.metrics` (see genus_run_metrics's own docstring),
         confirmed real alongside flow.status for any run that has
-        actually invoked Flowtool."""
-        return genus_run_metrics(Path(run_directory))
+        actually invoked Flowtool, plus WOLF's own live
+        "cadence.active_stage_elapsed_seconds" (see
+        genus_run_active_elapsed's own docstring) for however long the
+        current invocation has actually been running -- independent of
+        flow.metrics' own total_real_seconds, which like flow.status is
+        confirmed not promptly updated during a manually-typed
+        run_flow."""
+        metrics = genus_run_metrics(Path(run_directory))
+        active_elapsed = genus_run_active_elapsed(Path(run_directory))
+        if active_elapsed is not None:
+            metrics["cadence.active_stage_elapsed_seconds"] = active_elapsed
+        return metrics
 
     def stage_step_detail(self, run_directory, stage: str):
         """`wolf status --watch`'s expanded live view hook -- the real

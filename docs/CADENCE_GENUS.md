@@ -693,6 +693,17 @@ canonical-path state, for both a stage's direct members and a nested
 sub-flow's own leaf descendants, always preferring the live event when
 one exists.
 
+Each event also carries a real timestamp, so `wolf status --watch` can
+show not just *that* something is running but *how long* it has been:
+`genus_run_active_elapsed` derives the current invocation's own elapsed
+time from `wolf.step-status`'s earliest timestamp (shown on the
+currently-running stage's own row in the Stages table), and
+`stage_step_detail`'s own per-leaf elapsed (its third tuple element)
+does the same for whichever single step is actively running inside the
+expanded tree. Both render as a blinking `HH:MM:SS` in the watch panel
+-- the one visual cue that a number is actively ticking up in place,
+not a stale snapshot sitting next to live spinners.
+
 ## Genus attribute overrides
 
 Some Genus attributes are tool policy rather than package metadata or
