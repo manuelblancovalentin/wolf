@@ -125,6 +125,35 @@ class RunProvenanceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "different immutable provenance"):
             freeze_run_manifest(self.source, run, volatile_keys=("from_stage",))
 
+    def test_a_deduplicated_snapshot_directory_bumping_is_not_a_new_identity(self):
+        """Regression, hit for real continuing an actual synthesis run:
+        scripts_directory/generated (a deduplicated scripts.<N> snapshot
+        of the bundled flow Tcl, and the paths generated_files derives
+        from it) legitimately get a new number the moment that Tcl's own
+        content changes -- which happens mid-run during active flow
+        development (fixing a real bug and continuing the same physical
+        run with the fix, not starting over). Must not be mistaken for a
+        different run identity, the way an unrelated field changing
+        still must be."""
+        run = self.root / "run"
+        volatile = ("from_stage", "scripts_directory", "generated")
+        destination = freeze_run_manifest(
+            self.source, run, volatile_keys=volatile,
+            generated_directory=run, generated_files={"x": str(run / "scripts.1" / "x.tcl")},
+        )
+
+        data = yaml.safe_load(self.source.read_text(encoding="utf-8"))
+        data["scripts_directory"] = str(run / "scripts.2")
+        self.source.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+        updated = freeze_run_manifest(
+            self.source, run, volatile_keys=volatile,
+            generated_directory=run, generated_files={"x": str(run / "scripts.2" / "x.tcl")},
+        )
+        self.assertEqual(updated, destination)
+        frozen = yaml.safe_load(destination.read_text(encoding="utf-8"))
+        self.assertEqual(frozen["scripts_directory"], str(run / "scripts.2"))
+        self.assertEqual(frozen["generated"]["files"]["x"], str(run / "scripts.2" / "x.tcl"))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1405,7 +1405,34 @@ def run_genus(
         # docstring) -- these are exactly the fields that trivially
         # differ just from picking a different stage range or
         # re-invoking, not from the run actually being a different one.
-        volatile_keys=("from_stage", "to_stage", "synthesis_stages", "outputs", "execution"),
+        #
+        # scripts_directory is volatile too, deliberately: it names a
+        # deduplicated scripts.<N> snapshot of the bundled flow Tcl
+        # (_snapshot_scripts), and really does get a new number the
+        # moment that Tcl's own content changes -- which legitimately
+        # happens mid-run during active flow development (fixing a real
+        # bug in synthesis.tcl/common_flows.tcl and continuing the same
+        # physical-design run with the fix, not starting over). Flowtool
+        # checkpoint resume is Genus/Innovus session state, independent
+        # of which exact snapshot loaded it, so this was never really
+        # part of a run's *physical* identity the way design/technology
+        # are. The real safety net already exists and stays
+        # non-negotiable: flow_step_digests/bundled_flow_digest print
+        # automatically (flow-config.tcl's own tail, and again on every
+        # `wolf run` exit) specifically so a content difference between
+        # two invocations of the same run is always visible, even though
+        # it no longer blocks continuing.
+        # "generated" (directory + every generated_files path) is
+        # volatile for the same reason as scripts_directory above --
+        # flowtool_scripts_directory inside it references that same
+        # snapshot number, and the rest (genus_sources, genus_constraints,
+        # ...) are freshly (re)written every single invocation by design
+        # (see prepare_genus_inputs's own docstring: "written directly,
+        # fresh every call"), never part of what makes this run this run.
+        volatile_keys=(
+            "from_stage", "to_stage", "synthesis_stages", "outputs", "execution",
+            "scripts_directory", "generated",
+        ),
         generated_directory=inputs.directory,
         generated_files={
             **({"genus_technology": str(inputs.technology_script)} if inputs.technology_script else {}),
