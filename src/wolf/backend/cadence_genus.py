@@ -604,68 +604,110 @@ def _update_latest_run_link(context: ResolvedContext, run_directory: Path) -> No
         pass
 
 
-# flowtool -status's real line shape is not documented here -- parsed
-# best-effort, so an unrecognized line is simply not counted rather than
-# raising. State inference degrading gracefully (to "stage not
-# recognized") is far safer than guessing wrong at exact output syntax,
-# the way earlier bundled-flow Tcl command mistakes were real crashes.
-_STATUS_LINE_RE = re.compile(
-    r"^\s*(?P<name>[A-Za-z0-9_./]+)\s*[:\-]?\s*"
-    r"(?P<state>COMPLETE(?:D)?|DONE|RUNNING|IN[_ ]PROGRESS|FAILED|ERROR|"
-    r"PENDING|NOT[_ ]RUN|SCHEDULED|SKIPPED)\b",
-    re.IGNORECASE,
-)
-_STATUS_STATE_MAP = {
-    "complete": "complete", "completed": "complete", "done": "complete",
-    "running": "running", "in progress": "running",
-    "failed": "failed", "error": "failed",
-    "pending": "pending", "not run": "pending", "scheduled": "pending", "skipped": "pending",
-}
+def _tcl_list_elements(text: str) -> list[str]:
+    """Split one line of real Tcl list/dict syntax into its top-level
+    elements, respecting {...} brace-grouping (an element containing
+    whitespace, or itself a nested list/dict, is wrapped in one brace
+    pair -- standard Tcl list syntax, not guessed: this is exactly the
+    format flow.status, flow.metrics, and report_flow all actually use)."""
+    elements: list[str] = []
+    depth = 0
+    start = 0
+    current: list[str] = []
+    for index, char in enumerate(text):
+        if char == "{":
+            if depth == 0:
+                start = index + 1
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                elements.append(text[start:index])
+        elif depth == 0:
+            if char.isspace():
+                if current:
+                    elements.append("".join(current))
+                    current = []
+            else:
+                current.append(char)
+    if current:
+        elements.append("".join(current))
+    return elements
 
 
-def genus_run_status(
-    run_directory: Path, *, executable_lookup=shutil.which,
-) -> tuple[str, dict[str, str]]:
-    """Query Flowtool's own real execution status for an already-allocated
-    run -- `flowtool -status`, confirmed real: "Print the execution status
-    (completed steps) for the current flow specified." No Tcl
-    instrumentation needed; Flowtool already tracks this.
+def _tcl_dict(text: str) -> dict[str, str]:
+    """One line/element of Tcl dict syntax (alternating key value key
+    value ...) as a Python dict. A later duplicate key overwrites an
+    earlier one, same as Tcl's own `dict` semantics."""
+    elements = _tcl_list_elements(text.strip())
+    return dict(zip(elements[0::2], elements[1::2]))
 
-    Everything needed is derived purely from run_directory itself, no
-    ResolvedContext required: the run tag is the directory's own name
-    (allocate_genus_run always names it <design>.<N>), the process
-    directory is its parent, and flow.<design>.yaml is the one
-    prepare_genus_inputs already wrote directly into it on the run that
-    allocated this directory.
 
-    Returns (raw_output, {step_name: state}) -- state is one of
-    "complete"/"running"/"failed"/"pending", or absent for anything this
-    pass didn't recognize in the output. Returns ("", {}) rather than
-    raising when flowtool isn't on PATH or no run has been prepared here
-    yet (e.g. `wolf run --plan` was the only thing that's happened).
-    """
-    flowtool = executable_lookup("flowtool")
-    flow_yaml = next(iter(sorted(run_directory.glob("flow.*.yaml"))), None) if run_directory.is_dir() else None
-    if not flowtool or flow_yaml is None:
+_FLOW_STATUS_SUCCESS_STATES = frozenset({"success", "complete", "completed", "done"})
+_FLOW_STATUS_RUNNING_STATES = frozenset({"starting", "running", "in_progress"})
+_FLOW_STATUS_FAILED_STATES = frozenset({"failed", "failure", "error"})
+
+
+def genus_run_status(run_directory: Path) -> tuple[str, dict[str, str]]:
+    """Read Flowtool's own real per-run execution record directly --
+    `<run_directory>/flow.status`, confirmed real and already present on
+    disk for any run that has actually invoked Flowtool (written by
+    Flowtool itself, one real Tcl dict per line: a `{script flowtool
+    status invoked ...}` line marks the start of one flowtool invocation
+    and is skipped; every other line is one step's status transition,
+    carrying a `status` (`starting`/`success`/...), a `time` (unix
+    seconds), and a nested `steps_run` dict whose own `str` field is the
+    step's real canonical dotted path, e.g.
+    "block.synthesis.syn_generic.report_synth.report_finish" --
+    disambiguating a step name several stages share, like `block_start`,
+    by which stage actually ran it). A plain file read, no flowtool
+    subprocess invocation needed at all.
+
+    Returns (raw_text, {canonical_path: state}) -- state is one of
+    "complete"/"running"/"failed", keyed by the exact dotted path
+    flow.status itself uses (see stage_canonical_paths to map a
+    STAGE_ORDER name to the set of paths it owns). A later record for
+    the same path always overwrites an earlier one (file order is
+    chronological), so the result reflects the latest known state per
+    step. An unparseable or missing status word degrades to leaving that
+    record out rather than raising. Returns ("", {}) when no flow.status
+    exists yet (e.g. `wolf run --plan` was the only thing that's
+    happened)."""
+    status_file = run_directory / "flow.status"
+    if not status_file.is_file():
         return "", {}
-    command = [
-        flowtool, "-files", str(flow_yaml), "-run_tag", run_directory.name,
-        "-directory", str(run_directory.parent), "-status",
-    ]
-    result = subprocess.run(command, capture_output=True, text=True, check=False)
-    raw = result.stdout + result.stderr
-    try:
-        (run_directory / "wolf.status.raw.txt").write_text(raw, encoding="utf-8")
-    except OSError:
-        pass  # Debug aid only; never block a status query on it.
+    raw = status_file.read_text(encoding="utf-8", errors="replace")
     states: dict[str, str] = {}
     for line in raw.splitlines():
-        match = _STATUS_LINE_RE.match(line)
-        if not match:
+        line = line.strip()
+        if not line:
             continue
-        state = _STATUS_STATE_MAP.get(match.group("state").lower().replace("_", " "))
-        if state:
-            states[match.group("name")] = state
+        # Each real line is itself one outer {...}-wrapped Tcl list (the
+        # whole record), not a bare key/value sequence -- strip that one
+        # enclosing layer before parsing its own key/value pairs.
+        if line.startswith("{") and line.endswith("}"):
+            line = line[1:-1]
+        record = _tcl_dict(line)
+        if record.get("script") == "flowtool":
+            continue  # An invocation-boundary marker, not a step event.
+        steps_run = record.get("steps_run")
+        path = _tcl_dict(steps_run).get("str") if steps_run else None
+        status = record.get("status", "").lower()
+        if not path or not status:
+            continue
+        # A non-empty "errors" list on the record overrides the literal
+        # status word -- the exact failure status string isn't confirmed
+        # from a real failure yet, but a populated errors list is a
+        # reliable signal regardless of what that word turns out to be.
+        errors = record.get("errors", "")
+        if errors and errors not in ("{}", ""):
+            states[path] = "failed"
+        elif status in _FLOW_STATUS_FAILED_STATES:
+            states[path] = "failed"
+        elif status in _FLOW_STATUS_SUCCESS_STATES:
+            states[path] = "complete"
+        elif status in _FLOW_STATUS_RUNNING_STATES:
+            states[path] = "running"
     return raw, states
 
 
@@ -838,6 +880,48 @@ def flow_descendant_steps(
     return tuple(steps)
 
 
+_STAGE_TOPLEVEL_FLOW = {
+    **{stage: "synthesis" for stage in SYNTHESIS_STAGES},
+    **{stage: "implementation" for stage in IMPLEMENTATION_STAGES},
+}
+
+
+def _expand_canonical_paths(
+    prefix: str, name: str, membership: dict[str, tuple[str, ...]], out: list[str],
+) -> None:
+    if name not in membership:
+        out.append(f"{prefix}.{name}")
+        return
+    nested_prefix = f"{prefix}.{name}"
+    for member in membership[name]:
+        _expand_canonical_paths(nested_prefix, member, membership, out)
+
+
+def stage_canonical_paths(
+    stage: str, membership: Optional[dict[str, tuple[str, ...]]] = None,
+) -> tuple[str, ...]:
+    """Every real canonical dotted path (flow.status's own step key, e.g.
+    "block.synthesis.syn_generic.report_synth.report_finish") that
+    `stage` (a STAGE_ORDER name) owns -- unlike flow_descendant_steps,
+    which flattens nested sub-flows away to their bare leaf step names,
+    this keeps every intermediate flow name (block, synthesis/
+    implementation, the stage itself, and any further nested flow like
+    report_synth) as its own path segment, exactly matching how
+    flow.status disambiguates a step name several stages share (like
+    block_start) by which stage actually ran it.
+
+    The "block.synthesis"/"block.implementation" prefix reflects the
+    real, fixed create_flow topology in common_flows.tcl (block owns
+    synthesis and implementation; each owns its own STAGE_ORDER
+    sub-flows) -- not derived generically, since nothing else in the
+    bundled flow needs that generality."""
+    membership = membership if membership is not None else flow_membership()
+    prefix = f"block.{_STAGE_TOPLEVEL_FLOW[stage]}"
+    paths: list[str] = []
+    _expand_canonical_paths(prefix, stage, membership, paths)
+    return tuple(paths)
+
+
 def flow_step_digests() -> dict[str, str]:
     """A short content hash per real create_flow_step in the bundled
     flow -- lets a run (or a human reading two runs' logs) tell exactly
@@ -879,48 +963,36 @@ def _rollup_one_state(known: dict[str, str], descendant_count: int) -> str:
 def rollup_stage_states(
     states: dict[str, str], stages: tuple[str, ...] = STAGE_ORDER,
 ) -> dict[str, str]:
-    """Fill in a state for every name in `stages` from whatever
-    granularity `genus_run_status` actually reported.
+    """Fill in a state for every name in `stages` from the real,
+    canonical-path-keyed detail `genus_run_status` reads out of
+    flow.status.
 
-    `flowtool -status`'s real line shape isn't confirmed yet (it may
-    report per real create_flow_step, per top-level stage, or both) --
-    this works either way: a stage name genus_run_status already hit
-    directly is left as-is; any stage genus_run_status did *not* mention
-    by name is instead rolled up from its own real descendant steps (via
-    flow_descendant_steps, the actual create_flow membership tree, not a
-    guess), so `wolf status`'s per-STAGE_ORDER table still fills in
-    correctly even if -status only ever reports step-level detail. A
-    stage with no state at all for any of its descendants (nothing
-    recognized yet) is simply left absent -- `wolf status`'s own existing
-    fallback ("unknown"/"pending") already handles that.
+    flow.status disambiguates a step name several stages share (like
+    block_start or init_genus) by which stage actually ran it --
+    `stage_canonical_paths` computes exactly that stage's own set of
+    real dotted paths (block.synthesis.syn_generic.block_start, not the
+    bare "block_start" every other synthesis stage also happens to
+    list), so a stage's rollup only ever counts its *own* steps, never
+    an unrelated stage's run of a same-named one. A stage with no state
+    at all for any of its canonical paths (nothing recognized yet) is
+    simply left absent -- `wolf status`'s own existing fallback
+    ("unknown"/"pending") already handles that.
 
-    Returns a new dict with every original (possibly step-level) entry
+    Returns a new dict with every original canonical-path-keyed entry
     preserved alongside the stage-level rollup, for a future renderer
-    that wants the full detail, not just the one load_status reads today.
-
-    Known open question, pending real -status output: a step name like
-    block_start or init_genus is reused by several different stages
-    (its own real create_flow_step is one shared definition, invoked
-    separately within each). Whether -status's real lines disambiguate
-    that (a qualified/"canonical path" form -- -help mentions these for
-    -from/-to) or report one bare name regardless of which stage it ran
-    in isn't confirmed yet. Until it is, genus_run_status's parsing
-    treats every occurrence of a name as one shared signal, so an early
-    shared step reporting "complete" can currently nudge a *later*,
-    not-yet-reached stage that also lists that name to "running" sooner
-    than it really should. Revisit once real output shows whether lines
-    are qualified.
+    that wants the full detail, not just the one load_status reads
+    today.
     """
     rolled = dict(states)
     membership = flow_membership()
     for stage in stages:
         if stage in rolled:
             continue
-        descendants = flow_descendant_steps(stage, membership)
-        known = {step: states[step] for step in descendants if step in states}
+        canonical_paths = stage_canonical_paths(stage, membership)
+        known = {path: states[path] for path in canonical_paths if path in states}
         if not known:
             continue
-        rolled[stage] = _rollup_one_state(known, len(descendants))
+        rolled[stage] = _rollup_one_state(known, len(canonical_paths))
     return rolled
 
 

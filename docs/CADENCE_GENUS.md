@@ -564,52 +564,54 @@ Two pieces make this work, both in `cadence_flowtool.py`/`cadence_genus.py`:
 - **`stages()`** returns `STAGE_ORDER` (every Genus and Innovus stage
   name), the fixed, ordered list `wolf status` reports against.
 - **`infer_stage_results(run_directory)`** calls `genus_run_status`, which
-  queries Flowtool's own real `flowtool ... -status` ("print the
-  execution status (completed steps) for the current flow", confirmed
-  from `flowtool -help`) against the run directory's own already-written
-  `flow.<design>.yaml` and the run tag/process directory implied by the
-  directory's own name and location -- no `ResolvedContext` needed, no
-  Tcl instrumentation, nothing WOLF has to track itself. Flowtool's exact
-  `-status` line format isn't documented here, so parsing is
-  deliberately best-effort (`_STATUS_LINE_RE`/`_STATUS_STATE_MAP`): an
-  unrecognized line is simply not counted rather than raising, and the
-  raw output is always saved to `<run>/wolf.status.raw.txt` for
-  inspection. `run_genus` also now records `resolved["backend"] =
-  {"name": context.backend}` in the frozen manifest (`wolf status`'s own
-  backend lookup needs it) and maintains `<environment_directory>/
-  run.latest.d` (the same symlink convention the legacy shell runner and
-  `wolf status`'s `_latest_for_environment` already share), so `wolf
-  status --environment NAME` finds a Genus run with no new resolution
-  path of its own.
+  reads Flowtool's own real per-run execution record directly off disk --
+  `<run_directory>/flow.status` -- rather than shelling out to `flowtool
+  ... -status`. Confirmed real against an actual run: one Tcl dict per
+  line (a `{script flowtool status invoked ...}` line marks one flowtool
+  invocation boundary and is skipped; every other line is one step's
+  status transition, carrying a `status` word, an `errors` list, and a
+  nested `steps_run` dict whose own `str` field is the step's real
+  **canonical dotted path**, e.g.
+  `block.synthesis.syn_generic.report_synth.report_finish`). A plain file
+  read, no Tcl instrumentation and no subprocess call needed at all; a
+  missing `flow.status` (nothing has invoked Flowtool yet) degrades to
+  `("", {})` rather than raising. `run_genus` also now records
+  `resolved["backend"] = {"name": context.backend}` in the frozen
+  manifest (`wolf status`'s own backend lookup needs it) and maintains
+  `<environment_directory>/run.latest.d` (the same symlink convention the
+  legacy shell runner and `wolf status`'s `_latest_for_environment`
+  already share), so `wolf status --environment NAME` finds a Genus run
+  with no new resolution path of its own.
 
 `load_status` only ever asks `stages()` for the fixed `STAGE_ORDER` list
-(`syn_generic`, `syn_map`, ...), so if `-status` actually reports
-per-real-`create_flow_step` detail rather than one line per top-level
-stage (its own help text says "completed **steps**"), that detail would
-otherwise be silently dropped. `rollup_stage_states` fills each
-`STAGE_ORDER` name in from its own real descendant steps -- the actual
-`create_flow` membership tree (`flow_membership`/`flow_descendant_steps`,
-parsed by brace-matching `common_flows.tcl`'s own `create_flow -name X
-{members}` calls, not guessed), not just a flat step list -- so the table
-still fills in correctly either way. Building this tree-reachability
-check caught a real, previously invisible bug: `init_implementation` and
-`add_tracks` (real steps in `floorplanning.tcl`) were never referenced by
-`floorplan`'s own member list in `common_flows.tcl`, meaning Flowtool
-would never load the Genus handoff database before `wolf run -from
-floorplan` tried to do anything in Innovus; fixed.
+(`syn_generic`, `syn_map`, ...), but `flow.status` only ever reports
+per-real-leaf-step detail, keyed by canonical path -- `rollup_stage_states`
+fills each `STAGE_ORDER` name in from `stage_canonical_paths(stage)`, the
+real `create_flow` membership tree (`flow_membership`, parsed by
+brace-matching `common_flows.tcl`'s own `create_flow -name X {members}`
+calls, not guessed) walked while keeping every intermediate flow name as
+its own path segment, exactly matching how `flow.status` itself qualifies
+a step. Building the underlying tree-reachability check caught a real,
+previously invisible bug: `init_implementation` and `add_tracks` (real
+steps in `floorplanning.tcl`) were never referenced by `floorplan`'s own
+member list in `common_flows.tcl`, meaning Flowtool would never load the
+Genus handoff database before `wolf run -from floorplan` tried to do
+anything in Innovus; fixed.
 
-One open question pending real `-status` output: a step name like
-`block_start` is reused by several different stages (one shared real
-`create_flow_step`, invoked separately inside each). Whether `-status`'s
-real lines disambiguate that (flowtool's own "canonical path" addressing,
-mentioned for `-from`/`-to`) or report one bare name regardless of which
-stage it ran in isn't confirmed yet -- see `rollup_stage_states`'s own
-docstring for the current (reasonable, not perfect) treatment.
+The open question from an earlier draft of this is now resolved: a step
+name like `block_start` is reused by several different stages (one
+shared real `create_flow_step`, invoked separately inside each), and
+`flow.status`'s canonical paths *do* disambiguate that --
+`block.synthesis.syn_generic.block_start` is a distinct path from
+`block.synthesis.syn_map.block_start` -- confirmed against a real run's
+own `flow.status`. `stage_canonical_paths` produces exactly that
+qualified form per stage, so `rollup_stage_states` only ever rolls up a
+stage's own steps, never an unrelated stage's run of a same-named one.
 
 A follow-up, not yet done: `extract_metrics(run_directory)` (Flowtool's
-own `-metrics_file`) isn't wired up yet -- `wolf status`'s Metrics
-section stays empty for a Genus run until that's confirmed against a
-real run's actual `-metrics_file` content.
+own `flow.metrics`, confirmed present on disk alongside `flow.status` but
+not yet parsed) isn't wired up yet -- `wolf status`'s Metrics section
+stays empty for a Genus run until that's done.
 
 ## Genus attribute overrides
 

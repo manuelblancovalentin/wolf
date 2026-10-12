@@ -3,7 +3,7 @@ import subprocess
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 import yaml
 
@@ -1175,73 +1175,77 @@ class FlowIdentityTests(unittest.TestCase):
 
 
 class GenusRunStatusTests(unittest.TestCase):
-    """genus_run_status queries flowtool's own real `-status` output --
-    no Tcl instrumentation involved -- for a run already allocated by
-    allocate_genus_run/prepare_genus_inputs (a flow.<design>.yaml
-    already written directly into the run directory)."""
+    """genus_run_status reads Flowtool's own real per-run execution
+    record directly off disk (<run_directory>/flow.status) -- a plain
+    file read, no flowtool subprocess invocation at all."""
 
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory(prefix="wolf-genus-status-")
         self.root = Path(self.temporary.name)
         self.run_directory = self.root / "work" / "demo.1"
         self.run_directory.mkdir(parents=True)
-        (self.run_directory / "flow.demo.yaml").write_text("remarks: stub\n", encoding="utf-8")
 
     def tearDown(self):
         self.temporary.cleanup()
 
-    def test_no_flowtool_on_path_returns_empty(self):
+    def _write_status(self, text: str) -> None:
+        (self.run_directory / "flow.status").write_text(text, encoding="utf-8")
+
+    def test_no_flow_status_on_disk_yet_returns_empty(self):
         from wolf.backend.cadence_genus import genus_run_status
-        raw, states = genus_run_status(self.run_directory, executable_lookup=lambda name: None)
+        raw, states = genus_run_status(self.run_directory)
         self.assertEqual((raw, states), ("", {}))
 
-    def test_no_flow_yaml_prepared_yet_returns_empty(self):
+    def test_invocation_boundary_marker_lines_are_skipped(self):
         from wolf.backend.cadence_genus import genus_run_status
-        empty_run = self.root / "work" / "demo.2"
-        empty_run.mkdir(parents=True)
-        raw, states = genus_run_status(empty_run, executable_lookup=lambda name: "/opt/cadence/flowtool")
-        self.assertEqual((raw, states), ("", {}))
-
-    def test_parses_plausible_status_output_and_saves_it_for_inspection(self):
-        from wolf.backend.cadence_genus import genus_run_status
-        fake_output = (
-            "syn_generic: COMPLETE\n"
-            "syn_map: RUNNING\n"
-            "syn_opt: PENDING\n"
-            "some unrelated line with no status token\n"
-        )
-        completed = Mock(stdout=fake_output, stderr="")
-        with patch("wolf.backend.cadence_genus.subprocess.run", return_value=completed) as execute:
-            raw, states = genus_run_status(
-                self.run_directory, executable_lookup=lambda name: "/opt/cadence/flowtool",
-            )
-        command = execute.call_args.args[0]
-        self.assertEqual(command[0], "/opt/cadence/flowtool")
-        self.assertIn("-status", command)
-        self.assertIn(str(self.run_directory.parent), command)
-        self.assertIn(self.run_directory.name, command)
-        self.assertEqual(raw, fake_output)
-        self.assertEqual(states, {"syn_generic": "complete", "syn_map": "running", "syn_opt": "pending"})
-        self.assertEqual(
-            (self.run_directory / "wolf.status.raw.txt").read_text(encoding="utf-8"), fake_output,
-        )
-
-    def test_unrecognized_output_degrades_to_no_states_not_an_error(self):
-        from wolf.backend.cadence_genus import genus_run_status
-        completed = Mock(stdout="flowtool printed something we don't recognize\n", stderr="")
-        with patch("wolf.backend.cadence_genus.subprocess.run", return_value=completed):
-            raw, states = genus_run_status(
-                self.run_directory, executable_lookup=lambda name: "/opt/cadence/flowtool",
-            )
+        self._write_status("{script flowtool status invoked arguments {-status}}\n")
+        raw, states = genus_run_status(self.run_directory)
         self.assertEqual(states, {})
-        self.assertIn("don't recognize", raw)
+        self.assertIn("invoked", raw)
+
+    def test_parses_real_shaped_lines_into_canonical_path_states(self):
+        from wolf.backend.cadence_genus import genus_run_status
+        self._write_status(
+            "{status success time 1700000000 errors {} "
+            "steps_run {str block.synthesis.syn_generic.block_start}}\n"
+            "{status starting time 1700000001 errors {} "
+            "steps_run {str block.synthesis.syn_generic.read_hdl}}\n"
+            "{status success time 1700000002 errors {bad thing} "
+            "steps_run {str block.synthesis.syn_generic.elaborate}}\n"
+        )
+        raw, states = genus_run_status(self.run_directory)
+        self.assertEqual(states, {
+            "block.synthesis.syn_generic.block_start": "complete",
+            "block.synthesis.syn_generic.read_hdl": "running",
+            # A populated errors list overrides a literal "success" status word.
+            "block.synthesis.syn_generic.elaborate": "failed",
+        })
+        self.assertIn("block_start", raw)
+
+    def test_a_later_record_for_the_same_path_overwrites_an_earlier_one(self):
+        from wolf.backend.cadence_genus import genus_run_status
+        self._write_status(
+            "{status starting time 1700000000 errors {} "
+            "steps_run {str block.synthesis.syn_generic.block_start}}\n"
+            "{status success time 1700000001 errors {} "
+            "steps_run {str block.synthesis.syn_generic.block_start}}\n"
+        )
+        _, states = genus_run_status(self.run_directory)
+        self.assertEqual(states["block.synthesis.syn_generic.block_start"], "complete")
+
+    def test_a_line_with_no_steps_run_or_status_is_skipped_not_an_error(self):
+        from wolf.backend.cadence_genus import genus_run_status
+        self._write_status("{time 1700000000 remarks {nothing useful here}}\n")
+        raw, states = genus_run_status(self.run_directory)
+        self.assertEqual(states, {})
+        self.assertIn("nothing useful here", raw)
 
 
 class RollupStageStatesTests(unittest.TestCase):
-    """rollup_stage_states fills in a STAGE_ORDER-level state from
-    whatever granularity -status actually reported, via the real
-    create_flow membership tree -- works whether -status reports per
-    top-level stage, per real step, or both."""
+    """rollup_stage_states fills in a STAGE_ORDER-level state from the
+    real canonical-dotted-path-keyed detail genus_run_status reads out
+    of flow.status, via stage_canonical_paths (the real create_flow
+    membership tree, qualified by stage -- not a guess)."""
 
     def test_an_explicit_stage_level_hit_is_left_as_is(self):
         from wolf.backend.cadence_genus import rollup_stage_states
@@ -1249,25 +1253,26 @@ class RollupStageStatesTests(unittest.TestCase):
         self.assertEqual(result["syn_generic"], "complete")
 
     def test_step_level_detail_alone_rolls_up_to_complete(self):
-        """Every real syn_generic step reporting complete, but no line
-        for "syn_generic" itself -- must still roll up to complete."""
-        from wolf.backend.cadence_genus import flow_descendant_steps, rollup_stage_states
-        steps = flow_descendant_steps("syn_generic")
-        states = {step: "complete" for step in steps}
+        """Every real syn_generic canonical path reporting complete, but
+        no line for "syn_generic" itself -- must still roll up to
+        complete."""
+        from wolf.backend.cadence_genus import rollup_stage_states, stage_canonical_paths
+        paths = stage_canonical_paths("syn_generic")
+        states = {path: "complete" for path in paths}
         result = rollup_stage_states(states, stages=("syn_generic",))
         self.assertEqual(result["syn_generic"], "complete")
 
     def test_partially_complete_steps_roll_up_to_running_not_pending(self):
-        from wolf.backend.cadence_genus import flow_descendant_steps, rollup_stage_states
-        steps = flow_descendant_steps("syn_generic")
-        states = {steps[0]: "complete", steps[1]: "pending"}
+        from wolf.backend.cadence_genus import rollup_stage_states, stage_canonical_paths
+        paths = stage_canonical_paths("syn_generic")
+        states = {paths[0]: "complete", paths[1]: "pending"}
         result = rollup_stage_states(states, stages=("syn_generic",))
         self.assertEqual(result["syn_generic"], "running")
 
     def test_any_failed_step_rolls_up_to_failed(self):
-        from wolf.backend.cadence_genus import flow_descendant_steps, rollup_stage_states
-        steps = flow_descendant_steps("syn_generic")
-        states = {steps[0]: "complete", steps[1]: "failed"}
+        from wolf.backend.cadence_genus import rollup_stage_states, stage_canonical_paths
+        paths = stage_canonical_paths("syn_generic")
+        states = {paths[0]: "complete", paths[1]: "failed"}
         result = rollup_stage_states(states, stages=("syn_generic",))
         self.assertEqual(result["syn_generic"], "failed")
 
@@ -1277,26 +1282,82 @@ class RollupStageStatesTests(unittest.TestCase):
         self.assertNotIn("syn_generic", result)
 
     def test_a_shared_step_name_alone_does_not_falsely_complete_other_stages(self):
-        """Regression: block_start is reused by syn_generic, syn_map,
-        AND syn_opt (and more). One recognized step ("block_start":
-        "complete") out of syn_generic's full descendant set must not
-        make syn_map or syn_opt -- which also list block_start among
-        their own descendants -- roll up to "complete" too, just because
-        that one shared, partial sample happened to be complete."""
-        from wolf.backend.cadence_genus import rollup_stage_states
+        """Regression: block_start is a real create_flow_step shared by
+        syn_generic, syn_map, AND syn_opt -- but flow.status
+        disambiguates which stage actually ran it via the qualified
+        canonical path (block.synthesis.syn_generic.block_start isn't
+        block.synthesis.syn_map.block_start). One stage's own
+        block_start reporting complete must not roll up an unrelated
+        stage's distinct block_start occurrence."""
+        from wolf.backend.cadence_genus import rollup_stage_states, stage_canonical_paths
         result = rollup_stage_states(
-            {"block_start": "complete"}, stages=("syn_generic", "syn_map", "syn_opt"),
+            {stage_canonical_paths("syn_generic")[0]: "complete"},
+            stages=("syn_generic", "syn_map", "syn_opt"),
         )
         self.assertEqual(result["syn_generic"], "running")
-        self.assertEqual(result["syn_map"], "running")
-        self.assertEqual(result["syn_opt"], "running")
+        self.assertNotIn("syn_map", result)
+        self.assertNotIn("syn_opt", result)
 
     def test_original_step_level_entries_are_preserved_alongside_the_rollup(self):
-        from wolf.backend.cadence_genus import flow_descendant_steps, rollup_stage_states
-        steps = flow_descendant_steps("syn_generic")
-        states = {steps[0]: "complete"}
+        from wolf.backend.cadence_genus import rollup_stage_states, stage_canonical_paths
+        paths = stage_canonical_paths("syn_generic")
+        states = {paths[0]: "complete"}
         result = rollup_stage_states(states, stages=("syn_generic",))
-        self.assertEqual(result[steps[0]], "complete")
+        self.assertEqual(result[paths[0]], "complete")
+
+
+class StageCanonicalPathsTests(unittest.TestCase):
+    """stage_canonical_paths computes the real dotted path flow.status
+    itself uses for each STAGE_ORDER name's descendants, keeping every
+    intermediate flow name (block, synthesis/implementation, the stage,
+    and any further nested sub-flow) as its own path segment -- unlike
+    flow_descendant_steps, which flattens those away."""
+
+    def test_synthesis_stages_are_qualified_under_block_synthesis(self):
+        from wolf.backend.cadence_genus import stage_canonical_paths
+        paths = stage_canonical_paths("syn_generic")
+        self.assertIn("block.synthesis.syn_generic.block_start", paths)
+
+    def test_implementation_stages_are_qualified_under_block_implementation(self):
+        from wolf.backend.cadence_genus import stage_canonical_paths
+        paths = stage_canonical_paths("floorplan")
+        self.assertIn("block.implementation.floorplan.block_start", paths)
+
+    def test_a_nested_sub_flow_keeps_its_own_name_as_a_path_segment(self):
+        """report_synth is itself a nested flow referenced by
+        syn_generic, not a leaf step -- its own members must appear
+        qualified by report_synth, not flattened straight onto
+        syn_generic (matching real observed flow.status output, e.g.
+        block.synthesis.syn_generic.report_synth.report_finish)."""
+        from wolf.backend.cadence_genus import stage_canonical_paths
+        paths = stage_canonical_paths("syn_generic")
+        self.assertIn("block.synthesis.syn_generic.report_synth.report_finish", paths)
+
+    def test_a_shared_leaf_step_is_qualified_differently_per_stage(self):
+        from wolf.backend.cadence_genus import stage_canonical_paths
+        generic_paths = stage_canonical_paths("syn_generic")
+        map_paths = stage_canonical_paths("syn_map")
+        self.assertIn("block.synthesis.syn_generic.block_start", generic_paths)
+        self.assertIn("block.synthesis.syn_map.block_start", map_paths)
+        self.assertNotIn("block.synthesis.syn_map.block_start", generic_paths)
+
+    def test_canonical_paths_keep_a_step_reused_at_two_positions_within_one_stage_distinct(self):
+        """Regression: syn_generic's own member list lists init_genus
+        directly AND report_synth (nested) lists init_genus again --
+        flow_descendant_steps' flattening collapses that to one entry
+        (its `seen` set treats the second occurrence as a duplicate of
+        the first), undercounting by one real invocation.
+        stage_canonical_paths must not make that same mistake: the two
+        occurrences sit at different structural positions
+        (block.synthesis.syn_generic.init_genus vs.
+        block.synthesis.syn_generic.report_synth.init_genus) and must
+        both be kept, one more path than flow_descendant_steps' own
+        flattened, deduplicated count."""
+        from wolf.backend.cadence_genus import flow_descendant_steps, stage_canonical_paths
+        paths = stage_canonical_paths("syn_generic")
+        self.assertIn("block.synthesis.syn_generic.init_genus", paths)
+        self.assertIn("block.synthesis.syn_generic.report_synth.init_genus", paths)
+        self.assertEqual(len(paths), len(flow_descendant_steps("syn_generic")) + 1)
 
 
 class CadenceFlowtoolBackendStatusTests(unittest.TestCase):
