@@ -752,29 +752,90 @@ def bundled_flow_digest() -> str:
 
 
 _CREATE_FLOW_STEP_RE = re.compile(r"create_flow_step\s+-name\s+(\S+)[^{]*\{")
+_CREATE_FLOW_RE = re.compile(r"create_flow\s+-name\s+(\S+)[^{]*\{")
+
+
+def _braced_block(text: str, open_brace_index: int) -> str:
+    """The real `{...}` block starting at `text[open_brace_index]`, by
+    brace-depth matching rather than a non-greedy regex -- both a step
+    body (an `if`, a `foreach`, ...) and a flow's own member list can
+    legitimately contain nested braces that a regex would truncate at
+    the first inner `}`."""
+    depth = 0
+    end = open_brace_index
+    for index in range(open_brace_index, len(text)):
+        if text[index] == "{":
+            depth += 1
+        elif text[index] == "}":
+            depth -= 1
+            if depth == 0:
+                end = index
+                break
+    return text[open_brace_index:end + 1]
 
 
 def _extract_step_bodies(text: str) -> dict[str, str]:
-    """Pull out each create_flow_step's raw Tcl body by brace-matching,
-    not regex alone -- a step body routinely contains its own nested
-    braces (an `if`, a `foreach`, ...), which a non-greedy regex would
-    truncate at the first inner `}`."""
+    """Pull out each create_flow_step's raw Tcl body by brace-matching."""
     bodies: dict[str, str] = {}
     for match in _CREATE_FLOW_STEP_RE.finditer(text):
-        name = match.group(1)
-        start = match.end() - 1  # the opening '{' itself
-        depth = 0
-        end = start
-        for index in range(start, len(text)):
-            if text[index] == "{":
-                depth += 1
-            elif text[index] == "}":
-                depth -= 1
-                if depth == 0:
-                    end = index
-                    break
-        bodies[name] = text[start:end + 1]
+        bodies[match.group(1)] = _braced_block(text, match.end() - 1)
     return bodies
+
+
+def _extract_flow_members(text: str) -> dict[str, tuple[str, ...]]:
+    """Pull out each create_flow's own member list (step names and/or
+    other flow names, in execution order) by the same brace-matching."""
+    members: dict[str, tuple[str, ...]] = {}
+    for match in _CREATE_FLOW_RE.finditer(text):
+        block = _braced_block(text, match.end() - 1)
+        # Tcl line-continuation: a backslash immediately before a newline
+        # joins the next line into this one, the backslash itself is not
+        # a member -- without this, a wrapped member list (every real one
+        # here) leaves a literal "\" token behind.
+        block = re.sub(r"\\\s*\n", " ", block)
+        members[match.group(1)] = tuple(block.strip("{}").split())
+    return members
+
+
+def flow_membership() -> dict[str, tuple[str, ...]]:
+    """Every real create_flow's own member list across the bundled flow
+    (currently all in common_flows.tcl, but scans every flow file in
+    case a project's fork adds more) -- e.g. "syn_generic" -> ("block_start",
+    "avoid_module_renaming", ..., "report_synth"). A member is either a
+    real create_flow_step name (a leaf -- see flow_step_digests) or
+    another flow name (nested, like report_synth inside syn_generic, or
+    synthesis/implementation inside block); the caller expands those
+    recursively with flow_descendant_steps."""
+    flow_root = builtin_flow_root("cadence-genus")
+    members: dict[str, tuple[str, ...]] = {}
+    for name in _FLOW_SCRIPT_NAMES:
+        text = (flow_root / name).read_text(encoding="utf-8")
+        members.update(_extract_flow_members(text))
+    return members
+
+
+def flow_descendant_steps(
+    name: str, membership: Optional[dict[str, tuple[str, ...]]] = None,
+) -> tuple[str, ...]:
+    """Every real create_flow_step reachable under a flow name, expanded
+    recursively and flattened in execution order -- e.g.
+    flow_descendant_steps("syn_generic") includes every leaf step
+    syn_generic itself lists plus every leaf step its nested
+    report_synth reference expands to. `name` that is itself already a
+    real step (not a flow) returns just (name,) -- the recursion's own
+    base case, so a caller doesn't need to know in advance which kind of
+    name it has."""
+    membership = membership if membership is not None else flow_membership()
+    if name not in membership:
+        return (name,)
+    steps: list[str] = []
+    seen: set[str] = set()
+    for member in membership[name]:
+        for step in flow_descendant_steps(member, membership):
+            if step not in seen:
+                steps.append(step)
+                seen.add(step)
+    return tuple(steps)
 
 
 def flow_step_digests() -> dict[str, str]:
@@ -791,6 +852,76 @@ def flow_step_digests() -> dict[str, str]:
         for step_name, body in _extract_step_bodies(text).items():
             digests[step_name] = hashlib.sha256(body.encode("utf-8")).hexdigest()[:12]
     return digests
+
+
+def _rollup_one_state(known: dict[str, str], descendant_count: int) -> str:
+    values = list(known.values())
+    if "failed" in values:
+        return "failed"
+    if "running" in values:
+        return "running"
+    # "complete" only counts for the *stage* once every one of its real
+    # descendant steps is accounted for -- a partial sample (e.g. only
+    # block_start, a name several stages share) all happening to read
+    # "complete" says nothing about the steps genus_run_status had no
+    # line for at all, and must not be mistaken for the whole stage
+    # being done.
+    if len(known) == descendant_count and all(value == "complete" for value in values):
+        return "complete"
+    if "complete" in values:
+        # Some real work has happened (seen directly, or implied by full
+        # coverage not yet reached) and more remains -- the stage itself
+        # is in progress, not simply "not started yet".
+        return "running"
+    return "pending"
+
+
+def rollup_stage_states(
+    states: dict[str, str], stages: tuple[str, ...] = STAGE_ORDER,
+) -> dict[str, str]:
+    """Fill in a state for every name in `stages` from whatever
+    granularity `genus_run_status` actually reported.
+
+    `flowtool -status`'s real line shape isn't confirmed yet (it may
+    report per real create_flow_step, per top-level stage, or both) --
+    this works either way: a stage name genus_run_status already hit
+    directly is left as-is; any stage genus_run_status did *not* mention
+    by name is instead rolled up from its own real descendant steps (via
+    flow_descendant_steps, the actual create_flow membership tree, not a
+    guess), so `wolf status`'s per-STAGE_ORDER table still fills in
+    correctly even if -status only ever reports step-level detail. A
+    stage with no state at all for any of its descendants (nothing
+    recognized yet) is simply left absent -- `wolf status`'s own existing
+    fallback ("unknown"/"pending") already handles that.
+
+    Returns a new dict with every original (possibly step-level) entry
+    preserved alongside the stage-level rollup, for a future renderer
+    that wants the full detail, not just the one load_status reads today.
+
+    Known open question, pending real -status output: a step name like
+    block_start or init_genus is reused by several different stages
+    (its own real create_flow_step is one shared definition, invoked
+    separately within each). Whether -status's real lines disambiguate
+    that (a qualified/"canonical path" form -- -help mentions these for
+    -from/-to) or report one bare name regardless of which stage it ran
+    in isn't confirmed yet. Until it is, genus_run_status's parsing
+    treats every occurrence of a name as one shared signal, so an early
+    shared step reporting "complete" can currently nudge a *later*,
+    not-yet-reached stage that also lists that name to "running" sooner
+    than it really should. Revisit once real output shows whether lines
+    are qualified.
+    """
+    rolled = dict(states)
+    membership = flow_membership()
+    for stage in stages:
+        if stage in rolled:
+            continue
+        descendants = flow_descendant_steps(stage, membership)
+        known = {step: states[step] for step in descendants if step in states}
+        if not known:
+            continue
+        rolled[stage] = _rollup_one_state(known, len(descendants))
+    return rolled
 
 
 def _effective_genus_defines(context: ResolvedContext) -> tuple[str, ...]:

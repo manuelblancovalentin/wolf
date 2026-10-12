@@ -8,7 +8,8 @@ from typing import Mapping, Optional, Sequence
 
 from wolf.backend.base import Backend, ValidationItem
 from wolf.backend.cadence_genus import (
-    STAGE_ORDER, GenusInputs, genus_run_status, prepare_genus_inputs, run_genus, validate_genus,
+    STAGE_ORDER, GenusInputs, genus_run_status, prepare_genus_inputs, rollup_stage_states,
+    run_genus, validate_genus,
 )
 from wolf.context import ResolvedContext
 
@@ -38,9 +39,14 @@ class CadenceFlowtoolBackend(Backend):
         """`wolf status`'s real backend-local hook -- queries Flowtool's
         own `flowtool -status` for the already-allocated run rather than
         guessing stage completion from which output files exist on disk
-        (see genus_run_status's own docstring)."""
+        (see genus_run_status's own docstring), then rolls per-step
+        detail up to each STAGE_ORDER name via the real create_flow
+        membership tree (rollup_stage_states) -- load_status only ever
+        asks about stages() names, so step-level detail alone would
+        otherwise be silently dropped if -status doesn't also report a
+        line for the stage name itself."""
         _, states = genus_run_status(Path(run_directory))
-        return states
+        return rollup_stage_states(states)
 
     def validate(
         self, context: Optional[Mapping[str, str]] = None

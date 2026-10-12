@@ -582,6 +582,30 @@ Two pieces make this work, both in `cadence_flowtool.py`/`cadence_genus.py`:
   status --environment NAME` finds a Genus run with no new resolution
   path of its own.
 
+`load_status` only ever asks `stages()` for the fixed `STAGE_ORDER` list
+(`syn_generic`, `syn_map`, ...), so if `-status` actually reports
+per-real-`create_flow_step` detail rather than one line per top-level
+stage (its own help text says "completed **steps**"), that detail would
+otherwise be silently dropped. `rollup_stage_states` fills each
+`STAGE_ORDER` name in from its own real descendant steps -- the actual
+`create_flow` membership tree (`flow_membership`/`flow_descendant_steps`,
+parsed by brace-matching `common_flows.tcl`'s own `create_flow -name X
+{members}` calls, not guessed), not just a flat step list -- so the table
+still fills in correctly either way. Building this tree-reachability
+check caught a real, previously invisible bug: `init_implementation` and
+`add_tracks` (real steps in `floorplanning.tcl`) were never referenced by
+`floorplan`'s own member list in `common_flows.tcl`, meaning Flowtool
+would never load the Genus handoff database before `wolf run -from
+floorplan` tried to do anything in Innovus; fixed.
+
+One open question pending real `-status` output: a step name like
+`block_start` is reused by several different stages (one shared real
+`create_flow_step`, invoked separately inside each). Whether `-status`'s
+real lines disambiguate that (flowtool's own "canonical path" addressing,
+mentioned for `-from`/`-to`) or report one bare name regardless of which
+stage it ran in isn't confirmed yet -- see `rollup_stage_states`'s own
+docstring for the current (reasonable, not perfect) treatment.
+
 A follow-up, not yet done: `extract_metrics(run_directory)` (Flowtool's
 own `-metrics_file`) isn't wired up yet -- `wolf status`'s Metrics
 section stays empty for a Genus run until that's confirmed against a

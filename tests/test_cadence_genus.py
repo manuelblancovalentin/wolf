@@ -9,7 +9,8 @@ import yaml
 
 from wolf.backend.cadence_genus import (
     FLOW_GENUS_SYN_GENERIC, FLOW_GENUS_SYN_MAP, FLOW_GENUS_SYN_OPT,
-    _extract_step_bodies, _period_ns, bundled_flow_digest, flow_step_digests, prepare_genus_inputs,
+    _extract_step_bodies, _period_ns, bundled_flow_digest, flow_descendant_steps,
+    flow_step_digests, prepare_genus_inputs,
 )
 from wolf.context import (
     CatalogFileList, CatalogLibrarySet, ResolvedContext, ResolvedSource, ResolvedTechnology,
@@ -1055,6 +1056,54 @@ proc wolf_test_run_flow {name} {
         self.assertLess(inject_index, dont_use_index)
 
 
+class FlowMembershipTests(unittest.TestCase):
+    """flow_membership/flow_descendant_steps parse create_flow's own
+    member lists from common_flows.tcl -- the real flow->step tree, not
+    guessed. Regression coverage for a real bug this caught: a step
+    defined in floorplanning.tcl but never referenced by any create_flow
+    member list is dead code Flowtool would never run -- confirmed real
+    for init_implementation/add_tracks (fixed in common_flows.tcl's own
+    floorplan entry) before this test existed."""
+
+    def test_wrapped_member_lists_do_not_leave_a_stray_backslash_token(self):
+        text = (
+            "create_flow -name demo -owner wolf \\\n"
+            "    {step_one step_two \\\n"
+            "     step_three}\n"
+        )
+        from wolf.backend.cadence_genus import _extract_flow_members
+        self.assertEqual(_extract_flow_members(text), {"demo": ("step_one", "step_two", "step_three")})
+
+    def test_every_real_step_is_reachable_from_block_except_signoff(self):
+        """signoff is the one deliberate exception (a separate, explicitly
+        invoked entry point, not chained through block/implementation --
+        see common_flows.tcl's own comment); every other real
+        create_flow_step must be reachable, or wolf run would silently
+        never execute it."""
+        digests = flow_step_digests()
+        reachable = set(flow_descendant_steps("block"))
+        unreachable = set(digests) - reachable
+        self.assertEqual(unreachable, {"schedule_signoff_subflows"})
+
+    def test_floorplan_loads_the_genus_handoff_before_anything_else(self):
+        """init_implementation (sourcing the Genus->Innovus .invs_init.tcl
+        handoff) must run before any step that assumes a design is
+        already loaded in Innovus -- the real bug this test pins."""
+        steps = flow_descendant_steps("floorplan")
+        self.assertIn("init_implementation", steps)
+        self.assertEqual(steps.index("init_implementation"), 1)  # right after block_start
+
+    def test_a_step_name_with_no_flow_definition_is_its_own_leaf(self):
+        self.assertEqual(flow_descendant_steps("read_hdl", {}), ("read_hdl",))
+
+    def test_nested_flow_references_expand_recursively_without_duplicates(self):
+        membership = {
+            "top": ("a", "sub"),
+            "sub": ("a", "b"),  # "a" appears in both -- must not be duplicated
+        }
+        self.assertEqual(flow_descendant_steps("top", membership), ("a", "b"))
+
+
 class FlowIdentityTests(unittest.TestCase):
     """bundled_flow_digest/flow_step_digests back both the automatic
     report_flow banner flow-config.tcl's own tail prints once setup
@@ -1186,6 +1235,68 @@ class GenusRunStatusTests(unittest.TestCase):
             )
         self.assertEqual(states, {})
         self.assertIn("don't recognize", raw)
+
+
+class RollupStageStatesTests(unittest.TestCase):
+    """rollup_stage_states fills in a STAGE_ORDER-level state from
+    whatever granularity -status actually reported, via the real
+    create_flow membership tree -- works whether -status reports per
+    top-level stage, per real step, or both."""
+
+    def test_an_explicit_stage_level_hit_is_left_as_is(self):
+        from wolf.backend.cadence_genus import rollup_stage_states
+        result = rollup_stage_states({"syn_generic": "complete"}, stages=("syn_generic",))
+        self.assertEqual(result["syn_generic"], "complete")
+
+    def test_step_level_detail_alone_rolls_up_to_complete(self):
+        """Every real syn_generic step reporting complete, but no line
+        for "syn_generic" itself -- must still roll up to complete."""
+        from wolf.backend.cadence_genus import flow_descendant_steps, rollup_stage_states
+        steps = flow_descendant_steps("syn_generic")
+        states = {step: "complete" for step in steps}
+        result = rollup_stage_states(states, stages=("syn_generic",))
+        self.assertEqual(result["syn_generic"], "complete")
+
+    def test_partially_complete_steps_roll_up_to_running_not_pending(self):
+        from wolf.backend.cadence_genus import flow_descendant_steps, rollup_stage_states
+        steps = flow_descendant_steps("syn_generic")
+        states = {steps[0]: "complete", steps[1]: "pending"}
+        result = rollup_stage_states(states, stages=("syn_generic",))
+        self.assertEqual(result["syn_generic"], "running")
+
+    def test_any_failed_step_rolls_up_to_failed(self):
+        from wolf.backend.cadence_genus import flow_descendant_steps, rollup_stage_states
+        steps = flow_descendant_steps("syn_generic")
+        states = {steps[0]: "complete", steps[1]: "failed"}
+        result = rollup_stage_states(states, stages=("syn_generic",))
+        self.assertEqual(result["syn_generic"], "failed")
+
+    def test_no_recognized_steps_at_all_leaves_the_stage_absent(self):
+        from wolf.backend.cadence_genus import rollup_stage_states
+        result = rollup_stage_states({}, stages=("syn_generic",))
+        self.assertNotIn("syn_generic", result)
+
+    def test_a_shared_step_name_alone_does_not_falsely_complete_other_stages(self):
+        """Regression: block_start is reused by syn_generic, syn_map,
+        AND syn_opt (and more). One recognized step ("block_start":
+        "complete") out of syn_generic's full descendant set must not
+        make syn_map or syn_opt -- which also list block_start among
+        their own descendants -- roll up to "complete" too, just because
+        that one shared, partial sample happened to be complete."""
+        from wolf.backend.cadence_genus import rollup_stage_states
+        result = rollup_stage_states(
+            {"block_start": "complete"}, stages=("syn_generic", "syn_map", "syn_opt"),
+        )
+        self.assertEqual(result["syn_generic"], "running")
+        self.assertEqual(result["syn_map"], "running")
+        self.assertEqual(result["syn_opt"], "running")
+
+    def test_original_step_level_entries_are_preserved_alongside_the_rollup(self):
+        from wolf.backend.cadence_genus import flow_descendant_steps, rollup_stage_states
+        steps = flow_descendant_steps("syn_generic")
+        states = {steps[0]: "complete"}
+        result = rollup_stage_states(states, stages=("syn_generic",))
+        self.assertEqual(result[steps[0]], "complete")
 
 
 class CadenceFlowtoolBackendStatusTests(unittest.TestCase):
