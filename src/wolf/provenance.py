@@ -117,8 +117,12 @@ def freeze_run_manifest(
     `volatile_keys` still matches the manifest already on disk, this
     updates it in place instead of rejecting the run; a real identity
     difference (different RTL, different technology, ...) still raises.
-    Callers that pass nothing (the default) get the original fully
-    strict, byte-for-byte comparison.
+    A key WOLF's own schema has started recording since the manifest was
+    first frozen (present in the fresh resolution, absent from the one
+    on disk) is tolerated the same way -- schema growth is not a new run
+    identity -- but a key the schema used to record and no longer does
+    is still a hard mismatch. Callers that pass nothing (the default)
+    get the original fully strict, byte-for-byte comparison.
     """
     run_directory = run_directory.expanduser().resolve()
     destination = (destination or run_directory / RUN_MANIFEST_FILENAME).resolve()
@@ -139,11 +143,23 @@ def freeze_run_manifest(
             return destination
         if volatile_keys:
             existing = yaml.safe_load(destination.read_bytes())
-            identity_matches = isinstance(existing, dict) and all(
-                existing.get(key) == data.get(key)
-                for key in data
-                if key not in volatile_keys
-            ) and set(existing) - set(volatile_keys) == set(data) - set(volatile_keys)
+            # A key present in `existing` but absent from today's `data`
+            # (a field WOLF's own schema removed or renamed) is still a
+            # hard mismatch -- but a key present in `data` and absent
+            # from `existing` (WOLF started tracking something new, e.g.
+            # recording which backend a run used) is tolerated: an
+            # already-frozen run from before that field existed is not a
+            # different run identity just because today's WOLF knows
+            # more about it than the version that first allocated it.
+            non_volatile_existing = (
+                set(existing) - set(volatile_keys) if isinstance(existing, dict) else set()
+            )
+            non_volatile_data = set(data) - set(volatile_keys)
+            identity_matches = (
+                isinstance(existing, dict)
+                and non_volatile_existing <= non_volatile_data
+                and all(existing.get(key) == data.get(key) for key in non_volatile_existing)
+            )
             if identity_matches:
                 _write_immutable(destination, payload)
                 return destination

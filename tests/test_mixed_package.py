@@ -359,6 +359,17 @@ class MixedLanguagePackageTests(unittest.TestCase):
         self.assertEqual(frozen["workspace"]["run_directory"], str(run.resolve()))
         self.assertEqual(frozen["execution"]["working_directory"], str(run.resolve()))
         self.assertEqual(frozen["execution"]["tool"], "flowtool")
+        # wolf status's own backend lookup needs this to find
+        # CadenceFlowtoolBackend.infer_stage_results/stages at all --
+        # records whatever context.backend actually resolved to (this
+        # fixture's flow package is flow/orfs; run_genus is still called
+        # directly to exercise Genus preparation, see _context's docstring).
+        self.assertEqual(frozen["backend"], {"name": context.backend})
+        # run.latest.d, the same symlink convention the legacy shell
+        # runner and wolf status's _latest_for_environment already share.
+        latest_link = self.env_dir / "run.latest.d"
+        self.assertTrue(latest_link.is_symlink())
+        self.assertEqual(latest_link.resolve(), run.resolve())
 
     def test_continuing_a_run_with_a_later_stage_range_reuses_it_not_rejected(self):
         """The whole point of not passing --clean: an earlier invocation's

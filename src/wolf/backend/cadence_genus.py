@@ -583,6 +583,92 @@ def allocate_genus_run(context: ResolvedContext, *, clean: bool = False) -> Path
     return base / f"{context.design_name}.{index}"
 
 
+def _update_latest_run_link(context: ResolvedContext, run_directory: Path) -> None:
+    """Maintain <environment_directory>/run.latest.d -- the same symlink
+    convention the legacy shell runner already writes and `wolf status`
+    already reads (_latest_for_environment), so `wolf status --environment
+    NAME` finds a declarative-v1 Genus run without any new resolution
+    path. Only in run_genus (real execution), never allocate_genus_run
+    itself, which stays read-only/safe for `wolf run --plan`. Best-effort:
+    an environment with no environment_directory (CLI-only context) or a
+    filesystem that rejects symlinks simply doesn't get one.
+    """
+    if context.environment_directory is None:
+        return
+    link = context.environment_directory / "run.latest.d"
+    try:
+        if link.is_symlink() or link.exists():
+            link.unlink()
+        link.symlink_to(run_directory, target_is_directory=True)
+    except OSError:
+        pass
+
+
+# flowtool -status's real line shape is not documented here -- parsed
+# best-effort, so an unrecognized line is simply not counted rather than
+# raising. State inference degrading gracefully (to "stage not
+# recognized") is far safer than guessing wrong at exact output syntax,
+# the way earlier bundled-flow Tcl command mistakes were real crashes.
+_STATUS_LINE_RE = re.compile(
+    r"^\s*(?P<name>[A-Za-z0-9_./]+)\s*[:\-]?\s*"
+    r"(?P<state>COMPLETE(?:D)?|DONE|RUNNING|IN[_ ]PROGRESS|FAILED|ERROR|"
+    r"PENDING|NOT[_ ]RUN|SCHEDULED|SKIPPED)\b",
+    re.IGNORECASE,
+)
+_STATUS_STATE_MAP = {
+    "complete": "complete", "completed": "complete", "done": "complete",
+    "running": "running", "in progress": "running",
+    "failed": "failed", "error": "failed",
+    "pending": "pending", "not run": "pending", "scheduled": "pending", "skipped": "pending",
+}
+
+
+def genus_run_status(
+    run_directory: Path, *, executable_lookup=shutil.which,
+) -> tuple[str, dict[str, str]]:
+    """Query Flowtool's own real execution status for an already-allocated
+    run -- `flowtool -status`, confirmed real: "Print the execution status
+    (completed steps) for the current flow specified." No Tcl
+    instrumentation needed; Flowtool already tracks this.
+
+    Everything needed is derived purely from run_directory itself, no
+    ResolvedContext required: the run tag is the directory's own name
+    (allocate_genus_run always names it <design>.<N>), the process
+    directory is its parent, and flow.<design>.yaml is the one
+    prepare_genus_inputs already wrote directly into it on the run that
+    allocated this directory.
+
+    Returns (raw_output, {step_name: state}) -- state is one of
+    "complete"/"running"/"failed"/"pending", or absent for anything this
+    pass didn't recognize in the output. Returns ("", {}) rather than
+    raising when flowtool isn't on PATH or no run has been prepared here
+    yet (e.g. `wolf run --plan` was the only thing that's happened).
+    """
+    flowtool = executable_lookup("flowtool")
+    flow_yaml = next(iter(sorted(run_directory.glob("flow.*.yaml"))), None) if run_directory.is_dir() else None
+    if not flowtool or flow_yaml is None:
+        return "", {}
+    command = [
+        flowtool, "-files", str(flow_yaml), "-run_tag", run_directory.name,
+        "-directory", str(run_directory.parent), "-status",
+    ]
+    result = subprocess.run(command, capture_output=True, text=True, check=False)
+    raw = result.stdout + result.stderr
+    try:
+        (run_directory / "wolf.status.raw.txt").write_text(raw, encoding="utf-8")
+    except OSError:
+        pass  # Debug aid only; never block a status query on it.
+    states: dict[str, str] = {}
+    for line in raw.splitlines():
+        match = _STATUS_LINE_RE.match(line)
+        if not match:
+            continue
+        state = _STATUS_STATE_MAP.get(match.group("state").lower().replace("_", " "))
+        if state:
+            states[match.group("name")] = state
+    return raw, states
+
+
 def _period_ns(period_ps: Any) -> str:
     value = Decimal(str(period_ps)) / Decimal("1000")
     text = format(value.normalize(), "f")
@@ -1129,6 +1215,7 @@ def run_genus(
         context, physical=_requires_physical_views(resolved_from_stage, resolved_to_stage),
     )
     run_directory = allocate_genus_run(context, clean=clean)
+    _update_latest_run_link(context, run_directory)
     inputs = prepare_genus_inputs(
         context, run_directory, interactive=interactive,
         from_stage=from_stage, to_stage=to_stage,
@@ -1168,6 +1255,11 @@ def run_genus(
         "working_directory": str(inputs.directory),
         "commands": commands,
     }
+    # wolf status's own backend lookup (wolf/status.py's _manifest) reads
+    # this exact shape (backend.name) to decide which Backend.
+    # infer_stage_results/extract_metrics/stages to call -- without it,
+    # it falls back to "unknown" and silently skips all three.
+    resolved["backend"] = {"name": context.backend}
     resolved["environment"] = context.environment_name
     resolved["workspace"] = {
         "root": str(context.workspace_root), "run_directory": str(run_directory),

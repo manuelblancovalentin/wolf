@@ -545,6 +545,48 @@ only) passes Flowtool's own `-interactive` flag through. Batch mode (the
 default) omits it, so Flowtool's own process status stays a reliable
 pass/fail signal for automation.
 
+## Checking run status without an embedded terminal
+
+`wolf status --environment NAME` (an existing, backend-agnostic command,
+`wolf/status.py`) now works for a declarative-v1 Genus run. Rather than
+embedding a live interactive pane inside a wrapping TUI -- which would
+need full PTY/terminal emulation to keep `--interactive`'s arrow-key
+history and autocomplete working inside Genus's own prompt, real
+complexity this doesn't need -- `wolf run --interactive` is left
+completely untouched (still inherits the real tty directly), and `wolf
+status` is a separate, cheap, repeatable query you run in another
+terminal/tab, exactly the way you'd run `watch -n 2 wolf status
+--environment NAME` to keep an eye on progress without disturbing the
+interactive session.
+
+Two pieces make this work, both in `cadence_flowtool.py`/`cadence_genus.py`:
+
+- **`stages()`** returns `STAGE_ORDER` (every Genus and Innovus stage
+  name), the fixed, ordered list `wolf status` reports against.
+- **`infer_stage_results(run_directory)`** calls `genus_run_status`, which
+  queries Flowtool's own real `flowtool ... -status` ("print the
+  execution status (completed steps) for the current flow", confirmed
+  from `flowtool -help`) against the run directory's own already-written
+  `flow.<design>.yaml` and the run tag/process directory implied by the
+  directory's own name and location -- no `ResolvedContext` needed, no
+  Tcl instrumentation, nothing WOLF has to track itself. Flowtool's exact
+  `-status` line format isn't documented here, so parsing is
+  deliberately best-effort (`_STATUS_LINE_RE`/`_STATUS_STATE_MAP`): an
+  unrecognized line is simply not counted rather than raising, and the
+  raw output is always saved to `<run>/wolf.status.raw.txt` for
+  inspection. `run_genus` also now records `resolved["backend"] =
+  {"name": context.backend}` in the frozen manifest (`wolf status`'s own
+  backend lookup needs it) and maintains `<environment_directory>/
+  run.latest.d` (the same symlink convention the legacy shell runner and
+  `wolf status`'s `_latest_for_environment` already share), so `wolf
+  status --environment NAME` finds a Genus run with no new resolution
+  path of its own.
+
+A follow-up, not yet done: `extract_metrics(run_directory)` (Flowtool's
+own `-metrics_file`) isn't wired up yet -- `wolf status`'s Metrics
+section stays empty for a Genus run until that's confirmed against a
+real run's actual `-metrics_file` content.
+
 ## Genus attribute overrides
 
 Some Genus attributes are tool policy rather than package metadata or

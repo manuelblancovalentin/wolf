@@ -95,6 +95,36 @@ class RunProvenanceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "different immutable provenance"):
             freeze_run_manifest(self.source, run, volatile_keys=("backend",))
 
+    def test_a_field_added_since_the_run_was_first_frozen_is_not_a_new_identity(self):
+        """Regression: adding resolved["backend"] = {"name": ...} to
+        run_genus's manifest (so wolf status can look up which backend a
+        run used) must not break continuing a run that was allocated
+        before that field existed -- schema growth, not a changed run."""
+        run = self.root / "run"
+        destination = freeze_run_manifest(self.source, run, volatile_keys=("from_stage",))
+        original = yaml.safe_load(destination.read_text(encoding="utf-8"))
+        self.assertNotIn("newly_tracked_field", original)
+
+        data = yaml.safe_load(self.source.read_text(encoding="utf-8"))
+        data["newly_tracked_field"] = {"name": "cadence-flowtool"}
+        self.source.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+        updated = freeze_run_manifest(self.source, run, volatile_keys=("from_stage",))
+        self.assertEqual(updated, destination)
+        frozen = yaml.safe_load(destination.read_text(encoding="utf-8"))
+        self.assertEqual(frozen["newly_tracked_field"], {"name": "cadence-flowtool"})
+
+    def test_a_field_removed_since_the_run_was_first_frozen_is_still_a_new_identity(self):
+        """The reverse must stay strict: a field the schema used to
+        record and no longer does is a real change, not growth."""
+        run = self.root / "run"
+        freeze_run_manifest(self.source, run, volatile_keys=("from_stage",))
+
+        data = yaml.safe_load(self.source.read_text(encoding="utf-8"))
+        del data["packages"]
+        self.source.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "different immutable provenance"):
+            freeze_run_manifest(self.source, run, volatile_keys=("from_stage",))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -3,6 +3,7 @@ import subprocess
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import Mock, patch
 
 import yaml
 
@@ -1122,6 +1123,86 @@ class FlowIdentityTests(unittest.TestCase):
             )
         finally:
             case.tearDown()
+
+
+class GenusRunStatusTests(unittest.TestCase):
+    """genus_run_status queries flowtool's own real `-status` output --
+    no Tcl instrumentation involved -- for a run already allocated by
+    allocate_genus_run/prepare_genus_inputs (a flow.<design>.yaml
+    already written directly into the run directory)."""
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory(prefix="wolf-genus-status-")
+        self.root = Path(self.temporary.name)
+        self.run_directory = self.root / "work" / "demo.1"
+        self.run_directory.mkdir(parents=True)
+        (self.run_directory / "flow.demo.yaml").write_text("remarks: stub\n", encoding="utf-8")
+
+    def tearDown(self):
+        self.temporary.cleanup()
+
+    def test_no_flowtool_on_path_returns_empty(self):
+        from wolf.backend.cadence_genus import genus_run_status
+        raw, states = genus_run_status(self.run_directory, executable_lookup=lambda name: None)
+        self.assertEqual((raw, states), ("", {}))
+
+    def test_no_flow_yaml_prepared_yet_returns_empty(self):
+        from wolf.backend.cadence_genus import genus_run_status
+        empty_run = self.root / "work" / "demo.2"
+        empty_run.mkdir(parents=True)
+        raw, states = genus_run_status(empty_run, executable_lookup=lambda name: "/opt/cadence/flowtool")
+        self.assertEqual((raw, states), ("", {}))
+
+    def test_parses_plausible_status_output_and_saves_it_for_inspection(self):
+        from wolf.backend.cadence_genus import genus_run_status
+        fake_output = (
+            "syn_generic: COMPLETE\n"
+            "syn_map: RUNNING\n"
+            "syn_opt: PENDING\n"
+            "some unrelated line with no status token\n"
+        )
+        completed = Mock(stdout=fake_output, stderr="")
+        with patch("wolf.backend.cadence_genus.subprocess.run", return_value=completed) as execute:
+            raw, states = genus_run_status(
+                self.run_directory, executable_lookup=lambda name: "/opt/cadence/flowtool",
+            )
+        command = execute.call_args.args[0]
+        self.assertEqual(command[0], "/opt/cadence/flowtool")
+        self.assertIn("-status", command)
+        self.assertIn(str(self.run_directory.parent), command)
+        self.assertIn(self.run_directory.name, command)
+        self.assertEqual(raw, fake_output)
+        self.assertEqual(states, {"syn_generic": "complete", "syn_map": "running", "syn_opt": "pending"})
+        self.assertEqual(
+            (self.run_directory / "wolf.status.raw.txt").read_text(encoding="utf-8"), fake_output,
+        )
+
+    def test_unrecognized_output_degrades_to_no_states_not_an_error(self):
+        from wolf.backend.cadence_genus import genus_run_status
+        completed = Mock(stdout="flowtool printed something we don't recognize\n", stderr="")
+        with patch("wolf.backend.cadence_genus.subprocess.run", return_value=completed):
+            raw, states = genus_run_status(
+                self.run_directory, executable_lookup=lambda name: "/opt/cadence/flowtool",
+            )
+        self.assertEqual(states, {})
+        self.assertIn("don't recognize", raw)
+
+
+class CadenceFlowtoolBackendStatusTests(unittest.TestCase):
+    def test_stages_returns_the_real_stage_order(self):
+        from wolf.backend.cadence_flowtool import CadenceFlowtoolBackend
+        from wolf.backend.cadence_genus import STAGE_ORDER
+        self.assertEqual(tuple(CadenceFlowtoolBackend().stages()), STAGE_ORDER)
+
+    def test_infer_stage_results_delegates_to_genus_run_status(self):
+        from wolf.backend.cadence_flowtool import CadenceFlowtoolBackend
+        with patch(
+            "wolf.backend.cadence_flowtool.genus_run_status",
+            return_value=("raw text", {"syn_generic": "complete"}),
+        ) as mocked:
+            result = CadenceFlowtoolBackend().infer_stage_results("/some/run/dir")
+        mocked.assert_called_once()
+        self.assertEqual(result, {"syn_generic": "complete"})
 
 
 if __name__ == "__main__":

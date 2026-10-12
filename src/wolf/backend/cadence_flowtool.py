@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 import shutil
 from typing import Mapping, Optional, Sequence
 
 from wolf.backend.base import Backend, ValidationItem
 from wolf.backend.cadence_genus import (
-    GenusInputs, prepare_genus_inputs, run_genus, validate_genus,
+    STAGE_ORDER, GenusInputs, genus_run_status, prepare_genus_inputs, run_genus, validate_genus,
 )
 from wolf.context import ResolvedContext
 
@@ -29,6 +30,17 @@ class CadenceFlowtoolBackend(Backend):
     ):
         return run_genus(context, clean=clean, interactive=interactive,
                           from_stage=from_stage, to_stage=to_stage)
+
+    def stages(self) -> Sequence[str]:
+        return STAGE_ORDER
+
+    def infer_stage_results(self, run_directory):
+        """`wolf status`'s real backend-local hook -- queries Flowtool's
+        own `flowtool -status` for the already-allocated run rather than
+        guessing stage completion from which output files exist on disk
+        (see genus_run_status's own docstring)."""
+        _, states = genus_run_status(Path(run_directory))
+        return states
 
     def validate(
         self, context: Optional[Mapping[str, str]] = None
