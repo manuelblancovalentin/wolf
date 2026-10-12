@@ -8,8 +8,9 @@ from typing import Mapping, Optional, Sequence
 
 from wolf.backend.base import Backend, ValidationItem
 from wolf.backend.cadence_genus import (
-    STAGE_ORDER, GenusInputs, genus_run_active_elapsed, genus_run_metrics, genus_run_status,
-    prepare_genus_inputs, rollup_stage_states, run_genus, stage_step_detail, validate_genus,
+    STAGE_ORDER, GenusInputs, genus_run_active_elapsed, genus_run_metrics, genus_run_qor,
+    genus_run_status, prepare_genus_inputs, rollup_stage_states, run_genus, stage_step_detail,
+    validate_genus,
 )
 from wolf.context import ResolvedContext
 
@@ -63,6 +64,9 @@ class CadenceFlowtoolBackend(Backend):
         active_elapsed = genus_run_active_elapsed(Path(run_directory))
         if active_elapsed is not None:
             metrics["cadence.active_stage_elapsed_seconds"] = active_elapsed
+        qor = genus_run_qor(Path(run_directory))
+        if qor:
+            metrics["cadence.qor_by_stage"] = qor
         return metrics
 
     def stage_step_detail(self, run_directory, stage: str):

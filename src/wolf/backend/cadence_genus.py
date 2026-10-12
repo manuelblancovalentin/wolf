@@ -910,6 +910,142 @@ def genus_run_metrics(run_directory: Path) -> dict[str, Any]:
     return result
 
 
+# area/timing/power.<stage>.rpt -- Genus's own real, already-written report
+# files (named via flow_report_name, see common_flows.tcl's own header on
+# report_synth), confirmed real and already present on disk for any
+# completed synthesis stage. Deliberately not scanning for DRC/LVS/signoff
+# reports yet -- those only exist once a run has reached floorplan/route,
+# a later extension, not guessed ahead of real evidence.
+_QOR_REPORT_KINDS = ("area", "timing", "power")
+
+# {report path: (mtime, parsed)} -- a report file is Genus's own static
+# snapshot from whichever step wrote it, never rewritten again once that
+# step finishes, so re-parsing it every `wolf status --watch` tick (the
+# whole point of this cache) would be pure waste; the mtime check itself
+# is one cheap stat() call either way.
+_qor_report_cache: dict[Path, tuple[float, dict[str, float]]] = {}
+
+
+def _cached_qor_parse(path: Path, parser) -> Optional[dict[str, float]]:
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        return None
+    cached = _qor_report_cache.get(path)
+    if cached is not None and cached[0] == mtime:
+        return cached[1]
+    result = parser(path)
+    if result is not None:
+        _qor_report_cache[path] = (mtime, result)
+    return result
+
+
+def _parse_area_report(path: Path) -> Optional[dict[str, float]]:
+    """The design's own top-level row from a real Genus area report --
+    confirmed real shape: a `---`-only separator line, then one row per
+    hierarchy level, each indented except the top (design) row, whose
+    own last four whitespace-separated fields are Cell Count/Cell Area/
+    Net Area/Total Area regardless of how many name columns precede
+    them (the design's own instance name has no separate Module
+    column, unlike every child row)."""
+    in_table = False
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        if not in_table:
+            if line.strip().startswith("---"):
+                in_table = True
+            continue
+        if not line.strip() or line[0].isspace():
+            continue  # blank, or an indented (non-top-level) row.
+        tokens = line.split()
+        if len(tokens) < 4:
+            return None
+        try:
+            cell_count = float(tokens[-4])
+            cell_area, net_area, total_area = (float(token) for token in tokens[-3:])
+        except ValueError:
+            return None
+        return {
+            "cell_count": cell_count, "cell_area_um2": cell_area,
+            "net_area_um2": net_area, "total_area_um2": total_area,
+        }
+    return None
+
+
+def _parse_timing_report(path: Path) -> Optional[dict[str, float]]:
+    """The real SETUP `View: ALL` summary row from a Genus timing
+    report -- confirmed real shape: `View: ALL  <wns>  <tns>  <fep>`.
+    A second, DRV-section `View: ALL` line (no trailing numbers, "N/A"
+    checks) is skipped automatically since it has too few fields."""
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("View:"):
+            continue
+        tokens = stripped.split()
+        if len(tokens) < 5:
+            continue
+        try:
+            wns, tns, fep = (float(token) for token in tokens[2:5])
+        except ValueError:
+            continue
+        return {"worst_slack_ps": wns, "total_negative_slack_ps": tns, "failing_endpoints": fep}
+    return None
+
+
+def _parse_power_report(path: Path) -> Optional[dict[str, float]]:
+    """The real `Subtotal` row from a Genus power report -- confirmed
+    real shape: `Subtotal  <leakage>  <internal>  <switching>  <total>
+    <row%>`, watts, scientific notation."""
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("Subtotal"):
+            continue
+        tokens = stripped.split()
+        if len(tokens) < 5:
+            return None
+        try:
+            leakage, internal, switching, total = (float(token) for token in tokens[1:5])
+        except ValueError:
+            return None
+        return {
+            "leakage_w": leakage, "internal_w": internal,
+            "switching_w": switching, "total_w": total,
+        }
+    return None
+
+
+_QOR_PARSERS = {
+    "area": _parse_area_report, "timing": _parse_timing_report, "power": _parse_power_report,
+}
+
+
+def genus_run_qor(run_directory: Path) -> dict[str, dict[str, dict[str, float]]]:
+    """Real QoR figures straight from Genus's own already-written
+    area/timing/power reports for every synthesis stage that has
+    produced one so far -- `wolf status --watch`'s QoR table. Each
+    report is Genus's own static snapshot (never rewritten once its
+    own step finishes), so this is mtime-cached per file rather than
+    re-parsed every call.
+
+    Returns {stage: {kind: {field: value}}}, only for (stage, kind)
+    pairs whose report file actually exists and parsed successfully --
+    a stage with no reports directory yet, or with some but not all
+    three report kinds (report_synth hasn't finished, say), simply has
+    whatever is real and present, not a guess at the rest."""
+    reports_directory = run_directory / "reports"
+    if not reports_directory.is_dir():
+        return {}
+    result: dict[str, dict[str, dict[str, float]]] = {}
+    for stage in SYNTHESIS_STAGES:
+        for kind in _QOR_REPORT_KINDS:
+            report_path = reports_directory / f"{kind}.{stage}.rpt"
+            if not report_path.is_file():
+                continue
+            parsed = _cached_qor_parse(report_path, _QOR_PARSERS[kind])
+            if parsed is not None:
+                result.setdefault(stage, {})[kind] = parsed
+    return result
+
+
 def _period_ns(period_ps: Any) -> str:
     value = Decimal(str(period_ps)) / Decimal("1000")
     text = format(value.normalize(), "f")

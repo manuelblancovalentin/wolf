@@ -704,6 +704,42 @@ expanded tree. Both render as a blinking `HH:MM:SS` in the watch panel
 -- the one visual cue that a number is actively ticking up in place,
 not a stale snapshot sitting next to live spinners.
 
+### QoR (area/timing/power) by stage
+
+Genus already writes its own real, stable QoR reports to
+`<run_directory>/reports/<kind>.<stage>.rpt` (named via `flow_report_name`,
+see `common_flows.tcl`'s own header on `report_synth` -- confirmed real
+against an actual run's `area.syn_generic.rpt`/`timing.syn_generic.rpt`/
+`power.syn_generic.rpt`). Rather than have WOLF's own Tcl generate a
+second, parallel metadata file duplicating what Genus already writes,
+`genus_run_qor` parses these directly:
+
+- **area**: the design's own top-level row (not an indented child) --
+  confirmed real shape, a `---`-only separator line then one row per
+  hierarchy level, the top row's own last four fields Cell Count/Cell
+  Area/Net Area/Total Area regardless of how many name columns precede
+  them.
+- **timing**: the SETUP section's `View: ALL` row -- WNS/TNS/FEP. A
+  second, DRV-section `View: ALL` line (all `N/A`, no trailing numbers)
+  is skipped automatically since it has too few fields.
+- **power**: the `Subtotal` row -- leakage/internal/switching/total
+  watts.
+
+Scoped to the synthesis stages for now (`syn_generic`/`syn_map`/
+`syn_opt`) -- DRC/LVS/signoff reports don't exist until a run reaches
+floorplan/route, a later extension once that evidence exists, not
+guessed ahead of it.
+
+Each report is Genus's own static snapshot, never rewritten once its
+own step finishes, so `genus_run_qor` is mtime-cached per file (one
+cheap `stat()` call either way; only a changed mtime triggers an actual
+re-read/re-parse) -- re-parsing a 17000-line area report on every
+`wolf status --watch` tick would be real, avoidable waste. `wolf
+status`'s QoR table shows one row per stage that has produced at least
+one of the three reports so far, each cell `-` until its own report
+exists -- a QoR-by-stage history, closer to Cadence's own `qor.html`
+than a single flat snapshot.
+
 ## Genus attribute overrides
 
 Some Genus attributes are tool policy rather than package metadata or

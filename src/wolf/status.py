@@ -205,6 +205,38 @@ def _status_cell(value: str, *, spin: bool = False):
     return Text(f"{marker} {value}", style=style)
 
 
+def _qor_table(qor_by_stage: dict[str, dict[str, dict[str, float]]]):
+    """A real QoR-by-stage table straight from Genus's own area/timing/
+    power reports (see cadence_genus.genus_run_qor) -- one row per
+    synthesis stage that has produced at least one of the three so
+    far, each cell "-" until its own report exists. Shared by
+    `render_human` and `render_live` since these are static per-stage
+    snapshots, not live-ticking figures -- nothing here needs a
+    spinner or a blink."""
+    from rich.table import Table
+
+    table = Table(show_header=True, header_style="bold cyan", box=None, pad_edge=False)
+    table.add_column("Stage")
+    table.add_column("Area (mm²)", justify="right")
+    table.add_column("WNS (ps)", justify="right")
+    table.add_column("TNS (ps)", justify="right")
+    table.add_column("Viol", justify="right")
+    table.add_column("Power (mW)", justify="right")
+    for stage, kinds in qor_by_stage.items():
+        area = kinds.get("area", {})
+        timing = kinds.get("timing", {})
+        power = kinds.get("power", {})
+        table.add_row(
+            stage,
+            f"{area['total_area_um2'] / 1e6:.2f}" if "total_area_um2" in area else "-",
+            f"{timing['worst_slack_ps']:g}" if "worst_slack_ps" in timing else "-",
+            f"{timing['total_negative_slack_ps']:g}" if "total_negative_slack_ps" in timing else "-",
+            f"{int(timing['failing_endpoints'])}" if "failing_endpoints" in timing else "-",
+            f"{power['total_w'] * 1000:.1f}" if "total_w" in power else "-",
+        )
+    return table
+
+
 def _build_renderable(status: RunStatus):
     """The full human-readable panel (header fields, Stages table,
     Metrics table) as one Rich renderable, not yet printed -- shared by
@@ -282,6 +314,11 @@ def _build_renderable(status: RunStatus):
         for label, rendered in available:
             table.add_row(label, rendered)
         renderables.append(table)
+
+    qor_by_stage = status.metrics.get("cadence.qor_by_stage")
+    if qor_by_stage:
+        renderables.append(Text("\nQoR"))
+        renderables.append(_qor_table(qor_by_stage))
 
     return Group(*renderables)
 
@@ -368,6 +405,11 @@ def render_live(
             tree.add(_step_label(label, state, elapsed))
         renderables.append(Text(""))
         renderables.append(tree)
+
+    qor_by_stage = status.metrics.get("cadence.qor_by_stage")
+    if qor_by_stage:
+        renderables.append(Text("\nQoR"))
+        renderables.append(_qor_table(qor_by_stage))
 
     return Group(*renderables)
 
