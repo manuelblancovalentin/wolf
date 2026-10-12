@@ -39,6 +39,22 @@ instead of the bundled default (`wolf.backend.cadence_genus._flow_root`
 falls back to the bundled scripts only when no installed flow package
 provides its own `flow.tcl`).
 
+### Flow identity, printed automatically once setup finishes
+
+`flow-config.tcl` is Flowtool's own last `user_flow_steps` entry (see
+`flow.template.yaml`), sourced after every `create_flow`/`create_flow_step`
+above it has already registered -- the natural point for "run this once
+setup finishes, before control passes to the user". Its tail always calls
+the real `report_flow` command automatically (no need to type it by hand
+every time, interactive or not), after printing a content-hash identity
+banner: a short hash for the whole bundled flow plus one per real
+`create_flow_step`, so two runs' logs can tell exactly which step's Tcl
+changed, not just that something did
+(`wolf.backend.cadence_genus.flow_step_digests`). The same banner also
+prints on the WOLF side (`wolf.commands.run._print_flow_identity`) right
+after the run returns -- success or failure -- since nothing inside
+Flowtool's own Tcl session is guaranteed to run on every exit path.
+
 ### Steps
 
 Every real Cadence Stylus reference-flow step this flow performs is its
