@@ -1,3 +1,4 @@
+import json
 import shutil
 import subprocess
 from pathlib import Path
@@ -1420,6 +1421,95 @@ class CadenceFlowtoolBackendStatusTests(unittest.TestCase):
             result = CadenceFlowtoolBackend().infer_stage_results("/some/run/dir")
         mocked.assert_called_once()
         self.assertEqual(result, {"syn_generic": "complete"})
+
+    def test_extract_metrics_delegates_to_genus_run_metrics(self):
+        from wolf.backend.cadence_flowtool import CadenceFlowtoolBackend
+        with patch(
+            "wolf.backend.cadence_flowtool.genus_run_metrics",
+            return_value={"cadence.total_real_seconds": 12.0},
+        ) as mocked:
+            result = CadenceFlowtoolBackend().extract_metrics("/some/run/dir")
+        mocked.assert_called_once()
+        self.assertEqual(result, {"cadence.total_real_seconds": 12.0})
+
+
+class GenusRunMetricsTests(unittest.TestCase):
+    """genus_run_metrics reads Flowtool's own real per-run flow.metrics
+    JSON directly off disk -- confirmed real shape against an actual
+    run: a top-level "metrics" list for the current in-progress
+    snapshot (including flowtool's own free-text "flowtool.status"
+    summary), total_real/total_cpu for the whole flow's cumulative
+    time so far, and one "snapshots" entry per completed child stage."""
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory(prefix="wolf-genus-metrics-")
+        self.root = Path(self.temporary.name)
+        self.run_directory = self.root / "work" / "demo.1"
+        self.run_directory.mkdir(parents=True)
+
+    def tearDown(self):
+        self.temporary.cleanup()
+
+    def _write_metrics(self, data) -> None:
+        (self.run_directory / "flow.metrics").write_text(json.dumps(data), encoding="utf-8")
+
+    def test_no_flow_metrics_on_disk_yet_returns_empty(self):
+        from wolf.backend.cadence_genus import genus_run_metrics
+        self.assertEqual(genus_run_metrics(self.run_directory), {})
+
+    def test_malformed_json_degrades_to_empty_not_an_error(self):
+        from wolf.backend.cadence_genus import genus_run_metrics
+        (self.run_directory / "flow.metrics").write_text("not json", encoding="utf-8")
+        self.assertEqual(genus_run_metrics(self.run_directory), {})
+
+    def test_real_shaped_file_is_parsed_into_flat_metrics_and_stage_elapsed(self):
+        from wolf.backend.cadence_genus import genus_run_metrics
+        self._write_metrics({
+            "total_real": 39735.0,
+            "total_cpu": 229818.0,
+            "metrics": [
+                {"name": "flow.memory.resident", "value": "39197 MB"},
+                {"name": "flow.memory.resident.peak", "value": "60845 MB"},
+                {
+                    "name": "flowtool.status",
+                    "value": "Running flows... (1 running)\n"
+                             "* flow_current @ genus: block.synthesis.syn_map.block_start",
+                },
+            ],
+            "snapshots": [
+                {
+                    "key": "flow:flow_current .steps flow:block .steps flow:synthesis "
+                           ".steps flow:syn_generic",
+                    "metrics": [{"name": "flow.realtime", "value": "39735"}],
+                },
+            ],
+        })
+        result = genus_run_metrics(self.run_directory)
+        self.assertEqual(result["cadence.total_real_seconds"], 39735.0)
+        self.assertEqual(result["cadence.total_cpu_seconds"], 229818.0)
+        self.assertEqual(result["cadence.memory_resident_mb"], 39197.0)
+        self.assertEqual(result["cadence.memory_resident_peak_mb"], 60845.0)
+        self.assertIn("block.synthesis.syn_map.block_start", result["cadence.current_activity"])
+        self.assertEqual(result["stage_elapsed_seconds"], {"syn_generic": 39735.0})
+
+    def test_a_snapshot_key_not_ending_in_a_real_stage_name_is_ignored(self):
+        from wolf.backend.cadence_genus import genus_run_metrics
+        self._write_metrics({
+            "snapshots": [
+                {
+                    "key": "flow:flow_current .steps flow:block .steps flow:synthesis "
+                           ".steps flow:report_synth",
+                    "metrics": [{"name": "flow.realtime", "value": "10"}],
+                },
+            ],
+        })
+        self.assertNotIn("stage_elapsed_seconds", genus_run_metrics(self.run_directory))
+
+    def test_missing_memory_or_activity_fields_are_simply_left_out(self):
+        from wolf.backend.cadence_genus import genus_run_metrics
+        self._write_metrics({"total_real": 5.0})
+        result = genus_run_metrics(self.run_directory)
+        self.assertEqual(result, {"cadence.total_real_seconds": 5.0})
 
 
 if __name__ == "__main__":

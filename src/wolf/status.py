@@ -131,10 +131,28 @@ def load_status(run_directory: Path) -> RunStatus:
         inferred = dict(get_backend(backend).infer_stage_results(run))
     except (ValueError, AttributeError, OSError):
         pass
-    stages = tuple(
-        recorded.get(name, StageResult(name, inferred.get(name, "unknown" if inferred else "pending")))
-        for name in expected
-    )
+    metrics: dict[str, Any] = {}
+    try:
+        metrics = dict(get_backend(backend).extract_metrics(run))
+    except (ValueError, OSError):
+        pass
+    # "stage_elapsed_seconds" is an internal convention, not a displayed
+    # metric -- a backend (so far only Cadence/Flowtool, from its own
+    # flow.metrics) that has no other source of real per-stage timing
+    # (unlike a generically-tracked wolf.stage-results run) uses it to
+    # still populate StageResult.elapsed_seconds for a stage this run
+    # has actually completed.
+    stage_elapsed = metrics.pop("stage_elapsed_seconds", {})
+    if not isinstance(stage_elapsed, dict):
+        stage_elapsed = {}
+
+    def _stage_result(name: str) -> StageResult:
+        if name in recorded:
+            return recorded[name]
+        state = inferred.get(name, "unknown" if inferred else "pending")
+        return StageResult(name, state, stage_elapsed.get(name))
+
+    stages = tuple(_stage_result(name) for name in expected)
     if not expected:
         stages = tuple(recorded.values())
     if not stages:
@@ -150,11 +168,6 @@ def load_status(run_directory: Path) -> RunStatus:
     else:
         state = "not started"
     failed = next((stage.name for stage in stages if stage.status == "failed"), None)
-    metrics: dict[str, Any] = {}
-    try:
-        metrics = dict(get_backend(backend).extract_metrics(run))
-    except (ValueError, OSError):
-        pass
     return RunStatus(run, environment, run.name, backend, state, stages, metrics, failed)
 
 
@@ -189,6 +202,9 @@ def render_human(status: RunStatus) -> None:
         if failed_result and failed_result.exit_code is not None:
             ui.key_value("Exit code", failed_result.exit_code)
     ui.key_value("Run directory", status.run_directory)
+    current_activity = status.metrics.get("cadence.current_activity")
+    if current_activity:
+        ui.key_value("Activity", current_activity)
     if status.stages:
         ui.console.print("\nStages")
         table = Table(show_header=True, header_style="bold cyan", box=None, pad_edge=False)
@@ -198,22 +214,31 @@ def render_human(status: RunStatus) -> None:
         for stage in status.stages:
             table.add_row(stage.name, status_cell(stage.status), elapsed(stage.elapsed_seconds))
         ui.console.print(table)
-    labels = {
-        "timing.worst_slack_ps": "Worst slack",
-        "timing.setup_violations": "Setup violations",
-        "timing.hold_violations": "Hold violations",
-        "physical.drc_violations": "Route DRC",
-        "electrical.max_slew_violations": "Max slew violations",
-        "electrical.max_cap_violations": "Max cap violations",
-        "electrical.max_fanout_violations": "Max fanout violations",
+    # label, formatter -- a formatter takes the raw metric value and
+    # returns display text; plain str() is the default when a key has
+    # no formatter of its own.
+    metric_labels: dict[str, tuple[str, Any]] = {
+        "timing.worst_slack_ps": ("Worst slack", lambda value: f"{value:g} ps"),
+        "timing.setup_violations": ("Setup violations", str),
+        "timing.hold_violations": ("Hold violations", str),
+        "physical.drc_violations": ("Route DRC", str),
+        "electrical.max_slew_violations": ("Max slew violations", str),
+        "electrical.max_cap_violations": ("Max cap violations", str),
+        "electrical.max_fanout_violations": ("Max fanout violations", str),
+        "cadence.total_real_seconds": ("Flow elapsed", elapsed),
+        "cadence.total_cpu_seconds": ("Flow CPU time", elapsed),
+        "cadence.memory_resident_mb": ("Memory", lambda value: f"{value:g} MB"),
+        "cadence.memory_resident_peak_mb": ("Memory (peak)", lambda value: f"{value:g} MB"),
     }
-    available = [(label, status.metrics[key]) for key, label in labels.items() if key in status.metrics]
+    available = [
+        (label, formatter(status.metrics[key])) for key, (label, formatter) in metric_labels.items()
+        if key in status.metrics
+    ]
     if available:
         ui.console.print("\nMetrics")
         table = Table(show_header=True, header_style="bold cyan", box=None, pad_edge=False)
         table.add_column("Metric")
         table.add_column("Value", justify="right")
-        for label, value in available:
-            rendered = f"{value:g} ps" if label == "Worst slack" else str(value)
+        for label, rendered in available:
             table.add_row(label, rendered)
         ui.console.print(table)

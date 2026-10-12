@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from decimal import Decimal
 import hashlib
+import json
 from pathlib import Path
 import re
 import shutil
@@ -748,6 +749,90 @@ def genus_run_status(run_directory: Path) -> tuple[str, dict[str, str]]:
                     ):
                         states[path] = "running"
     return raw, states
+
+
+def _memory_mb(value: Optional[str]) -> Optional[float]:
+    """Flowtool reports memory as a free-text string like "39197 MB" --
+    pull out just the leading number, degrading to None (left out of the
+    result) for anything that doesn't look like that."""
+    if not value:
+        return None
+    match = re.match(r"\s*([-+]?\d+(?:\.\d+)?)\s*MB\b", value, flags=re.IGNORECASE)
+    return float(match.group(1)) if match else None
+
+
+def genus_run_metrics(run_directory: Path) -> dict[str, Any]:
+    """Read Flowtool's own real per-run metrics record directly --
+    `<run_directory>/flow.metrics`, a single JSON object (confirmed real
+    against an actual run, written alongside flow.status): a top-level
+    `metrics` list holds the *current* in-progress snapshot's own
+    key/value pairs (including `flowtool.status`, Flowtool's own
+    free-text one-line summary of what's running right now -- e.g.
+    "Running flows... (1 running)\\n* flow_current @ genus:
+    block.synthesis.syn_map.block_start -> ..."), `total_real`/
+    `total_cpu` are the whole flow's own cumulative wall/CPU seconds so
+    far, and `snapshots` holds one entry per *completed* child stage at
+    the current nesting level, each with its own `key` (a Tcl list
+    ending in "flow:<stage name>", not the step-level canonical path
+    genus_run_status uses) and `metrics` (that stage's own
+    `flow.realtime`/`flow.cputime`/memory totals).
+
+    Returns a flat dict of display-ready metrics, plus one internal
+    convention key, "stage_elapsed_seconds" (a {stage: seconds} dict
+    pulled out of `snapshots`) -- `load_status` pops that back out
+    before showing the metrics table or JSON, using it only to fill in
+    `StageResult.elapsed_seconds` for a Cadence run's completed stages
+    (which, unlike a generically-tracked `wolf.stage-results` run, have
+    no other source of real timing). Degrades to {} rather than raising
+    on a missing or malformed file."""
+    metrics_file = run_directory / "flow.metrics"
+    if not metrics_file.is_file():
+        return {}
+    try:
+        data = json.loads(metrics_file.read_text(encoding="utf-8", errors="replace"))
+    except (json.JSONDecodeError, OSError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    current = {
+        entry.get("name"): entry.get("value")
+        for entry in data.get("metrics", []) if isinstance(entry, dict)
+    }
+    result: dict[str, Any] = {}
+    if "flowtool.status" in current:
+        result["cadence.current_activity"] = current["flowtool.status"]
+    for key, source in (
+        ("cadence.total_real_seconds", "total_real"), ("cadence.total_cpu_seconds", "total_cpu"),
+    ):
+        value = data.get(source)
+        if isinstance(value, (int, float)):
+            result[key] = float(value)
+    memory_mb = _memory_mb(current.get("flow.memory.resident"))
+    if memory_mb is not None:
+        result["cadence.memory_resident_mb"] = memory_mb
+    peak_mb = _memory_mb(current.get("flow.memory.resident.peak"))
+    if peak_mb is not None:
+        result["cadence.memory_resident_peak_mb"] = peak_mb
+    stage_elapsed: dict[str, float] = {}
+    for snapshot in data.get("snapshots", []):
+        if not isinstance(snapshot, dict):
+            continue
+        key = snapshot.get("key", "")
+        stage = key.split()[-1].removeprefix("flow:") if key else ""
+        if stage not in STAGE_ORDER:
+            continue
+        snapshot_metrics = {
+            entry.get("name"): entry.get("value")
+            for entry in snapshot.get("metrics", []) if isinstance(entry, dict)
+        }
+        realtime = snapshot_metrics.get("flow.realtime")
+        try:
+            stage_elapsed[stage] = float(realtime)
+        except (TypeError, ValueError):
+            continue
+    if stage_elapsed:
+        result["stage_elapsed_seconds"] = stage_elapsed
+    return result
 
 
 def _period_ns(period_ps: Any) -> str:

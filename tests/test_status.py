@@ -131,6 +131,48 @@ class StatusTests(unittest.TestCase):
         self.assertIn("0", rendered)
         self.assertNotIn("Setup violations         Setup violations", rendered)
 
+    def test_stage_elapsed_seconds_from_metrics_fills_in_inferred_stages_only(self):
+        """Regression: Cadence/Flowtool runs have no wolf.stage-results
+        file (that's written by the generic shell-stage orchestration
+        path, not a single opaque Flowtool invocation), so their only
+        source of real per-stage timing is flow.metrics -- extract_metrics'
+        own "stage_elapsed_seconds" convention key must fill
+        StageResult.elapsed_seconds for a stage status.py otherwise only
+        has an inferred bare status for, and must never override a stage
+        that already has its own recorded (wolf.stage-results) timing."""
+        cadence_run = self.root / "workspace" / "demo" / "demo.1"
+        cadence_run.mkdir(parents=True)
+        (cadence_run / "wolf.resolved.yaml").write_text(
+            "schema: wolf.resolved-run/v1\nenvironment: golden\n"
+            "backend:\n  name: cadence-flowtool\n", encoding="utf-8",
+        )
+        with mock.patch(
+            "wolf.backend.cadence_flowtool.CadenceFlowtoolBackend.infer_stage_results",
+            return_value={"syn_generic": "complete"},
+        ), mock.patch(
+            "wolf.backend.cadence_flowtool.CadenceFlowtoolBackend.extract_metrics",
+            return_value={
+                "cadence.total_real_seconds": 39735.0,
+                "stage_elapsed_seconds": {"syn_generic": 39735.0, "syn_map": 12.0},
+            },
+        ):
+            status = load_status(cadence_run)
+        syn_generic = next(stage for stage in status.stages if stage.name == "syn_generic")
+        self.assertEqual(syn_generic.elapsed_seconds, 39735.0)
+        # "stage_elapsed_seconds" is internal plumbing, not a displayed
+        # metric -- it must not leak into the public metrics dict.
+        self.assertNotIn("stage_elapsed_seconds", status.metrics)
+        self.assertEqual(status.metrics["cadence.total_real_seconds"], 39735.0)
+
+    def test_recorded_wolf_stage_results_timing_wins_over_metrics_stage_elapsed(self):
+        with mock.patch(
+            "wolf.backend.orfs.OrfsBackend.extract_metrics",
+            return_value={"stage_elapsed_seconds": {"synth": 999.0}},
+        ):
+            status = load_status(self.run)
+        synth = next(stage for stage in status.stages if stage.name == "synth")
+        self.assertEqual(synth.elapsed_seconds, 34.0)
+
 
 if __name__ == "__main__":
     unittest.main()
