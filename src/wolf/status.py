@@ -205,35 +205,53 @@ def _status_cell(value: str, *, spin: bool = False):
     return Text(f"{marker} {value}", style=style)
 
 
-def _qor_table(qor_by_stage: dict[str, dict[str, dict[str, float]]]):
-    """A real QoR-by-stage table straight from Genus's own area/timing/
-    power reports (see cadence_genus.genus_run_qor) -- one row per
-    synthesis stage that has produced at least one of the three so
-    far, each cell "-" until its own report exists. Shared by
-    `render_human` and `render_live` since these are static per-stage
-    snapshots, not live-ticking figures -- nothing here needs a
-    spinner or a blink."""
+def _stages_table(
+    status: RunStatus, *, spin: bool = False, active_stage_elapsed: float | None = None,
+):
+    """One row per stage -- Status/Elapsed, plus real QoR columns
+    (Area/WNS/TNS/Viol/Power straight from Genus's own area/timing/
+    power reports, see cadence_genus.genus_run_qor) merged in whenever
+    the backend has any "cadence.qor_by_stage" data at all. QoR is the
+    same per-stage granularity as Status/Elapsed, so a separate table
+    repeating the same row labels was just duplication; a stage with
+    no QoR of its own yet (not reached, or no report for that one kind
+    yet) simply shows "-" in those columns, same convention as Elapsed.
+
+    Shared by `render_human` (spin=False, a static snapshot) and
+    `render_live` (spin=True, with a live spinner and a blinking
+    elapsed time on the actively running stage)."""
     from rich.table import Table
 
+    qor_by_stage = status.metrics.get("cadence.qor_by_stage") or {}
     table = Table(show_header=True, header_style="bold cyan", box=None, pad_edge=False)
     table.add_column("Stage")
-    table.add_column("Area (mm²)", justify="right")
-    table.add_column("WNS (ps)", justify="right")
-    table.add_column("TNS (ps)", justify="right")
-    table.add_column("Viol", justify="right")
-    table.add_column("Power (mW)", justify="right")
-    for stage, kinds in qor_by_stage.items():
-        area = kinds.get("area", {})
-        timing = kinds.get("timing", {})
-        power = kinds.get("power", {})
-        table.add_row(
-            stage,
-            f"{area['total_area_um2'] / 1e6:.2f}" if "total_area_um2" in area else "-",
-            f"{timing['worst_slack_ps']:g}" if "worst_slack_ps" in timing else "-",
-            f"{timing['total_negative_slack_ps']:g}" if "total_negative_slack_ps" in timing else "-",
-            f"{int(timing['failing_endpoints'])}" if "failing_endpoints" in timing else "-",
-            f"{power['total_w'] * 1000:.1f}" if "total_w" in power else "-",
-        )
+    table.add_column("Status")
+    table.add_column("Elapsed", justify="right")
+    if qor_by_stage:
+        table.add_column("Area (mm²)", justify="right")
+        table.add_column("WNS (ps)", justify="right")
+        table.add_column("TNS (ps)", justify="right")
+        table.add_column("Viol", justify="right")
+        table.add_column("Power (mW)", justify="right")
+    for stage in status.stages:
+        if spin and stage.status == "running" and active_stage_elapsed is not None:
+            elapsed_cell = _live_elapsed_text(active_stage_elapsed)
+        else:
+            elapsed_cell = _format_elapsed(stage.elapsed_seconds)
+        row = [stage.name, _status_cell(stage.status, spin=spin), elapsed_cell]
+        if qor_by_stage:
+            kinds = qor_by_stage.get(stage.name, {})
+            area = kinds.get("area", {})
+            timing = kinds.get("timing", {})
+            power = kinds.get("power", {})
+            row.extend([
+                f"{area['total_area_um2'] / 1e6:.2f}" if "total_area_um2" in area else "-",
+                f"{timing['worst_slack_ps']:g}" if "worst_slack_ps" in timing else "-",
+                f"{timing['total_negative_slack_ps']:g}" if "total_negative_slack_ps" in timing else "-",
+                f"{int(timing['failing_endpoints'])}" if "failing_endpoints" in timing else "-",
+                f"{power['total_w'] * 1000:.1f}" if "total_w" in power else "-",
+            ])
+        table.add_row(*row)
     return table
 
 
@@ -278,13 +296,7 @@ def _build_renderable(status: RunStatus):
 
     if status.stages:
         renderables.append(Text("\nStages"))
-        table = Table(show_header=True, header_style="bold cyan", box=None, pad_edge=False)
-        table.add_column("Stage")
-        table.add_column("Status")
-        table.add_column("Elapsed", justify="right")
-        for stage in status.stages:
-            table.add_row(stage.name, _status_cell(stage.status), _format_elapsed(stage.elapsed_seconds))
-        renderables.append(table)
+        renderables.append(_stages_table(status))
 
     # label, formatter -- a formatter takes the raw metric value and
     # returns display text; plain str() is the default when a key has
@@ -314,11 +326,6 @@ def _build_renderable(status: RunStatus):
         for label, rendered in available:
             table.add_row(label, rendered)
         renderables.append(table)
-
-    qor_by_stage = status.metrics.get("cadence.qor_by_stage")
-    if qor_by_stage:
-        renderables.append(Text("\nQoR"))
-        renderables.append(_qor_table(qor_by_stage))
 
     return Group(*renderables)
 
@@ -356,7 +363,6 @@ def render_live(
     distinguishes "this is ticking up live" from the rest of the
     panel's otherwise-static numbers."""
     from rich.console import Group
-    from rich.table import Table
     from rich.text import Text
     from rich.tree import Tree
 
@@ -386,17 +392,7 @@ def render_live(
 
     if status.stages:
         renderables.append(Text("\nStages"))
-        table = Table(show_header=True, header_style="bold cyan", box=None, pad_edge=False)
-        table.add_column("Stage")
-        table.add_column("Status")
-        table.add_column("Elapsed", justify="right")
-        for stage in status.stages:
-            if stage.status == "running" and active_stage_elapsed is not None:
-                elapsed_cell = _live_elapsed_text(active_stage_elapsed)
-            else:
-                elapsed_cell = _format_elapsed(stage.elapsed_seconds)
-            table.add_row(stage.name, _status_cell(stage.status, spin=True), elapsed_cell)
-        renderables.append(table)
+        renderables.append(_stages_table(status, spin=True, active_stage_elapsed=active_stage_elapsed))
 
     if step_detail:
         running_stage = next((stage.name for stage in status.stages if stage.status == "running"), "running")
@@ -405,11 +401,6 @@ def render_live(
             tree.add(_step_label(label, state, elapsed))
         renderables.append(Text(""))
         renderables.append(tree)
-
-    qor_by_stage = status.metrics.get("cadence.qor_by_stage")
-    if qor_by_stage:
-        renderables.append(Text("\nQoR"))
-        renderables.append(_qor_table(qor_by_stage))
 
     return Group(*renderables)
 

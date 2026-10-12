@@ -734,11 +734,16 @@ Each report is Genus's own static snapshot, never rewritten once its
 own step finishes, so `genus_run_qor` is mtime-cached per file (one
 cheap `stat()` call either way; only a changed mtime triggers an actual
 re-read/re-parse) -- re-parsing a 17000-line area report on every
-`wolf status --watch` tick would be real, avoidable waste. `wolf
-status`'s QoR table shows one row per stage that has produced at least
-one of the three reports so far, each cell `-` until its own report
-exists -- a QoR-by-stage history, closer to Cadence's own `qor.html`
-than a single flat snapshot.
+`wolf status --watch` tick would be real, avoidable waste.
+
+QoR columns (Area/WNS/TNS/Viol/Power) are merged directly into the same
+Stages table rather than shown as a separate one -- QoR is the same
+per-stage granularity as Status/Elapsed, so a second table repeating
+the same row labels was just duplication. A report can land mid-stage
+(e.g. `syn_map`'s own `area.syn_map.rpt` exists well before
+`run_syn_map`/`report_synth` finish), so a "running" stage's QoR
+columns genuinely can fill in before its own Status does; each column
+stays `-` on its own until that one report exists.
 
 ## Genus attribute overrides
 
