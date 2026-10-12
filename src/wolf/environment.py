@@ -1426,7 +1426,13 @@ def resolve_declarative_environment(
     )
     missing = [
         field for field, value in (
-            ("design", design_name), ("technology", technology_name), ("flow", flow_name),
+            ("design", design_name), ("technology", technology_name),
+            # flow has no name of its own when using WOLF's bundled
+            # default flow (backend alone is its real identity there --
+            # "default" is not a real name, see env_menu.py), so backend
+            # also satisfies this, same as _component's own "at least
+            # one of package/name/top/backend" check already allows.
+            ("flow", flow_name or backend),
             ("backend", backend), ("workspace.root", workspace_root),
         ) if not value
     ]

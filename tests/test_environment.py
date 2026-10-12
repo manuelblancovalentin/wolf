@@ -1108,6 +1108,20 @@ class FlowBackendPersistenceTests(DeclarativeEnvironmentTests):
         )
         self.assertEqual(context.backend, "orfs")
 
+    def test_a_bundled_flow_with_no_name_at_all_still_resolves_as_complete(self):
+        """wolf env menu no longer writes flow.name: "default" at all --
+        backend alone must still satisfy the "flow" completeness
+        requirement (flow_name or backend), not just flow.name."""
+        text = self._complete_yaml().replace(
+            "flow:\n  package: flow/orfs", "flow:\n  backend: cadence-flowtool",
+        )
+        context = resolve_declarative_environment(
+            load_environment(self._write(text, "backend3.yaml")),
+            state_root=self.state, environment_directory=self.environment,
+        )
+        self.assertEqual(context.backend, "cadence-flowtool")
+        self.assertIsNone(context.flow_name)
+
 
 if __name__ == "__main__":
     unittest.main()
