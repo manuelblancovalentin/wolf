@@ -7,7 +7,7 @@ from wolf.cell_browser import (
     CellInfo, analysis_view_names_for_technology, cells_for_technology,
     routing_layers_for_technology,
 )
-from wolf.context import ResolvedTechnology, ResolvedTimingCorner
+from wolf.context import CatalogFileList, ResolvedTechnology, ResolvedTimingCorner
 
 # Synthetic LEF content only -- made-up cell/layer names, never real PDK data.
 _FAKE_LEF = """\
@@ -135,6 +135,54 @@ class CellBrowserTests(unittest.TestCase):
 
     def test_no_timing_corners_returns_none(self):
         self.assertIsNone(analysis_view_names_for_technology(self._technology()))
+
+    def test_every_selected_vth_is_scanned_not_just_the_primary_one(self):
+        """Regression, hit for real: a run selecting several vths (e.g.
+        lvt+rvt+hvt) only ever had its *primary* vth's own cell_lefs/
+        technology_lefs populated on ResolvedTechnology -- the cell
+        browser only ever saw that one vth's cells, silently missing the
+        others the run actually selected. catalog_lef_files (built from
+        the whole PDK manifest, every track/vth) is where the rest of the
+        selection's own files live."""
+        rvt_lef = self.root / "rvt_tech.lef"
+        rvt_lef.write_text(
+            "MACRO FAKERVTBUF\n  SIZE 2.0 BY 2.0 ;\nEND FAKERVTBUF\n", encoding="utf-8",
+        )
+        hvt_lef = self.root / "hvt_tech.lef"
+        hvt_lef.write_text(
+            "MACRO FAKEHVTBUF\n  SIZE 2.5 BY 2.0 ;\nEND FAKEHVTBUF\n", encoding="utf-8",
+        )
+        technology = self._technology(
+            track="9T", vth="lvt", selected_tracks=("9T",), selected_vths=("lvt", "rvt", "hvt"),
+            catalog_lef_files=(
+                CatalogFileList(track="9T", vth="lvt", files=(self.lef,)),
+                CatalogFileList(track="9T", vth="rvt", files=(rvt_lef,)),
+                CatalogFileList(track="9T", vth="hvt", files=(hvt_lef,)),
+            ),
+        )
+        names = {cell.name for cell in cells_for_technology(technology)}
+        self.assertEqual(names, {"FAKEBUFX2", "FAKEINVX1", "FAKETIEHIX1", "FAKERVTBUF", "FAKEHVTBUF"})
+
+    def test_only_the_selected_vths_catalog_entries_are_included(self):
+        """The catalog covers the whole PDK manifest -- every track/vth it
+        declares, not just what this run selected (confirmed real,
+        environment.py's own _build_catalog docstring). A vth that is
+        declared but *not* selected must not leak into the picker."""
+        rvt_lef = self.root / "rvt_tech.lef"
+        rvt_lef.write_text("MACRO FAKERVTBUF\nEND FAKERVTBUF\n", encoding="utf-8")
+        not_selected_lef = self.root / "not_selected.lef"
+        not_selected_lef.write_text("MACRO FAKENOTSELECTED\nEND FAKENOTSELECTED\n", encoding="utf-8")
+        technology = self._technology(
+            track="9T", vth="lvt", selected_tracks=("9T",), selected_vths=("lvt", "rvt"),
+            catalog_lef_files=(
+                CatalogFileList(track="9T", vth="lvt", files=(self.lef,)),
+                CatalogFileList(track="9T", vth="rvt", files=(rvt_lef,)),
+                CatalogFileList(track="9T", vth="hvt", files=(not_selected_lef,)),
+            ),
+        )
+        names = {cell.name for cell in cells_for_technology(technology)}
+        self.assertNotIn("FAKENOTSELECTED", names)
+        self.assertIn("FAKERVTBUF", names)
 
 
 if __name__ == "__main__":

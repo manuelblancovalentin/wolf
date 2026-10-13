@@ -732,7 +732,9 @@ class CadenceCellBrowserTests(unittest.TestCase):
                 self.assertTrue(results.has_focus)
                 await pilot.press("a")  # select all visible (the 2 filtered matches)
                 await pilot.pause()
-                await pilot.press("escape")  # done
+                await pilot.press("escape")  # done with the checklist, back to the submenu
+                await pilot.pause()
+                await pilot.press("escape")  # done with the submenu, back to the main menu
                 await pilot.pause()
                 await pilot.press("s")
                 await pilot.pause()
@@ -756,7 +758,9 @@ class CadenceCellBrowserTests(unittest.TestCase):
                 results.highlighted = index
                 await pilot.press("enter")  # toggle just this one
                 await pilot.pause()
-                await pilot.press("escape")
+                await pilot.press("escape")  # done with the checklist, back to the submenu
+                await pilot.pause()
+                await pilot.press("escape")  # done with the submenu, back to the main menu
                 await pilot.pause()
                 await pilot.press("s")
                 await pilot.pause()
@@ -821,7 +825,9 @@ class CadenceCellBrowserTests(unittest.TestCase):
                     o.id for o in results.options if o.prompt.startswith("[x]")
                 )
                 self.assertEqual(checked, ["FAKETIEHIX1", "FAKETIELOX1"])
-                await pilot.press("escape")
+                await pilot.press("escape")  # done with the checklist, back to the submenu
+                await pilot.pause()
+                await pilot.press("escape")  # done with the submenu, back to the main menu
                 await pilot.pause()
                 await pilot.press("s")
                 await pilot.pause()
@@ -846,9 +852,11 @@ class CadenceCellBrowserTests(unittest.TestCase):
                 self._select(app.screen.query_one(OptionList), "FAKEM2")
                 await pilot.press("enter")
                 await pilot.pause()
-                # Picking an option on _PickScreen dismisses it immediately
-                # (no separate "done" escape needed) -- back at the main
-                # menu already.
+                # Picking an option on _PickScreen dismisses it immediately,
+                # back at the (freshly reopened) cts/tieoffs submenu --
+                # escape once more to reach the main menu.
+                await pilot.press("escape")
+                await pilot.pause()
                 await pilot.press("s")
                 await pilot.pause()
         asyncio.run(drive())

@@ -29,14 +29,46 @@ class CellInfo:
     area: Optional[float] = None  # um^2, from a LEF MACRO's own SIZE line
 
 
+def _selected_lef_files(technology: ResolvedTechnology) -> tuple[Path, ...]:
+    """Every LEF file across *every* selected track/vth, not just the
+    one primary (track, vth) pair technology.cell_lefs/technology_lefs
+    resolve to.
+
+    Confirmed real gap: a run selecting several vths (lvt+rvt+hvt, say --
+    `technology.selected_vths`) only ever gets the *primary* vth's own
+    cell_lefs/technology_lefs populated; the full per-(track,vth) file
+    list only exists on technology.catalog_lef_files (built from the
+    whole PDK manifest, not just the selection). This unions the
+    catalog's own files for every (track, vth) pair actually selected
+    (selected_tracks/selected_vths, falling back to the single primary
+    track/vth when those are empty -- the flat, non-tracked-package
+    case) with cell_lefs/technology_lefs, so e.g. picking lvt+rvt+hvt
+    surfaces all three vths' own cells, not just whichever one happened
+    to be primary.
+    """
+    tracks = technology.selected_tracks or ((technology.track,) if technology.track else ())
+    vths = technology.selected_vths or ((technology.vth,) if technology.vth else ())
+    catalog_files: list[Path] = []
+    if tracks and vths:
+        wanted = {(track, vth) for track in tracks for vth in vths}
+        for entry in technology.catalog_lef_files:
+            if (entry.track, entry.vth) in wanted:
+                catalog_files.extend(entry.files)
+    return tuple(dict.fromkeys((*technology.cell_lefs, *technology.technology_lefs, *catalog_files)))
+
+
 def _technology_cache_key(technology: ResolvedTechnology, files: tuple[Path, ...]) -> str:
     """A stable key for this exact resolved file set -- the technology's
-    own package/revision/track/vth/metal_stack identity plus each file's
-    own mtime, so a LEF changing on disk (a PDK package update) or a
+    own package/revision/track/vth/metal_stack identity (including every
+    selected track/vth, not just the primary one) plus each file's own
+    mtime, so a LEF changing on disk (a PDK package update) or a
     different track/vth/stack selection both naturally invalidate the
     cache without needing to re-hash file content."""
-    identity = [technology.package, technology.revision, technology.track or "",
-                technology.vth or "", technology.metal_stack or ""]
+    identity = [
+        technology.package, technology.revision, technology.track or "", technology.vth or "",
+        technology.metal_stack or "",
+        ",".join(sorted(technology.selected_tracks)), ",".join(sorted(technology.selected_vths)),
+    ]
     for path in sorted(files, key=str):
         try:
             identity.append(f"{path}:{path.stat().st_mtime_ns}")
@@ -135,7 +167,7 @@ def cells_for_technology(
     """
     if technology is None:
         return None
-    files = tuple(dict.fromkeys((*technology.cell_lefs, *technology.technology_lefs)))
+    files = _selected_lef_files(technology)
     if not files:
         return None
     key = _technology_cache_key(technology, files)
@@ -158,13 +190,12 @@ def routing_layers_for_technology(
     technology: Optional[ResolvedTechnology], on_file=None,
 ) -> Optional[list[str]]:
     """Every routing layer name declared by the resolved technology's own
-    LEF files (technology_lefs normally carries the tech LEF; cell_lefs
-    rarely declares layers itself but is scanned too, harmlessly, for a
-    package that merges both into one file). None when not resolvable.
-    `on_file`: see cells_for_technology -- same cache-hit-skips-it rule."""
+    LEF files, across every selected track/vth (see _selected_lef_files).
+    None when not resolvable. `on_file`: see cells_for_technology -- same
+    cache-hit-skips-it rule."""
     if technology is None:
         return None
-    files = tuple(dict.fromkeys((*technology.technology_lefs, *technology.cell_lefs)))
+    files = _selected_lef_files(technology)
     if not files:
         return None
     key = _technology_cache_key(technology, files)

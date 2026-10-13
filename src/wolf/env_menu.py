@@ -17,6 +17,7 @@ root.
 
 from __future__ import annotations
 
+import asyncio
 import fnmatch
 import os
 from pathlib import Path
@@ -287,6 +288,7 @@ class _TextScreen(ModalScreen[Optional[str]]):
 
     def on_key(self, event) -> None:
         if event.key == "escape":
+            event.stop()
             self.dismiss(None)
 
 
@@ -695,6 +697,7 @@ class _PickScreen(ModalScreen[Optional[str]]):
 
     def on_key(self, event) -> None:
         if event.key == "escape":
+            event.stop()
             self.dismiss(None)
 
 
@@ -1003,13 +1006,20 @@ class _CellChecklistScreen(ModalScreen[Optional[list]]):
         self.query_one(Input).display = False
         self.query_one("#results", OptionList).display = False
         self.query_one("#dialog-hint", Static).display = False
-        self.run_worker(self._load, thread=True, exclusive=True)
+        self.run_worker(self._load())
 
-    def _load(self) -> None:
+    async def _load(self) -> None:
+        # A plain asyncio-thread-executor call, not a second (nested)
+        # Textual worker -- this screen is itself opened from inside the
+        # CTS/tie-off submenu's own worker (push_screen_wait requires an
+        # active worker), and a nested run_worker(..., thread=True) there
+        # left the *outer* worker's own push_screen_wait unable to
+        # dismiss its next screen afterwards (confirmed real: escape
+        # stopped working on whatever screen followed this one).
         def report(path: Path) -> None:
             self.app.call_from_thread(self._set_progress, f"Parsing {path.name}...")
-        result = self._loader(report)
-        self.app.call_from_thread(self._loaded, result)
+        result = await asyncio.to_thread(self._loader, report)
+        self._loaded(result)
 
     def _set_progress(self, text: str) -> None:
         self.query_one("#progress", Static).update(text)
@@ -1094,6 +1104,7 @@ class _CellChecklistScreen(ModalScreen[Optional[list]]):
         self._refresh_options(self.query_one(Input).value)
 
     def action_done(self) -> None:
+        self.query_one(Input).blur()
         self.dismiss(sorted(self._selected))
 
 
@@ -1735,7 +1746,7 @@ class EnvWizardApp(App[None]):
         elif choice == "power_ground_nets":
             self._edit_power_ground_nets()
         elif choice == "cadence_cells":
-            self._edit_cadence_cts_tieoffs_routing()
+            self.run_worker(self._edit_cadence_cts_tieoffs_routing())
         elif choice == "project":
             self._edit_project_root()
         elif choice == "workspace":
@@ -1919,60 +1930,60 @@ class EnvWizardApp(App[None]):
             node[path[-1]] = value
         self.backend_overrides = {**self.backend_overrides, "cadence-flowtool": cadence_flowtool}
 
-    def _edit_cell_pattern_list(
+    async def _edit_cell_pattern_list(
         self, title: str, path: tuple[str, ...], technology, max_items: Optional[int] = None,
-        on_close=None,
     ) -> None:
         current = list(self._override_get(*path, default=[]))
-
-        def handle(result: Optional[list]) -> None:
-            if result is not None:
-                self._override_set(*path, value=result)
-                self._refresh()
-            if on_close:
-                on_close()
         if technology is None:
             # Nothing to browse -- the old free-text add/delete list.
-            self.push_screen(_CellPatternListScreen(title, current, None, max_items), handle)
+            result = await self.push_screen_wait(_CellPatternListScreen(title, current, None, max_items))
         else:
             loader = lambda on_file: cells_for_technology(technology, on_file=on_file)  # noqa: E731
-            self.push_screen(
-                _CellChecklistScreen(title, loader, current, max_items), handle,
+            result = await self.push_screen_wait(
+                _CellChecklistScreen(title, loader, current, max_items)
             )
+        if result is not None:
+            self._override_set(*path, value=result)
+            self._refresh()
 
-    def _edit_view_name_list(self, title: str, path: tuple[str, ...], candidates, on_close=None) -> None:
+    async def _edit_view_name_list(self, title: str, path: tuple[str, ...], candidates) -> None:
         current = tuple(self._override_get(*path, default=[]))
-
-        def handle(result: Optional[list]) -> None:
-            if result is not None:
-                self._override_set(*path, value=result)
-                self._refresh()
-            if on_close:
-                on_close()
         if candidates is not None:
-            self.push_screen(_MultiPickScreen(title, candidates, current), handle)
+            result = await self.push_screen_wait(_MultiPickScreen(title, candidates, current))
         else:
-            self.push_screen(_NetListScreen(title, list(current)), handle)
+            result = await self.push_screen_wait(_NetListScreen(title, list(current)))
+        if result is not None:
+            self._override_set(*path, value=result)
+            self._refresh()
 
-    def _edit_preferred_layer(
-        self, title: str, path: tuple[str, ...], layers: Optional[list], on_close=None,
+    async def _edit_preferred_layer(
+        self, title: str, path: tuple[str, ...], layers: Optional[list],
     ) -> None:
         current = self._override_get(*path)
-
-        def handle_pick(value: Optional[str]) -> None:
-            if value is not None:
-                self._override_set(*path, value=value if value != "__clear__" else None)
-                self._refresh()
-            if on_close:
-                on_close()
         if layers:
             choices = [(f"(clear){' [current]' if not current else ''}", "__clear__")]
             choices += [(f"{name}{' [current]' if name == current else ''}", name) for name in layers]
-            self.push_screen(_PickScreen(title, choices), handle_pick)
+            value = await self.push_screen_wait(_PickScreen(title, choices))
         else:
-            self.push_screen(_TextScreen(title, current or ""), handle_pick)
+            value = await self.push_screen_wait(_TextScreen(title, current or ""))
+        if value is not None:
+            self._override_set(*path, value=value if value != "__clear__" else None)
+            self._refresh()
 
-    def _edit_cadence_cts_tieoffs_routing(self) -> None:
+    async def _edit_cadence_cts_tieoffs_routing(self) -> None:
+        """One session covering every backend.cadence-flowtool.{cts,
+        tieoffs,clock_routing,active_views} field: a loop around
+        push_screen_wait, re-showing this same submenu (with freshly
+        updated counts) after each field's own editor closes, until the
+        user escapes the submenu itself -- not a chain of push_screen(...,
+        callback) calls. That callback-based form had a confirmed real
+        bug: re-pushing a screen synchronously (or even deferred via
+        call_after_refresh) from within another screen's own dismiss
+        handling left the newly (re-)pushed screen's escape binding
+        unreliable (it stopped actually dismissing after the first such
+        hop). push_screen_wait sequences everything within one coroutine
+        instead, which does not hit that issue.
+        """
         technology = self._resolved_technology()
         # Cell lists are resolved lazily, per field, inside
         # _CellChecklistScreen's own worker (with a progress message) --
@@ -1983,63 +1994,12 @@ class EnvWizardApp(App[None]):
         layers = routing_layers_for_technology(technology)
         views = analysis_view_names_for_technology(technology)
 
-        def handle_choice(choice: Optional[str]) -> None:
-            if choice is None:
-                return
-            if choice == "buffer_cells":
-                self._edit_cell_pattern_list(
-                    "CTS buffer cells (default)", ("cts", "buffer_cells"), technology)
-            elif choice == "buffer_cells_top":
-                self._edit_cell_pattern_list(
-                    "CTS buffer cells (top nets)", ("cts", "buffer_cells_top"), technology)
-            elif choice == "buffer_cells_leaf":
-                self._edit_cell_pattern_list(
-                    "CTS buffer cells (leaf nets)", ("cts", "buffer_cells_leaf"), technology)
-            elif choice == "inverter_cells":
-                self._edit_cell_pattern_list(
-                    "CTS inverter cells (default)", ("cts", "inverter_cells"), technology)
-            elif choice == "inverter_cells_top":
-                self._edit_cell_pattern_list(
-                    "CTS inverter cells (top nets)", ("cts", "inverter_cells_top"), technology)
-            elif choice == "inverter_cells_leaf":
-                self._edit_cell_pattern_list(
-                    "CTS inverter cells (leaf nets)", ("cts", "inverter_cells_leaf"), technology)
-            elif choice == "clock_gating_cells":
-                self._edit_cell_pattern_list(
-                    "CTS clock-gating cells", ("cts", "clock_gating_cells"), technology)
-            elif choice == "tieoffs":
-                self._edit_cell_pattern_list(
-                    "Tie-off cells (max 2: one tie-high driver, one tie-low driver)",
-                    ("tieoffs", "cells"), technology, max_items=2,
-                )
-            elif choice == "active_setup":
-                self._edit_view_name_list(
-                    "Active views -- setup", ("active_views", "setup"), views)
-            elif choice == "active_hold":
-                self._edit_view_name_list(
-                    "Active views -- hold", ("active_views", "hold"), views)
-            elif choice == "trunk_top":
-                self._edit_preferred_layer(
-                    "Clock routing -- trunk top preferred layer",
-                    ("clock_routing", "types", "trunk", "top_preferred_layer"), layers)
-            elif choice == "trunk_bottom":
-                self._edit_preferred_layer(
-                    "Clock routing -- trunk bottom preferred layer",
-                    ("clock_routing", "types", "trunk", "bottom_preferred_layer"), layers)
-            elif choice == "leaf_top":
-                self._edit_preferred_layer(
-                    "Clock routing -- leaf top preferred layer",
-                    ("clock_routing", "types", "leaf", "top_preferred_layer"), layers)
-            elif choice == "leaf_bottom":
-                self._edit_preferred_layer(
-                    "Clock routing -- leaf bottom preferred layer",
-                    ("clock_routing", "types", "leaf", "bottom_preferred_layer"), layers)
-
         def count(*path):
             return len(self._override_get(*path, default=[]))
-        unresolved = "" if technology is not None else " (no technology resolved -- free text only)"
-        self.push_screen(
-            _PickScreen(
+
+        while True:
+            unresolved = "" if technology is not None else " (no technology resolved -- free text only)"
+            choice = await self.push_screen_wait(_PickScreen(
                 f"CTS / tie-off / routing cells{unresolved}",
                 [
                     (f"CTS buffer cells (default) [{count('cts', 'buffer_cells')}]", "buffer_cells"),
@@ -2064,11 +2024,58 @@ class EnvWizardApp(App[None]):
                     (f"Clock routing leaf bottom layer "
                      f"[{self._override_get('clock_routing', 'types', 'leaf', 'bottom_preferred_layer') or '-'}]",
                      "leaf_bottom"),
-                    ("Done", "__done__"),
                 ],
-            ),
-            lambda choice: handle_choice(None if choice in (None, "__done__") else choice),
-        )
+            ))
+            if choice is None:
+                return
+            if choice == "buffer_cells":
+                await self._edit_cell_pattern_list(
+                    "CTS buffer cells (default)", ("cts", "buffer_cells"), technology)
+            elif choice == "buffer_cells_top":
+                await self._edit_cell_pattern_list(
+                    "CTS buffer cells (top nets)", ("cts", "buffer_cells_top"), technology)
+            elif choice == "buffer_cells_leaf":
+                await self._edit_cell_pattern_list(
+                    "CTS buffer cells (leaf nets)", ("cts", "buffer_cells_leaf"), technology)
+            elif choice == "inverter_cells":
+                await self._edit_cell_pattern_list(
+                    "CTS inverter cells (default)", ("cts", "inverter_cells"), technology)
+            elif choice == "inverter_cells_top":
+                await self._edit_cell_pattern_list(
+                    "CTS inverter cells (top nets)", ("cts", "inverter_cells_top"), technology)
+            elif choice == "inverter_cells_leaf":
+                await self._edit_cell_pattern_list(
+                    "CTS inverter cells (leaf nets)", ("cts", "inverter_cells_leaf"), technology)
+            elif choice == "clock_gating_cells":
+                await self._edit_cell_pattern_list(
+                    "CTS clock-gating cells", ("cts", "clock_gating_cells"), technology)
+            elif choice == "tieoffs":
+                await self._edit_cell_pattern_list(
+                    "Tie-off cells (max 2: one tie-high driver, one tie-low driver)",
+                    ("tieoffs", "cells"), technology, max_items=2,
+                )
+            elif choice == "active_setup":
+                await self._edit_view_name_list(
+                    "Active views -- setup", ("active_views", "setup"), views)
+            elif choice == "active_hold":
+                await self._edit_view_name_list(
+                    "Active views -- hold", ("active_views", "hold"), views)
+            elif choice == "trunk_top":
+                await self._edit_preferred_layer(
+                    "Clock routing -- trunk top preferred layer",
+                    ("clock_routing", "types", "trunk", "top_preferred_layer"), layers)
+            elif choice == "trunk_bottom":
+                await self._edit_preferred_layer(
+                    "Clock routing -- trunk bottom preferred layer",
+                    ("clock_routing", "types", "trunk", "bottom_preferred_layer"), layers)
+            elif choice == "leaf_top":
+                await self._edit_preferred_layer(
+                    "Clock routing -- leaf top preferred layer",
+                    ("clock_routing", "types", "leaf", "top_preferred_layer"), layers)
+            elif choice == "leaf_bottom":
+                await self._edit_preferred_layer(
+                    "Clock routing -- leaf bottom preferred layer",
+                    ("clock_routing", "types", "leaf", "bottom_preferred_layer"), layers)
 
     def _edit_power_ground_nets(self) -> None:
         def handle_which(which: Optional[str]) -> None:

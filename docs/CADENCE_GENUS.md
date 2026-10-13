@@ -1106,7 +1106,14 @@ selected technology package actually declares:
   focused, `a` checks every currently visible entry, `d` unchecks every
   currently visible entry, `enter`/`space` toggles just the highlighted
   one, and `esc` stores whatever ended up checked (across every filter
-  used, not just the last one) and returns to the menu.
+  used, not just the last one) and returns to the "CTS / tie-off /
+  routing cells..." submenu -- with that field's count now updated --
+  rather than all the way back to the main menu, so picking several
+  fields in a row doesn't mean re-opening the submenu each time; `esc`
+  again from the submenu itself returns to the main menu. Every cell
+  name comes from *every* selected track/vth (`technology.
+  selected_tracks`/`selected_vths`), not just the single primary one --
+  a run selecting lvt+rvt+hvt sees all three vths' own cells.
 - **Active views (setup/hold)**: a checklist of the resolved technology's
   own declared corner names (`technology.timing_corners`) -- the exact
   same set `active_views` validates against -- or free text if the
