@@ -119,12 +119,20 @@ def _extract_lef_routing_layers(path: Path) -> list[str]:
     return layers
 
 
-def cells_for_technology(technology: Optional[ResolvedTechnology]) -> Optional[list[CellInfo]]:
+def cells_for_technology(
+    technology: Optional[ResolvedTechnology], on_file=None,
+) -> Optional[list[CellInfo]]:
     """Every cell name (standard cell or macro) declared by the resolved
     technology's own LEF files, cached per resolved file set. Returns
     None -- "not resolvable, fall back to free text" -- when there is no
     technology selected or it declares no LEF at all; callers must not
-    treat None the same as "no cells" (an empty list)."""
+    treat None the same as "no cells" (an empty list).
+
+    `on_file`, if given, is called with each file's own Path right before
+    it is actually scanned -- never called at all on a cache hit, so a
+    caller driving a "Parsing <file>" progress indicator only sees it
+    when a real (slow, first-time) scan is about to happen.
+    """
     if technology is None:
         return None
     files = tuple(dict.fromkeys((*technology.cell_lefs, *technology.technology_lefs)))
@@ -137,6 +145,8 @@ def cells_for_technology(technology: Optional[ResolvedTechnology]) -> Optional[l
         return [CellInfo(item["name"], item.get("area")) for item in cached]
     merged: dict[str, CellInfo] = {}
     for file in files:
+        if on_file:
+            on_file(file)
         for cell in _extract_lef_macros(file):
             merged.setdefault(cell.name, cell)
     result = sorted(merged.values(), key=lambda cell: cell.name)
@@ -144,11 +154,14 @@ def cells_for_technology(technology: Optional[ResolvedTechnology]) -> Optional[l
     return result
 
 
-def routing_layers_for_technology(technology: Optional[ResolvedTechnology]) -> Optional[list[str]]:
+def routing_layers_for_technology(
+    technology: Optional[ResolvedTechnology], on_file=None,
+) -> Optional[list[str]]:
     """Every routing layer name declared by the resolved technology's own
     LEF files (technology_lefs normally carries the tech LEF; cell_lefs
     rarely declares layers itself but is scanned too, harmlessly, for a
-    package that merges both into one file). None when not resolvable."""
+    package that merges both into one file). None when not resolvable.
+    `on_file`: see cells_for_technology -- same cache-hit-skips-it rule."""
     if technology is None:
         return None
     files = tuple(dict.fromkeys((*technology.technology_lefs, *technology.cell_lefs)))
@@ -161,6 +174,8 @@ def routing_layers_for_technology(technology: Optional[ResolvedTechnology]) -> O
         return list(cached)
     merged: dict[str, None] = {}
     for file in files:
+        if on_file:
+            on_file(file)
         for layer in _extract_lef_routing_layers(file):
             merged.setdefault(layer, None)
     result = sorted(merged)

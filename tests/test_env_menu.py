@@ -700,32 +700,39 @@ class CadenceCellBrowserTests(unittest.TestCase):
         options = [o.prompt for o in option_list.options]
         option_list.highlighted = options.index(label)
 
-    def test_picking_all_matches_stores_the_expanded_cell_names(self):
+    async def _open_field(self, pilot, app, submenu_label):
+        self._select(app.query_one(OptionList), "CTS / tie-off / routing cells...")
+        await pilot.press("enter")
+        await pilot.pause()
+        self._select(app.screen.query_one(OptionList), submenu_label)
+        await pilot.press("enter")
+        await pilot.pause()
+        # The checklist loads in a background worker (real files would
+        # take real time to scan; the synthetic fixture here is instant,
+        # but still crosses a thread/call_from_thread round trip).
+        for _ in range(5):
+            await pilot.pause()
+
+    def test_filter_narrows_the_list_live_and_select_all_stores_the_visible_matches(self):
         async def drive():
             app = EnvWizardApp("cellbrowser-demo")
             async with app.run_test() as pilot:
                 app.technology_package = "pdk/fakecells"
-                self._select(app.query_one(OptionList), "CTS / tie-off / routing cells...")
-                await pilot.press("enter")
-                await pilot.pause()
-                self._select(app.screen.query_one(OptionList), "CTS buffer cells (default) [0]")
-                await pilot.press("enter")
-                await pilot.pause()
-                await pilot.press("a")
-                await pilot.pause()
+                await self._open_field(pilot, app, "CTS buffer cells (default) [0]")
+                results = app.screen.query_one("#results", OptionList)
+                self.assertEqual(len(list(results.options)), 5)  # every fake cell, unfiltered
                 app.screen.query_one(Input).value = "FAKEBUF*"
-                await pilot.press("enter")
                 await pilot.pause()
-                # "'FAKEBUF*' matches 2 cell(s) -- store as" -> all matched names
-                self._select(app.screen.query_one(OptionList), "all 2 matched names")
-                await pilot.press("enter")
+                self.assertEqual(
+                    sorted(o.id for o in results.options),
+                    ["FAKEBUFX2", "FAKEBUFX4"],
+                )
+                await pilot.press("tab")  # filter -> list
                 await pilot.pause()
-                # Closing the list returns straight to the main menu
-                # (same precedent as _edit_power_ground_nets) rather than
-                # reopening the cts/tieoffs submenu -- Textual's escape
-                # handling on a screen re-pushed from within another
-                # screen's own dismiss callback is not reliable.
-                await pilot.press("escape")  # done with the list
+                self.assertTrue(results.has_focus)
+                await pilot.press("a")  # select all visible (the 2 filtered matches)
+                await pilot.pause()
+                await pilot.press("escape")  # done
                 await pilot.pause()
                 await pilot.press("s")
                 await pilot.pause()
@@ -736,24 +743,18 @@ class CadenceCellBrowserTests(unittest.TestCase):
             ["FAKEBUFX2", "FAKEBUFX4"],
         )
 
-    def test_keeping_the_pattern_stores_it_literally(self):
+    def test_toggling_one_entry_by_hand_stores_just_that_one(self):
         async def drive():
             app = EnvWizardApp("cellbrowser-demo")
             async with app.run_test() as pilot:
                 app.technology_package = "pdk/fakecells"
-                self._select(app.query_one(OptionList), "CTS / tie-off / routing cells...")
-                await pilot.press("enter")
+                await self._open_field(pilot, app, "CTS inverter cells (default) [0]")
+                await pilot.press("tab")
                 await pilot.pause()
-                self._select(app.screen.query_one(OptionList), "CTS inverter cells (default) [0]")
-                await pilot.press("enter")
-                await pilot.pause()
-                await pilot.press("a")
-                await pilot.pause()
-                app.screen.query_one(Input).value = "FAKEINV*"
-                await pilot.press("enter")
-                await pilot.pause()
-                self._select(app.screen.query_one(OptionList), "the pattern 'FAKEINV*' itself")
-                await pilot.press("enter")
+                results = app.screen.query_one("#results", OptionList)
+                index = [o.id for o in results.options].index("FAKEINVX1")
+                results.highlighted = index
+                await pilot.press("enter")  # toggle just this one
                 await pilot.pause()
                 await pilot.press("escape")
                 await pilot.pause()
@@ -761,31 +762,19 @@ class CadenceCellBrowserTests(unittest.TestCase):
                 await pilot.pause()
         asyncio.run(drive())
         saved = yaml.safe_load((self.env_dir / "wolf.yaml").read_text(encoding="utf-8"))
-        self.assertEqual(saved["backend"]["cadence-flowtool"]["cts"]["inverter_cells"], ["FAKEINV*"])
+        self.assertEqual(saved["backend"]["cadence-flowtool"]["cts"]["inverter_cells"], ["FAKEINVX1"])
 
-    def test_a_pattern_matching_nothing_warns_but_allows_storing_it_anyway(self):
+    def test_deselect_all_clears_the_visible_selection(self):
         async def drive():
             app = EnvWizardApp("cellbrowser-demo")
             async with app.run_test() as pilot:
                 app.technology_package = "pdk/fakecells"
-                self._select(app.query_one(OptionList), "CTS / tie-off / routing cells...")
-                await pilot.press("enter")
+                await self._open_field(pilot, app, "CTS clock-gating cells [0]")
+                await pilot.press("tab")
                 await pilot.pause()
-                self._select(
-                    app.screen.query_one(OptionList), "CTS clock-gating cells [0]",
-                )
-                await pilot.press("enter")
+                await pilot.press("a")  # select every cell
                 await pilot.pause()
-                await pilot.press("a")
-                await pilot.pause()
-                app.screen.query_one(Input).value = "NOTHING_MATCHES_THIS*"
-                await pilot.press("enter")
-                await pilot.pause()
-                self._select(
-                    app.screen.query_one(OptionList),
-                    "Store it anyway (Innovus may still expand it)",
-                )
-                await pilot.press("enter")
+                await pilot.press("d")  # then deselect every (visible) cell
                 await pilot.pause()
                 await pilot.press("escape")
                 await pilot.pause()
@@ -793,38 +782,45 @@ class CadenceCellBrowserTests(unittest.TestCase):
                 await pilot.pause()
         asyncio.run(drive())
         saved = yaml.safe_load((self.env_dir / "wolf.yaml").read_text(encoding="utf-8"))
-        self.assertEqual(
-            saved["backend"]["cadence-flowtool"]["cts"]["clock_gating_cells"],
-            ["NOTHING_MATCHES_THIS*"],
-        )
+        self.assertNotIn("cts", saved.get("backend", {}).get("cadence-flowtool", {}))
+
+    def test_a_filter_matching_nothing_shows_no_matches_and_nothing_is_selectable(self):
+        async def drive():
+            app = EnvWizardApp("cellbrowser-demo")
+            async with app.run_test() as pilot:
+                app.technology_package = "pdk/fakecells"
+                await self._open_field(pilot, app, "CTS buffer cells (default) [0]")
+                app.screen.query_one(Input).value = "NOTHING_MATCHES_THIS*"
+                await pilot.pause()
+                results = app.screen.query_one("#results", OptionList)
+                self.assertEqual([o.prompt for o in results.options], ["(no matches)"])
+                await pilot.press("escape")
+                await pilot.pause()
+        asyncio.run(drive())
+        # Nothing was selected (no matches to select) -- cts never appears.
+        saved = yaml.safe_load((self.env_dir / "wolf.yaml").read_text(encoding="utf-8"))
+        self.assertNotIn("cts", saved.get("backend", {}).get("cadence-flowtool", {}))
 
     def test_tieoff_cells_are_capped_at_two(self):
         async def drive():
             app = EnvWizardApp("cellbrowser-demo")
             async with app.run_test() as pilot:
                 app.technology_package = "pdk/fakecells"
-                self._select(app.query_one(OptionList), "CTS / tie-off / routing cells...")
-                await pilot.press("enter")
+                await self._open_field(pilot, app, "Tie-off cells [0]")
+                await pilot.press("tab")
                 await pilot.pause()
-                self._select(app.screen.query_one(OptionList), "Tie-off cells [0]")
-                await pilot.press("enter")
-                await pilot.pause()
-                for name in ("FAKETIEHIX1", "FAKETIELOX1"):
-                    await pilot.press("a")
-                    await pilot.pause()
-                    app.screen.query_one(Input).value = name
+                results = app.screen.query_one("#results", OptionList)
+                for name in ("FAKETIEHIX1", "FAKETIELOX1", "FAKEBUFX2"):
+                    index = [o.id for o in results.options].index(name)
+                    results.highlighted = index
                     await pilot.press("enter")
                     await pilot.pause()
-                    self._select(app.screen.query_one(OptionList), f"the pattern '{name}' itself")
-                    await pilot.press("enter")
-                    await pilot.pause()
-                before = list(app.screen.query_one(OptionList).options)
-                # A third add attempt is a no-op (max_items=2) -- no new
-                # screen opens, so the list is unchanged.
-                await pilot.press("a")
-                await pilot.pause()
-                after = list(app.screen.query_one(OptionList).options)
-                self.assertEqual(len(before), len(after))
+                # The third toggle (FAKEBUFX2) must be rejected -- only
+                # the first two stay checked.
+                checked = sorted(
+                    o.id for o in results.options if o.prompt.startswith("[x]")
+                )
+                self.assertEqual(checked, ["FAKETIEHIX1", "FAKETIELOX1"])
                 await pilot.press("escape")
                 await pilot.pause()
                 await pilot.press("s")

@@ -124,6 +124,15 @@ class CellBrowserTests(unittest.TestCase):
             analysis_view_names_for_technology(technology), ["faketypical", "fakeworst"],
         )
 
+    def test_on_file_is_called_on_a_real_scan_but_not_on_a_cache_hit(self):
+        technology = self._technology()
+        calls = []
+        cells_for_technology(technology, on_file=calls.append)
+        self.assertEqual(calls, [self.lef])
+        calls.clear()
+        cells_for_technology(technology, on_file=calls.append)
+        self.assertEqual(calls, [])
+
     def test_no_timing_corners_returns_none(self):
         self.assertIsNone(analysis_view_names_for_technology(self._technology()))
 

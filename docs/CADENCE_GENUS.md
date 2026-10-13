@@ -1094,13 +1094,19 @@ selected technology package actually declares:
 
 - **CTS buffer/inverter cells** (default, and the `_top`/`_leaf`
   variants), **clock-gating cells**, and **tie-off cells** (capped at
-  two in the UI itself): type a glob pattern or exact name, see what it
-  currently matches in the resolved technology's own LEF files (names
-  and area only), then choose to store the pattern itself (Innovus
-  expands it at runtime, same as typing it by hand), every matched name,
-  or a subset you pick. A pattern matching nothing is flagged with a
-  warning but can still be stored as-is (Innovus might still expand it
-  against data WOLF's own cheap scan didn't catch).
+  two in the UI itself): a live checklist, not a type-a-pattern-then-
+  decide flow. Selecting the field loads every cell name the resolved
+  technology's own LEF files declare (names and area only) in a
+  background worker -- a "Parsing \<file\>..." message names each file
+  while a real, uncached scan is in progress, skipped entirely on a
+  cache hit -- then every cell shows as a `[ ]`/`[x]` checkbox. Typing in
+  the filter box narrows which entries are *shown*, live, while checked
+  entries stay checked underneath whatever the filter currently hides.
+  `Tab` moves focus between the filter and the list; with the list
+  focused, `a` checks every currently visible entry, `d` unchecks every
+  currently visible entry, `enter`/`space` toggles just the highlighted
+  one, and `esc` stores whatever ended up checked (across every filter
+  used, not just the last one) and returns to the menu.
 - **Active views (setup/hold)**: a checklist of the resolved technology's
   own declared corner names (`technology.timing_corners`) -- the exact
   same set `active_views` validates against -- or free text if the

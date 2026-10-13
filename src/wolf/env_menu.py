@@ -30,7 +30,8 @@ from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import (
-    Button, DirectoryTree, Footer, Header, Input, OptionList, Static, TextArea, Tree,
+    Button, DirectoryTree, Footer, Header, Input, LoadingIndicator, OptionList, Static, TextArea,
+    Tree,
 )
 from textual.widgets.option_list import Option
 from textual.widgets.tree import TreeNode
@@ -953,6 +954,149 @@ class _NetListScreen(ModalScreen[Optional[list]]):
         self.dismiss(self._names)
 
 
+class _CellChecklistScreen(ModalScreen[Optional[list]]):
+    """Live, filterable checkbox picker over every cell/layer name a
+    resolved technology's own LEF files declare.
+
+    Not a type-a-pattern-then-decide flow: the full candidate list loads
+    once in a background worker (a progress message names each real file
+    while it's actually being scanned -- skipped entirely on a cache
+    hit, so a repeat visit feels instant), then typing in the filter
+    narrows which entries are *shown*, live, while checked selections
+    persist underneath whatever the filter currently hides. 'a' checks
+    every currently visible entry, 'd' unchecks every currently visible
+    entry -- both bindings only ever fire when the results list (not the
+    filter box) has focus, since Textual's own focused-widget-consumes-
+    first key handling means a letter typed into the filter is never
+    mistaken for one of these; Tab moves focus between the two.
+    """
+
+    BINDINGS = [
+        ("a", "select_all", "Select all visible"),
+        ("d", "deselect_all", "Deselect all visible"),
+        ("escape", "done", "Done"),
+    ]
+
+    def __init__(self, title: str, loader, selected, max_items: Optional[int] = None):
+        super().__init__()
+        self._title = title
+        # loader(on_file) -> Optional[list[CellInfo | str]] -- called in
+        # a worker thread; on_file(path) is invoked once per file right
+        # before a real (uncached) scan of it.
+        self._loader = loader
+        self._selected: set[str] = set(selected)
+        self._max_items = max_items
+        self._all: Optional[list[str]] = None
+        self._areas: dict[str, float] = {}
+        self._visible: list[str] = []
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="dialog"):
+            yield Static(self._title, id="dialog-title")
+            yield LoadingIndicator(id="loading")
+            yield Static("", id="progress")
+            yield Input(placeholder="type to filter (glob)", id="filter")
+            yield OptionList(id="results")
+            yield Static("", id="dialog-hint")
+
+    def on_mount(self) -> None:
+        self.query_one(Input).display = False
+        self.query_one("#results", OptionList).display = False
+        self.query_one("#dialog-hint", Static).display = False
+        self.run_worker(self._load, thread=True, exclusive=True)
+
+    def _load(self) -> None:
+        def report(path: Path) -> None:
+            self.app.call_from_thread(self._set_progress, f"Parsing {path.name}...")
+        result = self._loader(report)
+        self.app.call_from_thread(self._loaded, result)
+
+    def _set_progress(self, text: str) -> None:
+        self.query_one("#progress", Static).update(text)
+
+    def _loaded(self, result: Optional[list]) -> None:
+        self.query_one("#loading", LoadingIndicator).display = False
+        self.query_one("#progress", Static).display = False
+        names: list[str] = []
+        for item in result or []:
+            name = getattr(item, "name", item)
+            names.append(name)
+            area = getattr(item, "area", None)
+            if area is not None:
+                self._areas[name] = area
+        self._all = sorted(names)
+        self.query_one(Input).display = True
+        self.query_one("#results", OptionList).display = True
+        hint = self.query_one("#dialog-hint", Static)
+        hint.display = True
+        hint.update(
+            "type to filter -- tab: filter <-> list -- a: select visible -- "
+            "d: deselect visible -- enter/space: toggle -- esc: done"
+        )
+        self._refresh_options("")
+        self.query_one(Input).focus()
+
+    def _label(self, name: str) -> str:
+        area = self._areas.get(name)
+        checked = "x" if name in self._selected else " "
+        suffix = f"  ({area:g} um^2)" if area is not None else ""
+        return f"[{checked}] {name}{suffix}"
+
+    def _refresh_options(self, pattern: str) -> None:
+        if self._all is None:
+            return
+        glob = pattern if pattern else "*"
+        self._visible = [name for name in self._all if fnmatch.fnmatch(name, glob)]
+        option_list = self.query_one("#results", OptionList)
+        highlighted = option_list.highlighted
+        option_list.clear_options()
+        if not self._visible:
+            option_list.add_option(Option("(no matches)", id="__empty__", disabled=True))
+        else:
+            for name in self._visible:
+                option_list.add_option(Option(self._label(name), id=name))
+            if highlighted is not None and highlighted < len(self._visible):
+                option_list.highlighted = highlighted
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        self._refresh_options(event.value)
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        event.stop()
+        name = event.option_id
+        if name in (None, "__empty__"):
+            return
+        if name in self._selected:
+            self._selected.discard(name)
+        elif self._max_items is None or len(self._selected) < self._max_items:
+            self._selected.add(name)
+        else:
+            self.app.bell()
+        self._refresh_options(self.query_one(Input).value)
+
+    def action_select_all(self) -> None:
+        if not self.query_one("#results", OptionList).has_focus:
+            return
+        if self._max_items is None:
+            self._selected.update(self._visible)
+        else:
+            for name in self._visible:
+                if len(self._selected) >= self._max_items:
+                    self.app.bell()
+                    break
+                self._selected.add(name)
+        self._refresh_options(self.query_one(Input).value)
+
+    def action_deselect_all(self) -> None:
+        if not self.query_one("#results", OptionList).has_focus:
+            return
+        self._selected.difference_update(self._visible)
+        self._refresh_options(self.query_one(Input).value)
+
+    def action_done(self) -> None:
+        self.dismiss(sorted(self._selected))
+
+
 class _CellPatternListScreen(ModalScreen[Optional[list]]):
     """Add/remove entries for a cts_*_cells/add_tieoffs_cells-style
     value: each one is either a name pattern Innovus itself expands
@@ -1755,20 +1899,28 @@ class EnvWizardApp(App[None]):
         """Immutably write `value` at backend.cadence-flowtool.<path> --
         rebuilds every dict level touched rather than mutating in place,
         since self.backend_overrides is a shallow copy of the loaded
-        profile's own dict and must not alias it."""
+        profile's own dict and must not alias it. Clearing the last
+        value under a nested key (e.g. the only entry in cts.*) prunes
+        that now-empty parent too, rather than leaving a bare `cts: {}`
+        sitting in wolf.yaml."""
         cadence_flowtool = dict(self.backend_overrides.get("cadence-flowtool", {}))
+        chain = [cadence_flowtool]
         node = cadence_flowtool
         for key in path[:-1]:
             node[key] = dict(node.get(key, {}))
             node = node[key]
+            chain.append(node)
         if value in (None, [], ()):
             node.pop(path[-1], None)
+            for depth in range(len(chain) - 1, 0, -1):
+                if not chain[depth]:
+                    chain[depth - 1].pop(path[depth - 1], None)
         else:
             node[path[-1]] = value
         self.backend_overrides = {**self.backend_overrides, "cadence-flowtool": cadence_flowtool}
 
     def _edit_cell_pattern_list(
-        self, title: str, path: tuple[str, ...], candidates, max_items: Optional[int] = None,
+        self, title: str, path: tuple[str, ...], technology, max_items: Optional[int] = None,
         on_close=None,
     ) -> None:
         current = list(self._override_get(*path, default=[]))
@@ -1779,7 +1931,14 @@ class EnvWizardApp(App[None]):
                 self._refresh()
             if on_close:
                 on_close()
-        self.push_screen(_CellPatternListScreen(title, current, candidates, max_items), handle)
+        if technology is None:
+            # Nothing to browse -- the old free-text add/delete list.
+            self.push_screen(_CellPatternListScreen(title, current, None, max_items), handle)
+        else:
+            loader = lambda on_file: cells_for_technology(technology, on_file=on_file)  # noqa: E731
+            self.push_screen(
+                _CellChecklistScreen(title, loader, current, max_items), handle,
+            )
 
     def _edit_view_name_list(self, title: str, path: tuple[str, ...], candidates, on_close=None) -> None:
         current = tuple(self._override_get(*path, default=[]))
@@ -1815,7 +1974,12 @@ class EnvWizardApp(App[None]):
 
     def _edit_cadence_cts_tieoffs_routing(self) -> None:
         technology = self._resolved_technology()
-        cells = cells_for_technology(technology)
+        # Cell lists are resolved lazily, per field, inside
+        # _CellChecklistScreen's own worker (with a progress message) --
+        # not eagerly here, so opening this submenu itself never blocks
+        # on parsing a real LEF file. Layers/views are cheap (layers: a
+        # small, already-loaded tech LEF; views: already-resolved
+        # context data, no file I/O at all) and stay eager.
         layers = routing_layers_for_technology(technology)
         views = analysis_view_names_for_technology(technology)
 
@@ -1824,29 +1988,29 @@ class EnvWizardApp(App[None]):
                 return
             if choice == "buffer_cells":
                 self._edit_cell_pattern_list(
-                    "CTS buffer cells (default)", ("cts", "buffer_cells"), cells)
+                    "CTS buffer cells (default)", ("cts", "buffer_cells"), technology)
             elif choice == "buffer_cells_top":
                 self._edit_cell_pattern_list(
-                    "CTS buffer cells (top nets)", ("cts", "buffer_cells_top"), cells)
+                    "CTS buffer cells (top nets)", ("cts", "buffer_cells_top"), technology)
             elif choice == "buffer_cells_leaf":
                 self._edit_cell_pattern_list(
-                    "CTS buffer cells (leaf nets)", ("cts", "buffer_cells_leaf"), cells)
+                    "CTS buffer cells (leaf nets)", ("cts", "buffer_cells_leaf"), technology)
             elif choice == "inverter_cells":
                 self._edit_cell_pattern_list(
-                    "CTS inverter cells (default)", ("cts", "inverter_cells"), cells)
+                    "CTS inverter cells (default)", ("cts", "inverter_cells"), technology)
             elif choice == "inverter_cells_top":
                 self._edit_cell_pattern_list(
-                    "CTS inverter cells (top nets)", ("cts", "inverter_cells_top"), cells)
+                    "CTS inverter cells (top nets)", ("cts", "inverter_cells_top"), technology)
             elif choice == "inverter_cells_leaf":
                 self._edit_cell_pattern_list(
-                    "CTS inverter cells (leaf nets)", ("cts", "inverter_cells_leaf"), cells)
+                    "CTS inverter cells (leaf nets)", ("cts", "inverter_cells_leaf"), technology)
             elif choice == "clock_gating_cells":
                 self._edit_cell_pattern_list(
-                    "CTS clock-gating cells", ("cts", "clock_gating_cells"), cells)
+                    "CTS clock-gating cells", ("cts", "clock_gating_cells"), technology)
             elif choice == "tieoffs":
                 self._edit_cell_pattern_list(
                     "Tie-off cells (max 2: one tie-high driver, one tie-low driver)",
-                    ("tieoffs", "cells"), cells, max_items=2,
+                    ("tieoffs", "cells"), technology, max_items=2,
                 )
             elif choice == "active_setup":
                 self._edit_view_name_list(
