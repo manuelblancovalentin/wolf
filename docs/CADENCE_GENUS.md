@@ -160,7 +160,12 @@ Several steps are, deliberately, extension points rather than guessed
 content: `add_post_syn_constraints`, `create_fplan`,
 `add_clock_route_types`, and `PPA_recipe_set_path_group_options` need
 project-specific data (die size, post-synthesis constraint patches,
-non-default clock routing rules) WOLF does not resolve; `lec`, `DRC`,
+non-default clock routing rules) WOLF does not resolve --
+[`create_fplan.template.tcl`](../flows/cadence-genus/create_fplan.template.tcl)
+is a generic baseline for `create_fplan` specifically (die/core sizing, PG
+net bring-up, a parameterized stripe stack, and the save step are generic;
+macro/tile placement and pin assignment are explicitly left as a fill-in
+section, since those are inherently design-specific); `lec`, `DRC`,
 `LVS`, `create_virtuoso_lib`, `innovus_to_tempus`, `innovus_to_quantus`,
 and `schedule_signoff_subflows` depend on Conformal/Calibre/Tempus/Quantus
 conventions WOLF has no visibility into.
