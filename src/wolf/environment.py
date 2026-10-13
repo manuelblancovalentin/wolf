@@ -439,12 +439,12 @@ _TRACKED_TECHNOLOGY_FIELDS = {
 
 
 # gds is deliberately not here: a cell's own GDS geometry lives on the
-# metal layers shared by every stack option, so (unlike lef and
-# qrc_techfiles, both genuinely tied to the chosen stack) it doesn't vary
+# metal layers shared by every stack option, so (unlike lef/cell_lef and
+# qrc_techfiles, all genuinely tied to the chosen stack) it doesn't vary
 # by metal_stack -- see _resolve_gds_field for the one remaining place
 # a legacy per-stack gds mapping is still tolerated, for packages that
 # declared it that way before this stopped being a real axis for gds.
-_STACK_KEYED_FIELDS = ("lef", "qrc_techfiles")
+_STACK_KEYED_FIELDS = ("lef", "cell_lef", "qrc_techfiles")
 
 
 def _vth_metal_stacks(data: Mapping[str, Any], field: str) -> Optional[tuple[str, ...]]:
@@ -727,26 +727,37 @@ def _technology_variant(
     root: Path, track: str, vth: str, data: Any, reference: Optional[ComponentReference],
 ) -> tuple[
     tuple[ResolvedTimingCorner, ...], tuple[Path, ...], tuple[Path, ...], tuple[Path, ...],
-    tuple[Path, ...], tuple[Path, ...], tuple[Path, ...], tuple[ResolvedQrcCorner, ...],
-    Optional[str],
+    tuple[Path, ...], tuple[Path, ...], tuple[Path, ...], tuple[Path, ...],
+    tuple[ResolvedQrcCorner, ...], Optional[str],
 ]:
-    """Parse one tracks.<track>.vths.<vth> entry: corners, lef, gds, verilog, spice, qrc.
+    """Parse one tracks.<track>.vths.<vth> entry: corners, lef, cell_lef,
+    gds, verilog, spice, qrc.
 
-    lef/qrc_techfiles are physically tied to a metal stack (routing layer
-    count plus top-metal option, e.g. 9lmT2) -- a real design axis, not a
-    detail to just pick one file for and forget: the same track/vth can
-    legitimately be built against several stacks (cloning an environment
-    and only changing technology.metal_stack is meant to just work). See
-    _vth_metal_stacks/_select_metal_stack for how the stack actually gets
-    picked. gds does not share that axis -- a cell's own GDS geometry
-    lives on metal layers shared by every stack option -- so it's always
-    a flat list (see _resolve_gds_field for the one remaining tolerance:
-    a legacy per-stack mapping, from before this stopped being a real
-    axis for gds, still resolves rather than erroring). qrc_techfiles
-    goes one level deeper than lef instead: per metal stack *and* per
-    named rc-corner (see _resolve_qrc_techfiles) -- a real, independent
-    axis from the PVT timing corners above (BEOL process variation, not
-    FEOL transistor skew).
+    lef/cell_lef/qrc_techfiles are physically tied to a metal stack
+    (routing layer count plus top-metal option, e.g. 9lmT2) -- a real
+    design axis, not a detail to just pick one file for and forget: the
+    same track/vth can legitimately be built against several stacks
+    (cloning an environment and only changing technology.metal_stack is
+    meant to just work). See _vth_metal_stacks/_select_metal_stack for
+    how the stack actually gets picked. gds does not share that axis --
+    a cell's own GDS geometry lives on metal layers shared by every
+    stack option -- so it's always a flat list (see _resolve_gds_field
+    for the one remaining tolerance: a legacy per-stack mapping, from
+    before this stopped being a real axis for gds, still resolves
+    rather than erroring). qrc_techfiles goes one level deeper than lef
+    instead: per metal stack *and* per named rc-corner (see
+    _resolve_qrc_techfiles) -- a real, independent axis from the PVT
+    timing corners above (BEOL process variation, not FEOL transistor
+    skew).
+
+    cell_lef is a *separate* declared key, not implied by lef -- some
+    institutions genuinely ship a technology LEF (routing-layer/site
+    definitions) and a standard-cell LEF (cell abstracts) as two
+    distinct files. A package that ships one real merged LEF covering
+    both (TSMC's own standard-cell LEF deliverable, confirmed real)
+    simply never declares cell_lef at all; the caller then reuses lef
+    for both roles rather than requiring every package to redundantly
+    repeat the same path under two different keys.
     """
     field = f"tracks.{track}.vths.{vth}"
     if not isinstance(data, dict):
@@ -765,6 +776,7 @@ def _technology_variant(
             )
         metal_stack = None
         lef = _paths_under(root, data.get("lef", []), f"{field}.lef")
+        cell_lef = _paths_under(root, data.get("cell_lef", []), f"{field}.cell_lef")
     else:
         metal_stack = _select_metal_stack(stack_names, data, reference, field)
 
@@ -773,22 +785,23 @@ def _technology_variant(
             if value is None:
                 return ()
             if isinstance(value, list):
-                # Not stack-keyed at all for this field (lef/qrc_techfiles
-                # are allowed to disagree about which ones use the mapping
-                # form -- see _vth_metal_stacks).
+                # Not stack-keyed at all for this field (lef/cell_lef/
+                # qrc_techfiles are allowed to disagree about which
+                # ones use the mapping form -- see _vth_metal_stacks).
                 return _paths_under(root, value, f"{field}.{key}")
             if metal_stack not in value:
                 return ()
             return _paths_under(root, value[metal_stack], f"{field}.{key}.{metal_stack}")
         lef = stack_paths("lef")
+        cell_lef = stack_paths("cell_lef")
 
     qrc_corners, qrc_techfiles = _resolve_qrc_techfiles(root, data, field, metal_stack)
     gds = _resolve_gds_field(root, data, reference, field, metal_stack)
     verilog_models = _paths_under(root, data.get("verilog_models", []), f"{field}.verilog_models")
     spice_models = _paths_under(root, data.get("spice_models", []), f"{field}.spice_models")
     return (
-        corners, corner_qrc_files, lef, gds, verilog_models, spice_models, qrc_techfiles,
-        qrc_corners, metal_stack,
+        corners, corner_qrc_files, lef, cell_lef, gds, verilog_models, spice_models,
+        qrc_techfiles, qrc_corners, metal_stack,
     )
 
 
@@ -978,19 +991,30 @@ def _technology_inputs(
         track, vth, variant = _select_track_vth(metadata["tracks"], reference)
         selected_tracks = reference.tracks if (reference and reference.tracks) else (track,)
         selected_vths = reference.vths if (reference and reference.vths) else (vth,)
-        timing_corners, corner_qrc_files, technology_lefs, gds_files, verilog_models, \
-            spice_models, qrc_techfiles, qrc_corners, metal_stack = _technology_variant(
-                root, track, vth, variant, reference,
-            )
-        cell_lefs: tuple[Path, ...] = ()
-        rc_files: tuple[Path, ...] = ()
+        timing_corners, corner_qrc_files, technology_lefs, declared_cell_lefs, gds_files, \
+            verilog_models, spice_models, qrc_techfiles, qrc_corners, metal_stack = \
+            _technology_variant(root, track, vth, variant, reference)
+        # A package that ships one real merged LEF (technology geometry
+        # and cell abstracts together -- TSMC's own standard-cell LEF
+        # deliverable, confirmed real) never declares a separate
+        # cell_lef key at all; reuse the same technology LEF files for
+        # both roles rather than requiring every package to repeat the
+        # same path under two different keys. qrc_techfiles is already
+        # the flattened cross-corner captable list _resolve_qrc_techfiles
+        # itself produces, exactly what rc_files means for a flat
+        # (non-tracked) package -- the per-corner-named detail stays
+        # available separately via qrc_corners for anything that needs
+        # a specific corner's own captable, not just "is RC collateral
+        # present at all".
+        cell_lefs: tuple[Path, ...] = declared_cell_lefs or technology_lefs
+        rc_files: tuple[Path, ...] = qrc_techfiles
         libraries = tuple(dict.fromkeys(
             library for corner in timing_corners for library in corner.libraries
         ))
         corner = f"{track}/{vth}"
         all_files = (
-            *libraries, *technology_lefs, *gds_files, *verilog_models, *spice_models,
-            *qrc_techfiles, *corner_qrc_files,
+            *libraries, *technology_lefs, *declared_cell_lefs, *gds_files, *verilog_models,
+            *spice_models, *qrc_techfiles, *corner_qrc_files,
         )
         catalog_library_sets, catalog_lef_files, catalog_gds_files = _build_catalog(
             root, metadata["tracks"], metal_stack,

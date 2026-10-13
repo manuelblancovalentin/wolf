@@ -1224,13 +1224,33 @@ def validate_genus(
             ", ".join(str(path) for path in technology.timing_libraries) or "none configured",
         ))
         if physical:
+            # Split so a real gap says exactly which piece is missing --
+            # a combined "technology and cell LEF" message left someone
+            # with only one of the two guessing which one Innovus
+            # actually lacks. A tracked package that ships one real
+            # merged LEF (technology + cell geometry together) has both
+            # non-empty from the same file (see environment.py's own
+            # _technology_inputs), so this isn't asking for two separate
+            # files -- only that Innovus's own real minimum (routing-
+            # layer/site geometry, and standard-cell abstracts) is
+            # actually present, however it got there.
             checks.append(GenusValidation(
-                "technology LEF", bool(technology.technology_lefs and technology.cell_lefs),
-                "technology and cell LEF required for physical implementation",
+                "technology LEF", bool(technology.technology_lefs),
+                "technology LEF (routing layers/sites) required for physical implementation"
+                if not technology.technology_lefs else
+                ", ".join(str(path) for path in technology.technology_lefs),
+            ))
+            checks.append(GenusValidation(
+                "cell LEF", bool(technology.cell_lefs),
+                "cell LEF (standard-cell abstracts) required for physical implementation"
+                if not technology.cell_lefs else
+                ", ".join(str(path) for path in technology.cell_lefs),
             ))
             checks.append(GenusValidation(
                 "technology RC", bool(technology.rc_files),
-                "RC setup/extraction collateral required for physical implementation",
+                "RC setup/extraction collateral (qrc techfiles/captables) required for "
+                "physical implementation" if not technology.rc_files else
+                ", ".join(str(path) for path in technology.rc_files),
             ))
     for key in ("LIBRARY_FILES", "LEF_FILES", "QRC_TECH_FILE", "TECHNOLOGY_SETUP"):
         value = context.values.get(key)

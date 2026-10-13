@@ -716,6 +716,85 @@ class MetalStackTests(DeclarativeEnvironmentTests):
                 state_root=self.state, environment_directory=self.environment,
             )
 
+    def test_a_merged_lef_with_no_separate_cell_lef_satisfies_both_roles(self):
+        """A package that ships one real merged LEF (technology geometry
+        and cell abstracts together -- TSMC's own standard-cell LEF
+        deliverable, confirmed real) never declares a separate cell_lef
+        key at all; cell_lefs must reuse the same technology LEF files
+        rather than staying empty forever -- the real bug this pins:
+        validate_genus's own physical-implementation gate required
+        technology_lefs AND cell_lefs both non-empty, but a tracked
+        package's cell_lefs was always hardcoded empty regardless of
+        what the manifest actually declared, so no tracked package
+        could ever pass physical validation at all."""
+        self._stacked_package()
+        context = resolve_declarative_environment(
+            load_environment(self._write(self._yaml_with_stack(metal_stack="7lmT1"), "stacks.yaml")),
+            state_root=self.state, environment_directory=self.environment,
+        )
+        self.assertTrue(context.technology.cell_lefs)
+        self.assertEqual(context.technology.cell_lefs, context.technology.technology_lefs)
+
+    def test_a_separately_declared_cell_lef_wins_over_the_merged_default(self):
+        """An institution that genuinely ships two distinct files (a
+        technology LEF and a separate standard-cell LEF) declares
+        cell_lef explicitly -- it must win over the "reuse lef" default,
+        not be silently ignored."""
+        lvt = {
+            "lef": {"7lmT1": ["lef/9t_lvt_7lmT1.lef"]},
+            "cell_lef": {"7lmT1": ["cells/9t_lvt_7lmT1_cells.lef"]},
+            "timing": {"corners": {"typical": {"libraries": ["lib/9t_lvt_typical.lib"]}}},
+        }
+        self._package("pdk", "tsmc65-stacks", "pdk-rev", {"technology": {
+            "name": "tsmc65-stacks", "tracks": {"9T": {"vths": {"lvt": lvt}}},
+        }})
+        for relative in ("lef/9t_lvt_7lmT1.lef", "cells/9t_lvt_7lmT1_cells.lef", "lib/9t_lvt_typical.lib"):
+            self._write_file(relative)
+        context = resolve_declarative_environment(
+            load_environment(self._write(self._yaml_with_stack(metal_stack="7lmT1"), "stacks.yaml")),
+            state_root=self.state, environment_directory=self.environment,
+        )
+        self.assertTrue(str(context.technology.cell_lefs[0]).endswith("9t_lvt_7lmT1_cells.lef"))
+        self.assertNotEqual(context.technology.cell_lefs, context.technology.technology_lefs)
+
+    def test_rc_files_are_populated_from_qrc_techfiles(self):
+        """rc_files was always hardcoded empty for a tracked package even
+        though qrc_techfiles (the real per-stack captable data) was
+        already being resolved correctly -- validate_genus's own RC gate
+        could never pass as a result, regardless of what captables the
+        package actually declared."""
+        self._stacked_package()
+        context = resolve_declarative_environment(
+            load_environment(self._write(self._yaml_with_stack(metal_stack="7lmT1"), "stacks.yaml")),
+            state_root=self.state, environment_directory=self.environment,
+        )
+        self.assertTrue(context.technology.rc_files)
+        self.assertEqual(context.technology.rc_files, context.technology.qrc_techfiles)
+
+    def test_a_tracked_package_passes_physical_implementation_validation(self):
+        """End-to-end regression: a tracked PDK package (TSMC65-shaped --
+        one merged LEF, per-stack qrc captables, no separate cell_lef/rc
+        keys declared) must be able to pass `wolf run -from floorplan
+        --plan`'s own validate_genus(physical=True) gate. Confirmed real:
+        every tracked package failed this with "technology and cell LEF
+        required"/"RC setup/extraction collateral required" before this
+        fix, even though the real underlying LEF/captable data existed
+        in the manifest the whole time -- it just never reached
+        cell_lefs/rc_files."""
+        from wolf.backend.cadence_genus import validate_genus
+        self._stacked_package()
+        context = resolve_declarative_environment(
+            load_environment(self._write(self._yaml_with_stack(metal_stack="7lmT1"), "stacks.yaml")),
+            state_root=self.state, environment_directory=self.environment,
+        )
+        checks = validate_genus(
+            context, executable_lookup=lambda name: "/opt/cadence/flowtool", physical=True,
+        )
+        by_name = {item.name: item for item in checks}
+        self.assertTrue(by_name["technology LEF"].available, by_name["technology LEF"].detail)
+        self.assertTrue(by_name["cell LEF"].available, by_name["cell LEF"].detail)
+        self.assertTrue(by_name["technology RC"].available, by_name["technology RC"].detail)
+
     def test_mismatched_stack_keys_across_fields_resolve_whichever_has_the_selected_stack(self):
         """lef and qrc_techfiles are allowed to declare different stack
         sets -- confirmed real PDK data: a vth's qrc_techfiles having
