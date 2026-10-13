@@ -116,12 +116,16 @@ class GenusFixtureTestCase(unittest.TestCase):
 class GenusFlowtoolTemplateTests(GenusFixtureTestCase):
     def test_missing_flowtool_override_uses_bundled_default(self):
         """Omitting backend.cadence-flowtool.flowtool entirely is the normal
-        case: WOLF's own flow_template is used and no setup.yaml is written."""
+        case: WOLF's own flow_template AND setup_template are both used --
+        get_flow_config design_name is always available, no per-project
+        configuration required (see flows/cadence-genus/setup.template.yaml)."""
         inputs = prepare_genus_inputs(
             self._context(backend_overrides={"cadence-flowtool": {}}),
             self.root / "backend" / "cadence-genus",
         )
-        self.assertIsNone(inputs.setup_yaml)
+        self.assertIsNotNone(inputs.setup_yaml)
+        document = yaml.safe_load(inputs.setup_yaml.read_text(encoding="utf-8"))
+        self.assertEqual(document["design_name"], "demo")
         flow_text = inputs.flow_yaml.read_text(encoding="utf-8")
         self.assertIn("flow_current: block", flow_text)
         self.assertIn(str(inputs.scripts_directory), flow_text)
@@ -155,6 +159,28 @@ class GenusFlowtoolTemplateTests(GenusFixtureTestCase):
                 }),
                 self.root / "backend" / "cadence-genus",
             )
+
+    def test_default_setup_yaml_and_mmmc_tcl_are_generated_together(self):
+        """Regression: setup.yaml (get_flow_config) and mmmc.tcl (WOLF's
+        own plain-Tcl MMMC generation) used to be mutually exclusive, gated
+        on whether a setup_template override was given -- they are now
+        complementary and both always present by default for a technology
+        with timing corners, since WOLF's own bundled flow steps still read
+        flow-config.tcl directly while a project's injected Tcl can use
+        get_flow_config instead."""
+        corner = ResolvedTimingCorner(name="tt", libraries=(self.root / "tt.lib",))
+        (self.root / "tt.lib").write_text("-- tt.lib --\n", encoding="utf-8")
+        technology = ResolvedTechnology(
+            package="pdk/demo", revision="1", name="demo", root=self.root,
+            timing_corners=(corner,),
+        )
+        inputs = prepare_genus_inputs(
+            self._context(backend_overrides={"cadence-flowtool": {}}, technology=technology),
+            self.root / "backend" / "cadence-genus",
+        )
+        self.assertIsNotNone(inputs.setup_yaml)
+        self.assertTrue(inputs.setup_yaml.is_file())
+        self.assertTrue((self.root / "backend" / "cadence-genus" / "mmmc.tcl").is_file())
 
     def test_templates_are_rendered_with_resolved_placeholders(self):
         inputs = prepare_genus_inputs(self._context(), self.root / "backend" / "cadence-genus")
@@ -192,10 +218,18 @@ class GenusSetupYamlFragmentTests(GenusFixtureTestCase):
             self._context(technology=technology), self.root / "backend" / "cadence-genus",
         )
         setup_text = inputs.setup_yaml.read_text(encoding="utf-8")
-        self.assertIn("dont_use_cells:\n  - '*D0'", setup_text)
-        # Only the primary template's own header survives -- the fragment's
-        # was dropped, so there's exactly one document-start marker.
-        self.assertEqual(setup_text.count("%TAG"), 1)
+        document = yaml.safe_load(setup_text)
+        self.assertEqual(document["dont_use_cells"], ["*D0"])
+        # Concatenation still only ever carries the primary template's
+        # document content forward (the fragment's own %TAG header line is
+        # dropped before concatenation, so there was only ever one %TAG
+        # directive to begin with) -- a single valid document, not two
+        # merged/duplicated ones. The directive itself does not survive
+        # the yaml.safe_load/safe_dump round trip design_name's always-on
+        # injection now requires (see _catalog_document), same as it
+        # already didn't for any tracked package with real catalog data
+        # before this change.
+        self.assertEqual(document["design_name"], "demo")
 
     def test_catalog_is_injected_with_the_confirmed_get_flow_config_keys(self):
         """library_sets/init_physical_files/std_cell_GDS_files -- the exact
@@ -243,14 +277,20 @@ class GenusSetupYamlFragmentTests(GenusFixtureTestCase):
         setup_text = inputs.setup_yaml.read_text(encoding="utf-8")
         self.assertIn(f"pdk_dir: {self.root}", setup_text)
         self.assertIn("metal_stack: 9lmT2", setup_text)
+        self.assertNotIn("${", setup_text)
         # Rendered as yaml lists, not bare scalars -- a real flow's own
         # synthesis.tcl loops `foreach trk [get_flow_config tracks] {
         # foreach vth [get_flow_config vths] { ... } }`, so even a single
         # value needs to actually be a list for a run selecting several
-        # vths (lvt+rvt, say) to work the same way.
-        self.assertIn("tracks: [9T]", setup_text)
-        self.assertIn("vths: [lvt]", setup_text)
-        self.assertNotIn("${", setup_text)
+        # vths (lvt+rvt, say) to work the same way. Parsed, not a raw
+        # substring match -- design_name/tracks/vths/metal_stack are now
+        # always injected programmatically too (see _catalog_document),
+        # which round-trips the whole document through yaml.safe_dump and
+        # so no longer preserves the fragment's own inline flow-style
+        # formatting verbatim.
+        document = yaml.safe_load(setup_text)
+        self.assertEqual(document["tracks"], ["9T"])
+        self.assertEqual(document["vths"], ["lvt"])
 
     def test_multiple_selected_vths_render_as_a_real_list(self):
         """Confirmed real usage: a legacy setup.yaml's own `vths: ${VTHS}`
@@ -268,9 +308,9 @@ class GenusSetupYamlFragmentTests(GenusFixtureTestCase):
         inputs = prepare_genus_inputs(
             self._context(technology=technology), self.root / "backend" / "cadence-genus",
         )
-        setup_text = inputs.setup_yaml.read_text(encoding="utf-8")
-        self.assertIn("tracks: [9T]", setup_text)
-        self.assertIn("vths: [lvt, rvt]", setup_text)
+        document = yaml.safe_load(inputs.setup_yaml.read_text(encoding="utf-8"))
+        self.assertEqual(document["tracks"], ["9T"])
+        self.assertEqual(document["vths"], ["lvt", "rvt"])
 
     def test_technology_generic_is_a_fallback_source_for_unknown_tokens(self):
         fragment = self._fragment("io_lib_dir: ${IO_LIB_DIR}\n")
@@ -588,6 +628,24 @@ class GenusThreadsTests(GenusFixtureTestCase):
                 self.root / "backend" / "cadence-genus",
             )
 
+    def test_innovus_init_step_also_applies_the_resolved_thread_count(self):
+        """Regression: resources.threads was only ever wired to Genus's own
+        set_db max_cpus_per_server (synthesis.tcl's init_genus) -- Innovus
+        ran single-threaded through place/CTS/route with no equivalent,
+        silently, on a design large enough for that to matter. init_innovus
+        re-runs at the start of every implementation stage (a separate
+        Innovus invocation each time), so it must re-apply the same
+        $::wolf_max_cpus_per_server flow-config.tcl already resolves for
+        Genus, via Innovus's own set_multi_cpu_usage (it has no equivalent
+        set_db attribute)."""
+        step = builtin_flow_root("cadence-genus") / "floorplanning.tcl"
+        text = step.read_text(encoding="utf-8")
+        bodies = _extract_step_bodies(text)
+        self.assertIn("init_innovus", bodies)
+        body = bodies["init_innovus"]
+        self.assertIn("set_multi_cpu_usage -local_cpu $::wolf_max_cpus_per_server", body)
+        self.assertIn('if {$::wolf_max_cpus_per_server ne ""}', body)
+
 
 class GenusSynthesisFlowTests(GenusFixtureTestCase):
     """Resolved-value plumbing for the selectable Genus flows.
@@ -794,6 +852,169 @@ class GenusMultiCornerMmmcTests(GenusFixtureTestCase):
         manifest = yaml.safe_load(inputs.manifest.read_text(encoding="utf-8"))
         corner_names = {entry["name"] for entry in manifest["technology"]["timing_corners"]}
         self.assertEqual(corner_names, {"typical", "worst_case"})
+
+
+class GenusActiveViewsTests(GenusFixtureTestCase):
+    """backend.cadence-flowtool.active_views.{setup,hold} -- narrows which
+    declared analysis views genus_turn_on_analysis_views re-activates on
+    the Innovus side of every implementation stage, instead of always
+    re-activating every one (heavy for early place/CTS on a design with
+    several corners, confirmed a real need: a project activating only its
+    slowest/fastest corner through place/CTS, every corner again at
+    route/signoff)."""
+
+    def _corners(self):
+        typical_lib = self.root / "typical.lib"
+        worst_lib = self.root / "worst.lib"
+        for path in (typical_lib, worst_lib):
+            path.write_text(f"-- {path.name} --\n", encoding="utf-8")
+        return (
+            ResolvedTimingCorner(name="typical", libraries=(typical_lib,)),
+            ResolvedTimingCorner(name="worst_case", libraries=(worst_lib,)),
+        )
+
+    def test_default_is_empty_meaning_every_declared_view(self):
+        inputs = prepare_genus_inputs(
+            self._context(technology=ResolvedTechnology(
+                package="pdk/demo", revision="1", name="demo", root=self.root,
+                timing_corners=self._corners(),
+            )),
+            self.root / "backend" / "cadence-genus",
+        )
+        flow_config = inputs.flow_config_script.read_text(encoding="utf-8")
+        self.assertIn("set wolf_active_setup_views {}", flow_config)
+        self.assertIn("set wolf_active_hold_views {}", flow_config)
+
+    def test_setup_and_hold_views_are_resolved_into_flow_config(self):
+        inputs = prepare_genus_inputs(
+            self._context(
+                technology=ResolvedTechnology(
+                    package="pdk/demo", revision="1", name="demo", root=self.root,
+                    timing_corners=self._corners(),
+                ),
+                backend_overrides={"cadence-flowtool": {
+                    **self.flowtool_overrides["cadence-flowtool"],
+                    "active_views": {"setup": ["worst_case"], "hold": ["typical"]},
+                }},
+            ),
+            self.root / "backend" / "cadence-genus",
+        )
+        flow_config = inputs.flow_config_script.read_text(encoding="utf-8")
+        self.assertIn('set wolf_active_setup_views {"worst_case"}', flow_config)
+        self.assertIn('set wolf_active_hold_views {"typical"}', flow_config)
+
+    def test_a_view_name_not_declared_by_the_technology_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "names undeclared view"):
+            prepare_genus_inputs(
+                self._context(
+                    technology=ResolvedTechnology(
+                        package="pdk/demo", revision="1", name="demo", root=self.root,
+                        timing_corners=self._corners(),
+                    ),
+                    backend_overrides={"cadence-flowtool": {
+                        **self.flowtool_overrides["cadence-flowtool"],
+                        "active_views": {"setup": ["nope"]},
+                    }},
+                ),
+                self.root / "backend" / "cadence-genus",
+            )
+
+    def test_unsupported_active_views_key_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "unsupported backend.cadence-flowtool.active_views key"):
+            prepare_genus_inputs(
+                self._context(backend_overrides={"cadence-flowtool": {
+                    **self.flowtool_overrides["cadence-flowtool"],
+                    "active_views": {"bogus": []},
+                }}),
+                self.root / "backend" / "cadence-genus",
+            )
+
+    def test_genus_turn_on_analysis_views_consumes_the_resolved_lists(self):
+        step = builtin_flow_root("cadence-genus") / "floorplanning.tcl"
+        bodies = _extract_step_bodies(step.read_text(encoding="utf-8"))
+        body = bodies["genus_turn_on_analysis_views"]
+        self.assertIn("set_analysis_view -setup $wolf_setup_views -hold $wolf_hold_views", body)
+        self.assertIn("if {[llength $::wolf_active_setup_views]}", body)
+        self.assertIn("if {[llength $::wolf_active_hold_views]}", body)
+
+
+class GenusPowerGroundNetsTests(GenusFixtureTestCase):
+    """constraints.power_nets/ground_nets -- a design with no power intent
+    (CPF/UPF) file has no VDD/VSS nets at all once handed off to Innovus,
+    and connect_global_net/route_special/add_stripes all fail with "net
+    does not exist" until something creates them. Setting Genus's own
+    init_power_nets/init_ground_nets before init_design (synthesis.tcl's
+    run_init_design) is the real fix -- it carries through
+    write_design -innovus's own handoff init script automatically,
+    rather than needing a manual create_net workaround on the Innovus
+    side."""
+
+    def test_default_is_no_nets(self):
+        inputs = prepare_genus_inputs(self._context(), self.root / "backend" / "cadence-genus")
+        flow_config = inputs.flow_config_script.read_text(encoding="utf-8")
+        self.assertIn("set wolf_power_nets {}", flow_config)
+        self.assertIn("set wolf_ground_nets {}", flow_config)
+
+    def test_resolved_nets_are_written_into_flow_config(self):
+        inputs = prepare_genus_inputs(
+            self._context(power_nets=("VDD", "VDD1"), ground_nets=("VSS",)),
+            self.root / "backend" / "cadence-genus",
+        )
+        flow_config = inputs.flow_config_script.read_text(encoding="utf-8")
+        self.assertIn('set wolf_power_nets {"VDD" "VDD1"}', flow_config)
+        self.assertIn('set wolf_ground_nets {"VSS"}', flow_config)
+
+    def test_get_flow_config_exposes_power_and_ground_nets(self):
+        inputs = prepare_genus_inputs(
+            self._context(power_nets=("VDD",), ground_nets=("VSS",)),
+            self.root / "backend" / "cadence-genus",
+        )
+        document = yaml.safe_load(inputs.setup_yaml.read_text(encoding="utf-8"))
+        self.assertEqual(document["power_nets"], ["VDD"])
+        self.assertEqual(document["ground_nets"], ["VSS"])
+
+    def test_default_has_no_power_or_ground_net_keys_in_setup_yaml(self):
+        inputs = prepare_genus_inputs(self._context(), self.root / "backend" / "cadence-genus")
+        document = yaml.safe_load(inputs.setup_yaml.read_text(encoding="utf-8"))
+        self.assertNotIn("power_nets", document)
+        self.assertNotIn("ground_nets", document)
+
+    def test_run_init_design_applies_them_before_init_design(self):
+        step = builtin_flow_root("cadence-genus") / "synthesis.tcl"
+        bodies = _extract_step_bodies(step.read_text(encoding="utf-8"))
+        body = bodies["run_init_design"]
+        self.assertIn("set_db init_power_nets $::wolf_power_nets", body)
+        self.assertIn("set_db init_ground_nets $::wolf_ground_nets", body)
+        # The real init_design call is the LAST occurrence of the word in
+        # the step body -- an earlier one is inside a comment explaining
+        # why init_design runs at all.
+        self.assertLess(body.index("set_db init_power_nets"), body.rindex("init_design"))
+
+
+class GenusFloorplanDefExportTests(GenusFixtureTestCase):
+    """export_floorplan_def -- a durable, reloadable DEF snapshot of every
+    floorplan run, independent of create_fplan's own injected Tcl, so a
+    later run (e.g. after re-running synthesis, with no Innovus DB left to
+    restore from) can reload it via the existing constraints.floorplan_def
+    / load_floorplan read_def path instead of re-deriving the floorplan."""
+
+    def test_step_is_part_of_the_floorplan_flow_after_commit_power_intent(self):
+        flows_text = (builtin_flow_root("cadence-genus") / "common_flows.tcl").read_text(
+            encoding="utf-8",
+        )
+        self.assertIn(
+            "commit_power_intent export_floorplan_def block_finish", flows_text,
+        )
+
+    def test_step_writes_a_def_named_after_the_design_into_outputs(self):
+        step = builtin_flow_root("cadence-genus") / "floorplanning.tcl"
+        bodies = _extract_step_bodies(step.read_text(encoding="utf-8"))
+        body = bodies["export_floorplan_def"]
+        self.assertIn(
+            'set wolf_fp_def_out [file join $::wolf_outputs_dir "$::wolf_design_name.floorplan.def"]',
+            body,
+        )
+        self.assertIn("write_def $wolf_fp_def_out", body)
 
 
 class GenusExtraConstraintsTests(GenusFixtureTestCase):
@@ -1069,6 +1290,7 @@ proc wolf_test_run_flow {name} {
             "wolf_clock_derate_early": '""', "wolf_clock_derate_late": '""',
             "wolf_preserve_blocks": "{}", "wolf_preserve_instances": "{}",
             "wolf_power_intent_file": '""', "wolf_max_routing_layers": '""',
+            "wolf_power_nets": "{}", "wolf_ground_nets": "{}",
         }
         values.update(extra)
         (self.root / "reports").mkdir(exist_ok=True)

@@ -106,8 +106,8 @@ create_flow -name report_postroute -owner wolf -tool innovus -tool_options -disa
 create_flow -name floorplan -owner wolf -tool innovus -tool_options -disable_user_startup \
     {block_start init_implementation init_innovus add_post_syn_constraints \
      genus_turn_on_analysis_views PPA_recipe_set_path_group_options CMD_set_cong_aware \
-     create_fplan load_floorplan add_tracks commit_power_intent block_finish report_floorplan \
-     lec export DRC}
+     create_fplan load_floorplan add_tracks commit_power_intent export_floorplan_def block_finish \
+     report_floorplan lec export DRC}
 
 create_flow -name prects -owner wolf -tool innovus -tool_options -disable_user_startup \
     {block_start init_innovus add_clock_spec add_clock_route_types commit_route_types \

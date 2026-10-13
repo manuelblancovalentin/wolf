@@ -1,0 +1,18 @@
+%TAG ! tag:design.stylus.cadence.com,0.1:
+---
+# WOLF's own default Flowtool setup.yaml for the bundled cadence-genus
+# flow -- not an institution-specific legacy file (see
+# templates/<pdk>/<pdk>.setup.template.yaml for those). design_name,
+# tracks, vths, metal_stack, and the PDK's full library_sets/
+# init_physical_files/std_cell_GDS_files catalog are injected directly
+# by WOLF itself (see _catalog_document in wolf/backend/cadence_genus.py),
+# not via dollar-brace token substitution, so get_flow_config works for every
+# cadence-flowtool run with no per-project configuration -- including a
+# flat (non-tracked) technology package or a run with no technology
+# selected at all, where tracks/vths/metal_stack are simply absent
+# rather than left as a dangling placeholder.
+#
+# A project with its own legacy institution setup.yaml can still
+# override this file via backend.cadence-flowtool.flowtool.setup_template
+# (paired with flow_template); WOLF's programmatic injection applies on
+# top of that override's own content the same way it applies here.

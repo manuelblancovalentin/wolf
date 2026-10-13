@@ -192,6 +192,34 @@ class EnvWizardEndToEndTests(unittest.TestCase):
                 await pilot.press("escape")  # done with constraints
                 await pilot.pause()
 
+                # Power/ground nets: add one of each.
+                self._select(app.screen.query_one(OptionList), "Power/ground nets: none set")
+                await pilot.press("enter")
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "Power nets (0)")
+                await pilot.press("enter")
+                await pilot.pause()
+                await pilot.press("a")
+                await pilot.pause()
+                app.screen.query_one(Input).value = "VDD"
+                await pilot.press("enter")
+                await pilot.pause()
+                await pilot.press("escape")  # done with power nets, back to main menu
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "Power/ground nets: 1 power / 0 ground")
+                await pilot.press("enter")
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "Ground nets (0)")
+                await pilot.press("enter")
+                await pilot.pause()
+                await pilot.press("a")
+                await pilot.pause()
+                app.screen.query_one(Input).value = "VSS"
+                await pilot.press("enter")
+                await pilot.pause()
+                await pilot.press("escape")  # done with ground nets
+                await pilot.pause()
+
                 await pilot.press("s")
                 await pilot.pause()
 
@@ -210,7 +238,10 @@ class EnvWizardEndToEndTests(unittest.TestCase):
             document["technology"],
             {"package": "pdk/testpdk", "track": "9T", "vth": "lvt", "metal_stack": "7lmT1"},
         )
-        self.assertEqual(document["constraints"], {"files": [str(self.sdc_path)]})
+        self.assertEqual(
+            document["constraints"],
+            {"files": [str(self.sdc_path)], "power_nets": ["VDD"], "ground_nets": ["VSS"]},
+        )
         self.assertEqual(document["project"], {"root": str(project_root)})
 
     def test_track_vth_and_metal_stack_require_their_prerequisites(self):

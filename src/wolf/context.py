@@ -255,6 +255,8 @@ class ResolvedContext:
     constraint_files: tuple[Path, ...] = ()
     constraint_lines: tuple[str, ...] = ()
     floorplan_def: Optional[Path] = None
+    power_nets: tuple[str, ...] = ()
+    ground_nets: tuple[str, ...] = ()
     project_root: Optional[Path] = None
     threads: Optional[int] = None
     backend_overrides: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)

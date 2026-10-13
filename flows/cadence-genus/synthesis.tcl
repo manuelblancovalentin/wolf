@@ -241,6 +241,22 @@ create_flow_step -name run_init_design -owner wolf {
     # syn_gen command"), not only for physical views -- confirmed against
     # a real multi-corner MMMC run with no LEF data at all.
     if {$has_physical_views || $::wolf_mmmc_script ne ""} {
+        # constraints.power_nets/ground_nets (optional, default none): set
+        # before init_design so the real VDD/VSS nets exist from here on
+        # and carry through write_design -innovus's own handoff init
+        # script automatically -- without this, a design with no power
+        # intent (CPF/UPF) file has no power/ground nets at all on the
+        # Innovus side, and connect_global_net/route_special/add_stripes
+        # all fail with "net does not exist" until something creates them
+        # by hand.
+        if {[llength $::wolf_power_nets]} {
+            set_db init_power_nets $::wolf_power_nets
+            wolf_info "init_power_nets: $::wolf_power_nets"
+        }
+        if {[llength $::wolf_ground_nets]} {
+            set_db init_ground_nets $::wolf_ground_nets
+            wolf_info "init_ground_nets: $::wolf_ground_nets"
+        }
         init_design
     } else {
         wolf_info "run_init_design: no physical views or MMMC active, skipping"

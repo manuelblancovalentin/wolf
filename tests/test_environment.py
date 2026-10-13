@@ -380,6 +380,43 @@ workspace:
             with self.subTest(message=message), self.assertRaisesRegex(ValueError, message):
                 load_environment(self._write(text, f"bad-constraints-{index}.yaml"))
 
+    def test_power_and_ground_nets_default_to_empty(self):
+        profile = load_environment(self._write(self._complete_yaml()), expected_name="demo")
+        self.assertEqual(profile.power_nets, ())
+        self.assertEqual(profile.ground_nets, ())
+        context = resolve_declarative_environment(
+            profile, state_root=self.state, environment_directory=self.environment
+        )
+        self.assertEqual(context.power_nets, ())
+        self.assertEqual(context.ground_nets, ())
+
+    def test_power_and_ground_nets_are_resolved_as_a_list(self):
+        extra = "  power_nets: [VDD, VDD1]\n  ground_nets: [VSS]\n"
+        text = self._complete_yaml().replace(
+            "constraints:\n  clocks:", f"constraints:\n{extra}  clocks:"
+        )
+        profile = load_environment(self._write(text, "with-power-nets.yaml"), expected_name="demo")
+        self.assertEqual(profile.power_nets, ("VDD", "VDD1"))
+        self.assertEqual(profile.ground_nets, ("VSS",))
+        context = resolve_declarative_environment(
+            profile, state_root=self.state, environment_directory=self.environment
+        )
+        self.assertEqual(context.power_nets, ("VDD", "VDD1"))
+        self.assertEqual(context.ground_nets, ("VSS",))
+
+    def test_power_and_ground_nets_must_be_lists_of_nonempty_strings(self):
+        cases = (
+            ("power_nets", "not-a-list", "constraints.power_nets must be a list"),
+            ("power_nets", "['']", "constraints.power_nets must be a list"),
+            ("ground_nets", "[1]", "constraints.ground_nets must be a list"),
+        )
+        for index, (key, value, message) in enumerate(cases):
+            text = self._complete_yaml().replace(
+                "constraints:\n  clocks:", f"constraints:\n  {key}: {value}\n  clocks:"
+            )
+            with self.subTest(message=message), self.assertRaisesRegex(ValueError, message):
+                load_environment(self._write(text, f"bad-power-nets-{index}.yaml"))
+
 
 class MultiCornerTechnologyTests(DeclarativeEnvironmentTests):
     """Technology packages may declare several named MMMC corners."""

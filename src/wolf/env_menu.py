@@ -895,6 +895,59 @@ class _ConstraintFilesScreen(ModalScreen[Optional[list]]):
         self.dismiss(self._files)
 
 
+class _NetListScreen(ModalScreen[Optional[list]]):
+    """Add/remove a plain list of net names -- constraints.power_nets/
+    ground_nets, same add/delete/done shape as _ConstraintFilesScreen,
+    just typed names instead of browsed file paths (there is nothing to
+    browse for a net name)."""
+
+    BINDINGS = [
+        ("a", "add", "Add"),
+        ("d", "delete", "Delete"),
+        ("escape", "done", "Done"),
+    ]
+
+    def __init__(self, title: str, names: list[str]):
+        super().__init__()
+        self._title = title
+        self._names = list(names)
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="dialog"):
+            yield Static(self._title, id="dialog-title")
+            yield OptionList(*self._options())
+            yield Static("a: add — d: delete highlighted — esc: done", id="dialog-hint")
+
+    def _options(self) -> list[Option]:
+        if not self._names:
+            return [Option("(none yet — press 'a' to add)", id="__empty__", disabled=True)]
+        return [Option(name, id=str(index)) for index, name in enumerate(self._names)]
+
+    def _refresh(self) -> None:
+        option_list = self.query_one(OptionList)
+        option_list.clear_options()
+        for option in self._options():
+            option_list.add_option(option)
+
+    def action_add(self) -> None:
+        def handle_name(value: Optional[str]) -> None:
+            if value and value not in self._names:
+                self._names.append(value)
+                self._refresh()
+        self.app.push_screen(_TextScreen(f"Net name to add to {self._title}"), handle_name)
+
+    def action_delete(self) -> None:
+        option_list = self.query_one(OptionList)
+        index = option_list.highlighted
+        if index is None or index >= len(self._names):
+            return
+        del self._names[index]
+        self._refresh()
+
+    def action_done(self) -> None:
+        self.dismiss(self._names)
+
+
 class _MultiPickScreen(ModalScreen[Optional[list]]):
     """A checklist, not a single pick -- 'enter' toggles the highlighted
     item's membership, 'esc' finishes with whatever's checked (possibly
@@ -1242,6 +1295,8 @@ class EnvWizardApp(App[None]):
         self.clocks: list[dict] = []
         self.constraint_lines: list[str] = []
         self.floorplan_def: Optional[str] = None
+        self.power_nets: list[str] = []
+        self.ground_nets: list[str] = []
         self.threads: Optional[int] = None
         self.backend_overrides: dict = {}
         self.env_vars: dict = {}
@@ -1276,6 +1331,8 @@ class EnvWizardApp(App[None]):
             ]
             self.constraint_lines = list(profile.constraint_lines)
             self.floorplan_def = profile.floorplan_def
+            self.power_nets = list(profile.power_nets)
+            self.ground_nets = list(profile.ground_nets)
             self.threads = profile.threads
             self.backend_overrides = dict(profile.backend_overrides)
             self.env_vars = dict(profile.env_vars)
@@ -1323,6 +1380,10 @@ class EnvWizardApp(App[None]):
         constraints_label = (
             f"{len(self.constraint_files)} file(s)" if self.constraint_files else "none yet"
         )
+        power_ground_label = (
+            f"{len(self.power_nets)} power / {len(self.ground_nets)} ground"
+            if self.power_nets or self.ground_nets else "none set"
+        )
         # Everything but "Project root" needs a project root to mean
         # anything -- RTL added before one is set has nowhere to be copied
         # into at save time (see _save's own copy-into-inputs/hdl step),
@@ -1337,6 +1398,7 @@ class EnvWizardApp(App[None]):
             Option(f"Technology (PDK): {technology_label}", id="technology", disabled=gated),
             Option(f"Flow / backend: {flow_label}", id="flow", disabled=gated),
             Option(f"Constraints (SDC): {constraints_label}", id="constraints", disabled=gated),
+            Option(f"Power/ground nets: {power_ground_label}", id="power_ground_nets", disabled=gated),
             Option(f"Workspace root: {workspace_label}", id="workspace", disabled=gated),
         ]
 
@@ -1373,6 +1435,8 @@ class EnvWizardApp(App[None]):
                     self.constraint_files = value
                     self._refresh()
             self.push_screen(_ConstraintFilesScreen(self.constraint_files), handle)
+        elif choice == "power_ground_nets":
+            self._edit_power_ground_nets()
         elif choice == "project":
             self._edit_project_root()
         elif choice == "workspace":
@@ -1510,6 +1574,31 @@ class EnvWizardApp(App[None]):
         self._edit_directory_field(
             "Workspace root (optional -- defaults to project root / workspace)",
             self.workspace_root or self.project_root, on_set,
+        )
+
+    def _edit_power_ground_nets(self) -> None:
+        def handle_which(which: Optional[str]) -> None:
+            if which is None:
+                return
+            names = self.power_nets if which == "power" else self.ground_nets
+            title = "Power nets (constraints.power_nets)" if which == "power" \
+                else "Ground nets (constraints.ground_nets)"
+
+            def handle_names(result: Optional[list]) -> None:
+                if result is None:
+                    return
+                if which == "power":
+                    self.power_nets = result
+                else:
+                    self.ground_nets = result
+                self._refresh()
+            self.push_screen(_NetListScreen(title, names), handle_names)
+        self.push_screen(
+            _PickScreen("Power or ground nets", [
+                (f"Power nets ({len(self.power_nets)})", "power"),
+                (f"Ground nets ({len(self.ground_nets)})", "ground"),
+            ]),
+            handle_which,
         )
 
     def _edit_technology(self) -> None:
@@ -1741,6 +1830,10 @@ class EnvWizardApp(App[None]):
             constraints["lines"] = self.constraint_lines
         if self.floorplan_def:
             constraints["floorplan_def"] = self.floorplan_def
+        if self.power_nets:
+            constraints["power_nets"] = self.power_nets
+        if self.ground_nets:
+            constraints["ground_nets"] = self.ground_nets
         if constraints:
             document["constraints"] = constraints
         if self.project_root:

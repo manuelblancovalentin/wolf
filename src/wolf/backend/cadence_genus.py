@@ -53,7 +53,10 @@ GENUS_REQUIRED_DEFINES = ("SYNTHESIS",)
 # hdl_max_memory_address_range past a generic-inference default). These are
 # tool policy, not canonical WOLF semantics, so they arrive only through the
 # explicit backend.cadence-flowtool escape hatch.
-_ALLOWED_CADENCE_FLOWTOOL_OVERRIDES = frozenset({"genus", "flowtool", "postsyn_netlists", "inject"})
+_ALLOWED_CADENCE_FLOWTOOL_OVERRIDES = frozenset(
+    {"genus", "flowtool", "postsyn_netlists", "inject", "active_views"}
+)
+_ALLOWED_ACTIVE_VIEWS_KEYS = frozenset({"setup", "hold"})
 _ALLOWED_INJECT_PHASES = frozenset({"pre", "post"})
 _ALLOWED_GENUS_OVERRIDES = frozenset({"set_db"})
 
@@ -254,6 +257,51 @@ def _genus_set_db_overrides(context: ResolvedContext) -> tuple[tuple[str, Any], 
     return tuple(sorted(set_db.items()))
 
 
+def _active_views_overrides(context: ResolvedContext) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Validate backend.cadence-flowtool.active_views.{setup,hold} -> an
+    (setup_views, hold_views) pair, each a tuple of declared analysis-view
+    (corner) names -- empty when not overridden, which keeps today's
+    default behaviour (every declared view active for both setup and
+    hold, applied by genus_turn_on_analysis_views in every implementation
+    stage after the Genus handoff). A real run with every corner active
+    throughout place/CTS/route is far heavier than needed; this lets a
+    project narrow which views matter for early implementation stages
+    (e.g. just the slowest/fastest corner) while still checking every
+    corner later (route/signoff), without touching the Tcl.
+
+    Every named view is validated against the resolved technology's own
+    declared timing corners when any are resolved -- a typo here should
+    fail before Innovus ever starts, not produce a confusing
+    set_analysis_view error. One uniform pair applies to every
+    implementation stage (not yet selectable per stage); narrowing that
+    further is a real possible follow-up, not implemented here.
+    """
+    active_views = _cadence_flowtool_overrides(context).get("active_views", {})
+    if not isinstance(active_views, Mapping):
+        raise ValueError("backend.cadence-flowtool.active_views must be a mapping")
+    unknown = set(active_views) - _ALLOWED_ACTIVE_VIEWS_KEYS
+    if unknown:
+        raise ValueError(f"unsupported backend.cadence-flowtool.active_views key: {sorted(unknown)[0]}")
+    declared = (
+        {corner.name for corner in context.technology.timing_corners}
+        if context.technology else set()
+    )
+    result = []
+    for key in ("setup", "hold"):
+        views = active_views.get(key, [])
+        if not isinstance(views, list) or not all(isinstance(view, str) and view for view in views):
+            raise ValueError(f"backend.cadence-flowtool.active_views.{key} must be a list of strings")
+        if declared:
+            unknown_views = sorted(set(views) - declared)
+            if unknown_views:
+                raise ValueError(
+                    f"backend.cadence-flowtool.active_views.{key} names undeclared view(s): "
+                    f"{unknown_views[0]} -- declared views are {sorted(declared)}"
+                )
+        result.append(tuple(views))
+    return result[0], result[1]
+
+
 def _postsyn_netlists(context: ResolvedContext) -> tuple[str, ...]:
     """Pre-synthesized sub-block netlists genus_to_innovus reads by reference.
 
@@ -304,20 +352,31 @@ def _flowtool_templates(context: ResolvedContext, flow_root: Path) -> tuple[Opti
     """Return the (setup_template, flow_template) paths Flowtool should render.
 
     WOLF ships its own generic flow_template (flow_root/flow.template.yaml)
-    that only lists this flow's real Tcl scripts -- no setup_template is
-    needed alongside it, since this flow reads its resolved values directly
-    out of flow-config.tcl rather than via get_flow_config/design_yaml (see
-    flow.template.yaml's header). A project can still override either or
-    both via backend.cadence-flowtool.flowtool.{setup_template,flow_template}
-    -- e.g. to supply a get_flow_config-style setup_template its own
-    extension Tcl relies on, or an institution's existing Flowtool project
-    descriptors -- the same escape hatch used for set_db overrides.
+    that only lists this flow's real Tcl scripts, and its own generic
+    setup_template (flow_root/setup.template.yaml, if the flow package
+    provides one -- WOLF's own bundled flow_root always does) -- every
+    cadence-flowtool run gets a real setup.yaml with get_flow_config access
+    to design_name/tracks/vths/metal_stack/the PDK catalog by default, no
+    per-project configuration required (see _catalog_document). This is
+    independent of WOLF's own flow-config.tcl plain Tcl variables, which
+    the bundled flow's own step bodies still read directly; get_flow_config
+    is for a project's own extension/injected Tcl that wants the legacy
+    access pattern instead. A project can still override either or both
+    via backend.cadence-flowtool.flowtool.{setup_template,flow_template}
+    -- e.g. to supply an institution's existing Flowtool project
+    descriptors -- the same escape hatch used for set_db overrides; a
+    custom flow package with no setup.template.yaml of its own and no
+    override simply gets no setup.yaml, same as before this existed.
     """
     flowtool = _cadence_flowtool_overrides(context).get("flowtool", {})
     if not isinstance(flowtool, Mapping):
         raise ValueError("backend.cadence-flowtool.flowtool must be a mapping")
     if not flowtool:
-        return None, flow_root / "flow.template.yaml"
+        default_setup_template = flow_root / "setup.template.yaml"
+        return (
+            default_setup_template if default_setup_template.is_file() else None,
+            flow_root / "flow.template.yaml",
+        )
     unknown = set(flowtool) - _ALLOWED_FLOWTOOL_OVERRIDES
     if unknown:
         raise ValueError(f"unsupported backend.cadence-flowtool.flowtool override: {sorted(unknown)[0]}")
@@ -420,25 +479,57 @@ def _setup_yaml_tokens(
     return tokens
 
 
-def _catalog_document(technology: Optional[ResolvedTechnology]) -> dict:
-    """The get_flow_config-indexed catalog keys injected into every run's
-    setup.yaml, built from the PDK's full track/vth/corner catalog (see
-    wolf.environment's technology.catalog_library_sets/catalog_lef_files/
-    catalog_gds_files). Key names and nesting are fixed, confirmed
-    against a real legacy synthesis.tcl's own get_flow_config calls --
-    not WOLF's invention:
+def _catalog_document(context: ResolvedContext) -> dict:
+    """The get_flow_config-indexed keys injected directly into every run's
+    setup.yaml -- not via ${TOKEN} substitution, so these are always
+    present regardless of what the template text itself declares, and
+    never a "${TOKEN} is undefined" error for a flat/no-technology run:
+
+      get_flow_config design_name
+      get_flow_config tracks / get_flow_config vths / get_flow_config metal_stack
+      get_flow_config power_nets / get_flow_config ground_nets
       get_flow_config library_sets $corner library_files $track $vth
       get_flow_config init_physical_files lef_files $track $vth
       get_flow_config std_cell_GDS_files $track $vth
-    Neither lef nor gds indexes by metal_stack -- WOLF already resolved
-    that to one value while building the catalog (see
-    wolf.environment._build_catalog), the same way DESIGN_NAME is one
-    resolved scalar rather than every design WOLF has ever heard of.
-    verilog/spice/qrc_techfiles have no confirmed get_flow_config access
-    pattern yet, so they're deliberately not injected here.
+
+    design_name is always set; power_nets/ground_nets (constraints.
+    power_nets/ground_nets) are set only when declared -- same $::wolf_*
+    globals WOLF's own run_init_design applies as Genus's
+    init_power_nets/init_ground_nets before init_design, so a design with
+    no power intent file still gets real VDD/VSS nets through the
+    Genus->Innovus handoff instead of Innovus needing a manual
+    create_net workaround. tracks/vths/metal_stack are set only when
+    the resolved technology actually has them (a flat, non-tracked
+    package has no track/vth axis at all). The library_sets/
+    init_physical_files/std_cell_GDS_files catalog keys and nesting are
+    fixed, confirmed against a real legacy synthesis.tcl's own
+    get_flow_config calls -- not WOLF's invention; they cover the PDK's
+    full track/vth/corner catalog (see wolf.environment's
+    technology.catalog_library_sets/catalog_lef_files/catalog_gds_files),
+    not just the one this run selected, so the same get_flow_config call
+    works regardless of which $trk/$vth a flow's own Tcl happens to be
+    given. Neither lef nor gds indexes by metal_stack -- WOLF already
+    resolved that to one value while building the catalog (see
+    wolf.environment._build_catalog). verilog/spice/qrc_techfiles have no
+    confirmed get_flow_config access pattern yet, so they're deliberately
+    not injected here.
     """
+    document: dict[str, Any] = {"design_name": context.design_name}
+    if context.power_nets:
+        document["power_nets"] = list(context.power_nets)
+    if context.ground_nets:
+        document["ground_nets"] = list(context.ground_nets)
+    technology = context.technology
     if technology is None:
-        return {}
+        return document
+    selected_tracks = technology.selected_tracks or ((technology.track,) if technology.track else ())
+    selected_vths = technology.selected_vths or ((technology.vth,) if technology.vth else ())
+    if selected_tracks:
+        document["tracks"] = list(selected_tracks)
+    if selected_vths:
+        document["vths"] = list(selected_vths)
+    if technology.metal_stack:
+        document["metal_stack"] = technology.metal_stack
     library_sets: dict[str, Any] = {}
     for entry in technology.catalog_library_sets:
         corner = library_sets.setdefault(entry.corner, {"library_files": {}})
@@ -451,7 +542,6 @@ def _catalog_document(technology: Optional[ResolvedTechnology]) -> dict:
     gds_files: dict[str, Any] = {}
     for entry in technology.catalog_gds_files:
         gds_files.setdefault(entry.track, {})[entry.vth] = [str(path) for path in entry.files]
-    document: dict[str, Any] = {}
     if library_sets:
         document["library_sets"] = library_sets
     if lef_files:
@@ -462,7 +552,7 @@ def _catalog_document(technology: Optional[ResolvedTechnology]) -> dict:
 
 
 def _render_setup_yaml(
-    setup_template: Path, technology: Optional[ResolvedTechnology], tokens: Mapping[str, str],
+    setup_template: Path, context: ResolvedContext, tokens: Mapping[str, str],
 ) -> str:
     """Render one run's Flowtool setup.yaml: concatenate the institution's
     primary template with the PDK's own setup_yaml_fragment (if declared --
@@ -470,12 +560,14 @@ def _render_setup_yaml(
     every ${TOKEN} WOLF can resolve (see _setup_yaml_tokens), falling back
     to technology.generic for anything else a fragment references -- an
     institution-specific directory root with no general WOLF model, say
-    -- then inject the PDK's full track/vth/corner catalog (see
-    _catalog_document) as a few fixed top-level keys. Any ${TOKEN} still
-    unresolved after both substitution passes is a real error: a run's
-    actual setup.yaml should never be written with a literal placeholder
-    still sitting in it.
+    -- then inject design_name/tracks/vths/metal_stack and the PDK's full
+    track/vth/corner catalog (see _catalog_document) as fixed top-level
+    keys, always, regardless of whether the template text itself
+    references them. Any ${TOKEN} still unresolved after both
+    substitution passes is a real error: a run's actual setup.yaml should
+    never be written with a literal placeholder still sitting in it.
     """
+    technology = context.technology
     fragments = (technology.setup_yaml_fragment,) if technology and technology.setup_yaml_fragment else ()
     text = _concatenate_setup_fragments(setup_template, *fragments)
     for key, value in tokens.items():
@@ -493,14 +585,13 @@ def _render_setup_yaml(
             + " -- define them under technology.generic in the pdk manifest, or add support "
             "for them in wolf.backend.cadence_genus._setup_yaml_tokens"
         )
-    catalog = _catalog_document(technology)
-    if catalog:
-        document = yaml.safe_load(text)
-        if not isinstance(document, dict):
-            raise ValueError(f"rendered setup.yaml is not a yaml mapping: {setup_template}")
-        document.update(catalog)
-        text = yaml.safe_dump(document, sort_keys=False)
-    return text
+    document = yaml.safe_load(text)
+    if document is None:
+        document = {}
+    elif not isinstance(document, dict):
+        raise ValueError(f"rendered setup.yaml is not a yaml mapping: {setup_template}")
+    document.update(_catalog_document(context))
+    return yaml.safe_dump(document, sort_keys=False)
 
 
 def _snapshot_scripts(base_directory: Path, files: Mapping[str, str]) -> Path:
@@ -1622,22 +1713,22 @@ def prepare_genus_inputs(
     source_script = destination / "sources.tcl"
     flow_root = _flow_root(context)
     setup_template, flow_template = _flowtool_templates(context, flow_root)
-    # A Flowtool-native setup_template is the point where a project's real
-    # flow reads library/corner data back via get_flow_config out of
-    # setup.yaml (see _render_setup_yaml) -- WOLF's own mmmc.tcl/
-    # technology.tcl generation (plain Tcl variables in flow-config.tcl) is
-    # for the bundled default flow only, never alongside a real one.
-    generate_wolf_technology_scripts = setup_template is None
+    # setup.yaml (get_flow_config access to design_name/tracks/vths/
+    # metal_stack/the PDK catalog -- see _render_setup_yaml) and WOLF's own
+    # mmmc.tcl/technology.tcl (plain Tcl variables the bundled flow's own
+    # step bodies read out of flow-config.tcl) are complementary, not
+    # mutually exclusive: the bundled flow always gets both by default now,
+    # so a project's own injected/legacy Tcl can rely on get_flow_config
+    # without WOLF's own flow steps needing to change how they read the
+    # same resolved values.
     has_corners = bool(context.technology and context.technology.timing_corners)
     technology_script = (
-        destination / "technology.tcl"
-        if (generate_wolf_technology_scripts and context.technology and not has_corners) else None
+        destination / "technology.tcl" if (context.technology and not has_corners) else None
     )
-    mmmc_script = (
-        destination / "mmmc.tcl" if (generate_wolf_technology_scripts and has_corners) else None
-    )
+    mmmc_script = destination / "mmmc.tcl" if has_corners else None
     genus_overrides = _genus_set_db_overrides(context)
     overrides_script = destination / "overrides.tcl" if genus_overrides else None
+    active_setup_views, active_hold_views = _active_views_overrides(context)
     flow_config_script = destination / "flow-config.tcl"
     manifest = destination / "genus-inputs.yaml"
     constraints = destination / "constraints.sdc"
@@ -1830,6 +1921,10 @@ def prepare_genus_inputs(
         f"set wolf_cell_lefs {_tcl_list(tuple(str(path) for path in cell_lefs))}\n"
         f"set wolf_floorplan_def "
         f"{_tcl_quote(str(context.floorplan_def)) if context.floorplan_def else '\"\"'}\n"
+        f"set wolf_active_setup_views {_tcl_list(active_setup_views)}\n"
+        f"set wolf_active_hold_views {_tcl_list(active_hold_views)}\n"
+        f"set wolf_power_nets {_tcl_list(context.power_nets)}\n"
+        f"set wolf_ground_nets {_tcl_list(context.ground_nets)}\n"
         # Not resolved from any PDK/environment field yet -- always empty,
         # so the guarded steps in synthesis.tcl that read these quietly
         # skip rather than running on a fabricated value. See
@@ -1870,7 +1965,7 @@ def prepare_genus_inputs(
         setup_yaml = destination / f"setup.{context.design_name}.yaml"
         tokens = _setup_yaml_tokens(context, destination, scripts_directory, constraints)
         setup_yaml.write_text(
-            _render_setup_yaml(setup_template, context.technology, tokens), encoding="utf-8",
+            _render_setup_yaml(setup_template, context, tokens), encoding="utf-8",
         )
         placeholders = {**placeholders, "WOLF_SETUP_YAML": str(setup_yaml)}
     else:

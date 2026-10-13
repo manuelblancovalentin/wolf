@@ -49,6 +49,18 @@ create_flow_step -name init_implementation -owner wolf -write_db {
 create_flow_step -name init_innovus -owner wolf {
     wolf_step "init_innovus"
     wolf_inject_for_step init_innovus pre
+    # Same resolved thread count synthesis.tcl's own init_genus already
+    # applies to Genus (resources.threads/GENUS_NUM_CPUS, via
+    # $::wolf_max_cpus_per_server) -- Innovus has no equivalent set_db;
+    # set_multi_cpu_usage is its own real multithreading control, and
+    # this step re-runs at the start of every implementation stage since
+    # each one is a separate Innovus invocation.
+    if {$::wolf_max_cpus_per_server ne ""} {
+        set_multi_cpu_usage -local_cpu $::wolf_max_cpus_per_server
+        wolf_info "set_multi_cpu_usage: using $::wolf_max_cpus_per_server CPU(s) (resources.threads)"
+    } else {
+        wolf_info "set_multi_cpu_usage: not set (resources.threads not configured) -- using Innovus's own default"
+    }
     wolf_inject_for_step init_innovus post
     puts [wolf_sep]
 }
@@ -62,11 +74,28 @@ create_flow_step -name add_post_syn_constraints -owner wolf {
 
 # Works around a real Genus/MMMC limitation: when more than one analysis
 # view came through the genus_to_innovus handoff, only the first is
-# active by default on the Innovus side too.
+# active by default on the Innovus side too. analysis_view's own
+# is_active/is_setup/is_hold are read-only (Innovus rejects both
+# `set_db .active` and `set_db .is_active`, IMPDBTCL-248/252) -- they
+# reflect set_analysis_view, so re-running that same command Innovus-side
+# with every view name is the actual fix, not a per-view attribute.
 create_flow_step -name genus_turn_on_analysis_views -owner wolf {
     wolf_inject_for_step genus_turn_on_analysis_views pre
-    if {[llength [get_db analysis_views]] > 1} {
-        set_db [get_db analysis_views] .active true
+    set wolf_analysis_view_names [get_db analysis_views .name]
+    if {[llength $wolf_analysis_view_names] > 1} {
+        # backend.cadence-flowtool.active_views.{setup,hold} narrows which
+        # of the handoff's declared views actually matter for this
+        # implementation stage (e.g. one slow/fast corner through
+        # place/CTS, every corner again at route/signoff) -- default
+        # (both empty) is every declared view, same as before this
+        # existed. Applies uniformly to every implementation stage, not
+        # selectable per stage yet.
+        set wolf_setup_views $wolf_analysis_view_names
+        set wolf_hold_views  $wolf_analysis_view_names
+        if {[llength $::wolf_active_setup_views]} { set wolf_setup_views $::wolf_active_setup_views }
+        if {[llength $::wolf_active_hold_views]}  { set wolf_hold_views  $::wolf_active_hold_views }
+        set_analysis_view -setup $wolf_setup_views -hold $wolf_hold_views
+        wolf_info "active analysis views -- setup: $wolf_setup_views, hold: $wolf_hold_views"
     }
     wolf_inject_for_step genus_turn_on_analysis_views post
 }
@@ -105,6 +134,26 @@ create_flow_step -name load_floorplan -owner wolf {
     }
 
     wolf_inject_for_step load_floorplan post
+    puts [wolf_sep]
+}
+
+create_flow_step -name export_floorplan_def -owner wolf {
+    wolf_step "export_floorplan_def"
+    wolf_inject_for_step export_floorplan_def pre
+    # A durable, reloadable snapshot of this stage's own floorplan --
+    # written every floorplan run (cheap), independent of whatever
+    # created the floorplan (create_fplan's own injected Tcl, or a
+    # previously loaded constraints.floorplan_def). Reload it in a later
+    # run (e.g. after re-running synthesis, so there is no Innovus DB to
+    # restore from) by copying it into the project's own
+    # inputs/floorplans/<design>/ and pointing constraints.floorplan_def
+    # at that copy -- load_floorplan's own read_def picks it up from
+    # there automatically; WOLF does not promote run outputs into project
+    # inputs on its own.
+    set wolf_fp_def_out [file join $::wolf_outputs_dir "$::wolf_design_name.floorplan.def"]
+    write_def $wolf_fp_def_out
+    wolf_file $wolf_fp_def_out
+    wolf_inject_for_step export_floorplan_def post
     puts [wolf_sep]
 }
 

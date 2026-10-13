@@ -109,6 +109,8 @@ class EnvironmentProfile:
     constraint_files: tuple[str, ...] = ()
     constraint_lines: tuple[str, ...] = ()
     floorplan_def: Optional[str] = None
+    power_nets: tuple[str, ...] = ()
+    ground_nets: tuple[str, ...] = ()
     threads: Optional[int] = None
     backend_overrides: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
     env_vars: Mapping[str, str] = field(default_factory=dict)
@@ -242,8 +244,21 @@ def load_environment(path: Path, *, expected_name: Optional[str] = None) -> Envi
     workspace_root = _optional_string(workspace.get("root"), "workspace.root")
 
     constraints = _mapping(data.get("constraints"), "constraints", optional=True)
-    _known_fields(constraints, {"clocks", "floorplan_def", "files", "lines"}, "constraints")
+    _known_fields(
+        constraints,
+        {"clocks", "floorplan_def", "files", "lines", "power_nets", "ground_nets"}, "constraints",
+    )
     floorplan_def = _optional_string(constraints.get("floorplan_def"), "constraints.floorplan_def")
+    raw_power_nets = constraints.get("power_nets", [])
+    if not isinstance(raw_power_nets, list) or not all(
+        isinstance(item, str) and item for item in raw_power_nets
+    ):
+        raise ValueError("constraints.power_nets must be a list of nonempty strings")
+    raw_ground_nets = constraints.get("ground_nets", [])
+    if not isinstance(raw_ground_nets, list) or not all(
+        isinstance(item, str) and item for item in raw_ground_nets
+    ):
+        raise ValueError("constraints.ground_nets must be a list of nonempty strings")
     raw_constraint_files = constraints.get("files", [])
     if not isinstance(raw_constraint_files, list) or not all(
         isinstance(item, str) and item for item in raw_constraint_files
@@ -308,6 +323,8 @@ def load_environment(path: Path, *, expected_name: Optional[str] = None) -> Envi
         constraint_files=tuple(raw_constraint_files),
         constraint_lines=tuple(raw_constraint_lines),
         floorplan_def=floorplan_def,
+        power_nets=tuple(raw_power_nets),
+        ground_nets=tuple(raw_ground_nets),
         threads=threads,
         backend_overrides=backend,
         env_vars=env_vars,
@@ -1556,6 +1573,8 @@ def resolve_declarative_environment(
             resolve_stored_path(profile.floorplan_def, profile.path.parent)
             if profile.floorplan_def else None
         ),
+        power_nets=profile.power_nets,
+        ground_nets=profile.ground_nets,
         threads=profile.threads,
         backend_overrides=profile.backend_overrides,
         env_vars=profile.env_vars,

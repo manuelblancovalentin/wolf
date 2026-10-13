@@ -199,24 +199,37 @@ rejected up front (before Flowtool is even invoked) if the technology
 package declares no LEF/RC -- Innovus cannot do anything physical without
 them, unlike Genus's synthesis stages where physical views are optional.
 
-## The Flowtool project descriptor (flow.yaml)
+## The Flowtool project descriptor (flow.yaml) and setup.yaml
 
 WOLF ships its own generic `flow.yaml` Flowtool project descriptor
-(`flows/cadence-genus/flow.template.yaml`) and uses it by default -- no
-institution-supplied file is required. It only lists this flow's real Tcl
-scripts (`default_flow_steps`) and points Flowtool at the per-run
-`flow-config.tcl` (`user_flow_steps`); the actual flow sequencing is
-Tcl's own `create_flow`/`create_flow_step` in `common_flows.tcl` and
-friends, not a yaml step tree, so this file never needs anything
-technology-, library-, or institution-specific. No companion `setup.yaml`
-is written either: this flow reads its resolved values directly out of
-`flow-config.tcl` as plain Tcl variables rather than via
-`get_flow_config`/`design_yaml`.
+(`flows/cadence-genus/flow.template.yaml`) and its own generic
+`setup.yaml` template (`flows/cadence-genus/setup.template.yaml`), and
+uses both by default -- no institution-supplied file is required.
+`flow.yaml` only lists this flow's real Tcl scripts (`default_flow_steps`)
+and points Flowtool at the per-run `flow-config.tcl` (`user_flow_steps`);
+the actual flow sequencing is Tcl's own `create_flow`/`create_flow_step`
+in `common_flows.tcl` and friends, not a yaml step tree, so this file
+never needs anything technology-, library-, or institution-specific.
 
-A project with its own extension Tcl that does rely on `get_flow_config`
-(or wants an institution's existing Flowtool project descriptors instead)
-can still override the template pair via the same `backend.cadence-flowtool`
-escape hatch used for `set_db` overrides:
+Every run also gets a real `setup.<design>.yaml` written into the run
+directory, with `get_flow_config design_name`/`tracks`/`vths`/
+`metal_stack`/`library_sets`/`init_physical_files`/`std_cell_GDS_files`
+always resolvable -- injected directly by WOLF (see `_catalog_document`
+in `wolf/backend/cadence_genus.py`), not via `${TOKEN}` substitution, so
+it works the same whether or not the resolved technology actually has a
+track/vth axis. This is independent of, and always generated alongside,
+WOLF's own `mmmc.tcl`/`technology.tcl` (the plain Tcl variables the
+bundled flow's own step bodies read directly out of `flow-config.tcl`):
+the two mechanisms are complementary, not an either/or choice -- WOLF's
+own flow steps keep reading `$::wolf_*` globals (proven, unchanged), and
+`get_flow_config` is there for a project's own extension/injected Tcl
+that wants the legacy access pattern instead, with no per-project
+configuration required to get it.
+
+A project with its own legacy institution `setup.yaml` (or wanting an
+institution's existing Flowtool project descriptors instead of WOLF's
+own) can still override the template pair via the same
+`backend.cadence-flowtool` escape hatch used for `set_db` overrides:
 
 ```yaml
 backend:
@@ -226,7 +239,11 @@ backend:
       flow_template: /asic/flows/wolf-registry/flowtool/tsmc65.flow.yaml.template
 ```
 
-Both keys are required when overriding at all (omit the whole `flowtool`
+WOLF's own `design_name`/`tracks`/`vths`/`metal_stack`/catalog injection
+still applies on top of an override's own content the same way it does
+for the bundled default -- an override only needs to add
+institution-specific keys beyond what WOLF already resolves. Both keys
+are required when overriding at all (omit the whole `flowtool`
 key to use WOLF's bundled default); each path must exist.
 `prepare_genus_inputs` rejects a missing or nonexistent template path, a
 partial override (only one of the two keys given), or an unknown key under
@@ -300,12 +317,11 @@ so it's rendered differently, in three steps:
    `qrc_techfiles` have no confirmed `get_flow_config` access pattern
    yet, so nothing is injected for them.
 
-Whenever `setup_template` is overridden this way, WOLF's own
-`mmmc.tcl`/`technology.tcl` generation (plain Tcl variables read out of
-`flow-config.tcl`, not `get_flow_config`) is skipped entirely -- a
-project whose real flow already reads library/corner data back via
-`get_flow_config` out of `setup.yaml` never needs WOLF's separate
-generation for that at all.
+WOLF's own `mmmc.tcl`/`technology.tcl` generation (plain Tcl variables
+read out of `flow-config.tcl`) still happens regardless of whether
+`setup_template` is overridden -- it is what WOLF's own bundled flow
+steps actually execute against, and `get_flow_config` is for a project's
+own extension/injected Tcl, not a replacement for it.
 
 ## scripts.\<N\>/scripts.latest
 
@@ -324,9 +340,8 @@ files: unrelated per-run resolved values (thread count, design name, ...)
 never force a new snapshot, and an unchanged flow reuses its existing
 `scripts.<N>` across runs. Everything else this run needs (`sources.tcl`,
 `technology.tcl`, `overrides.tcl`, `constraints.sdc`, `flow-config.tcl`,
-and the rendered `flow.<design>.yaml`, plus `setup.<design>.yaml` when a
-`setup_template` override is given) is written directly into the run
-directory, fresh on every call.
+and the rendered `flow.<design>.yaml` and `setup.<design>.yaml`) is
+written directly into the run directory, fresh on every call.
 
 `flow-config.tcl` holds the plain `set` statements the flow's step bodies
 read (design name/top, thread count, dont-use cell list, physical view
@@ -363,6 +378,12 @@ backend-native policy (read from the resolved, reproducible `env:` map,
 never the ambient process environment). Neither present means no attribute
 is emitted and Genus keeps its own default. The resolved value (or `null`)
 is recorded in `genus-inputs.yaml` as `max_cpus_per_server`.
+
+The same resolved thread count is also applied on the Innovus side, via
+`floorplanning.tcl`'s `init_innovus` step (`set_multi_cpu_usage -local_cpu`
+-- Innovus has no `set_db` equivalent). `init_innovus` re-runs at the
+start of every implementation stage, since each one is a separate
+Innovus invocation, so this is not a one-time setting.
 
 `presentation.tcl`'s `wolf_step`/`wolf_sep` procs print an ANSI-colored title
 and divider around each step -- freshly written, inspired by the concept of
@@ -466,6 +487,76 @@ constraints:
   floorplan_def: ./floorplans/demo.def
 ```
 
+Every `floorplan` run also always writes its own DEF snapshot back out
+(`floorplanning.tcl`'s `export_floorplan_def`, between `commit_power_intent`
+and `block_finish`, using the real Innovus `write_def`) to
+`outputs/<design>.floorplan.def` inside the run directory -- a durable,
+reloadable record independent of whatever actually built the floorplan
+(`create_fplan`'s own injected Tcl, or a previously loaded
+`constraints.floorplan_def`). To reuse it in a *later* run -- after
+re-running synthesis, say, when there is no Innovus DB checkpoint left to
+restore from -- copy it into the project's own
+`inputs/floorplans/<design>/` and point `constraints.floorplan_def` at that
+copy; WOLF does not promote run outputs into project inputs on its own.
+
+### Power and ground nets (`constraints.power_nets`/`ground_nets`)
+
+A design with no power intent (CPF/UPF) file read has no VDD/VSS nets at
+all once handed off to Innovus -- `connect_global_net`/`route_special`/
+`add_stripes` all fail with "net does not exist" until something creates
+them. `constraints.power_nets`/`constraints.ground_nets` (each a list,
+since a design can have more than one power net) set Genus's own
+`init_power_nets`/`init_ground_nets` right before `init_design`
+(`synthesis.tcl`'s `run_init_design`), so the real nets exist from
+synthesis onward and carry through `write_design -innovus`'s own handoff
+init script automatically -- no manual `create_net -physical` workaround
+needed on the Innovus side. Also editable from `wolf env menu` ("Power/ground
+nets"), and always resolvable via `get_flow_config power_nets`/
+`get_flow_config ground_nets` regardless of how they were set (empty list
+when not configured, today's unchanged default).
+
+```yaml
+constraints:
+  power_nets: [VDD]
+  ground_nets: [VSS]
+```
+
+### Tracked packages: technology LEF, cell LEF, and RC collateral
+
+A *tracked* technology package (`technology.tracks.<track>.vths.<vth>`, the
+TSMC65-shaped form -- see "Multi-corner (MMMC) technology packages" below
+for the sibling per-corner axis) declares its own `lef` (and, optionally,
+`cell_lef`) and `qrc_techfiles` per metal stack, parsed by
+`environment._technology_variant`. Confirmed real against an actual tracked
+package: `validate_genus`'s own physical-implementation gate
+(`technology_lefs`/`cell_lefs`/`rc_files` all required non-empty) could
+*never* pass for a tracked package before this was wired up --
+`cell_lefs`/`rc_files` were both hardcoded empty in `environment.py`'s own
+`_technology_inputs` regardless of what the manifest actually declared,
+even though the real LEF and captable data was already being resolved
+correctly into `technology_lefs`/`qrc_techfiles`.
+
+- **`cell_lefs`** defaults to the same files as `technology_lefs` --
+  TSMC's own standard-cell LEF deliverable is a single real *merged* LEF
+  (routing-layer/site geometry and cell abstracts together), confirmed
+  real, so a package that never declares a separate `cell_lef` key at all
+  simply reuses `lef` for both roles rather than being required to
+  redundantly repeat the same path under two keys. A package whose
+  institution genuinely ships two distinct files declares `cell_lef`
+  explicitly (same per-stack mapping/flat-list shape as `lef`), which wins
+  over the merged default.
+- **`rc_files`** is the same flattened list `qrc_techfiles` already is
+  (`_resolve_qrc_techfiles`'s own cross-corner captable union, for the
+  selected metal stack) -- the per-corner-named detail stays separately
+  available via `qrc_corners` for anything that needs one specific
+  corner's own captable, not just "is RC collateral present at all".
+
+`validate_genus`'s own gate messages are also split per piece ("technology
+LEF", "cell LEF", "technology RC" each their own check) rather than one
+combined "technology and cell LEF required" message, so a real gap says
+exactly which piece is missing instead of leaving someone with only one of
+the two guessing which one Innovus actually lacks.
+
 ### Multi-corner (MMMC) technology packages
 
 A technology package may declare several named timing corners instead of one
@@ -526,6 +617,33 @@ points at the same generated `constraints.sdc`.
 (it writes its own `<design>.mmmc.tcl` alongside the netlist/SDC/init
 script, listing every corner) -- `genus_to_innovus` needed no changes for
 this.
+
+### Choosing which views are active in implementation (`active_views`)
+
+Every declared analysis view is active for both setup and hold checks by
+default, in Genus and (via `floorplanning.tcl`'s `genus_turn_on_analysis_views`,
+re-applied at the start of every implementation stage) in Innovus too --
+simple, but checking every corner through every place/CTS/route iteration
+on a design with several corners is far heavier than most implementation
+stages need. `backend.cadence-flowtool.active_views` narrows it:
+
+```yaml
+backend:
+  cadence-flowtool:
+    active_views:
+      setup: [wcl]
+      hold: [bc]
+```
+
+Either key can be omitted or left an empty list, meaning "every declared
+view" (today's default, unchanged). Each name must be one of the
+technology package's own declared `timing.corners` keys -- an unlisted
+name is rejected before Flowtool ever starts, not left to fail inside
+Innovus as a confusing `set_analysis_view` error. This applies uniformly
+to every implementation stage (`floorplan` through `postroute`); picking
+a different set per stage (e.g. narrow through `postcts`, every corner
+again at `route`/`postroute`) is not yet selectable without hand-editing
+the generated `flow-config.tcl`.
 
 ## Extra constraints (`constraints.files`/`constraints.lines`)
 
