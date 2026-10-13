@@ -61,7 +61,9 @@ _ALLOWED_ACTIVE_VIEWS_KEYS = frozenset({"setup", "hold"})
 _ALLOWED_INJECT_PHASES = frozenset({"pre", "post"})
 _ALLOWED_GENUS_OVERRIDES = frozenset({"set_db"})
 _ALLOWED_CTS_KEYS = frozenset({
-    "buffer_cells", "inverter_cells", "clock_gating_cells",
+    "buffer_cells", "buffer_cells_top", "buffer_cells_leaf",
+    "inverter_cells", "inverter_cells_top", "inverter_cells_leaf",
+    "clock_gating_cells",
     "target_skew", "target_max_transition_time", "max_fanout",
 })
 _ALLOWED_TIEOFFS_KEYS = frozenset({"cells", "honor_dont_use", "max_fanout", "max_distance"})
@@ -350,7 +352,11 @@ def _cell_pattern_list(value: Any, field: str) -> tuple[str, ...]:
 
 class CtsOverrides(NamedTuple):
     buffer_cells: tuple[str, ...] = ()
+    buffer_cells_top: tuple[str, ...] = ()
+    buffer_cells_leaf: tuple[str, ...] = ()
     inverter_cells: tuple[str, ...] = ()
+    inverter_cells_top: tuple[str, ...] = ()
+    inverter_cells_leaf: tuple[str, ...] = ()
     clock_gating_cells: tuple[str, ...] = ()
     target_skew: Optional[float] = None
     target_max_transition_time: Optional[float] = None
@@ -377,14 +383,17 @@ def _cts_overrides(context: ResolvedContext) -> CtsOverrides:
     unknown = set(cts) - _ALLOWED_CTS_KEYS
     if unknown:
         raise ValueError(f"unsupported backend.cadence-flowtool.cts key: {sorted(unknown)[0]}")
+    def _cells(key: str) -> tuple[str, ...]:
+        return _cell_pattern_list(cts.get(key, []), f"backend.cadence-flowtool.cts.{key}")
+
     return CtsOverrides(
-        buffer_cells=_cell_pattern_list(cts.get("buffer_cells", []), "backend.cadence-flowtool.cts.buffer_cells"),
-        inverter_cells=_cell_pattern_list(
-            cts.get("inverter_cells", []), "backend.cadence-flowtool.cts.inverter_cells"
-        ),
-        clock_gating_cells=_cell_pattern_list(
-            cts.get("clock_gating_cells", []), "backend.cadence-flowtool.cts.clock_gating_cells"
-        ),
+        buffer_cells=_cells("buffer_cells"),
+        buffer_cells_top=_cells("buffer_cells_top"),
+        buffer_cells_leaf=_cells("buffer_cells_leaf"),
+        inverter_cells=_cells("inverter_cells"),
+        inverter_cells_top=_cells("inverter_cells_top"),
+        inverter_cells_leaf=_cells("inverter_cells_leaf"),
+        clock_gating_cells=_cells("clock_gating_cells"),
         target_skew=_optional_float(cts.get("target_skew"), "backend.cadence-flowtool.cts.target_skew"),
         target_max_transition_time=_optional_float(
             cts.get("target_max_transition_time"),
@@ -2154,7 +2163,11 @@ def prepare_genus_inputs(
         f"set wolf_power_nets {_tcl_list(context.power_nets)}\n"
         f"set wolf_ground_nets {_tcl_list(context.ground_nets)}\n"
         f"set wolf_cts_buffer_cells {_tcl_list(cts.buffer_cells)}\n"
+        f"set wolf_cts_buffer_cells_top {_tcl_list(cts.buffer_cells_top)}\n"
+        f"set wolf_cts_buffer_cells_leaf {_tcl_list(cts.buffer_cells_leaf)}\n"
         f"set wolf_cts_inverter_cells {_tcl_list(cts.inverter_cells)}\n"
+        f"set wolf_cts_inverter_cells_top {_tcl_list(cts.inverter_cells_top)}\n"
+        f"set wolf_cts_inverter_cells_leaf {_tcl_list(cts.inverter_cells_leaf)}\n"
         f"set wolf_cts_clock_gating_cells {_tcl_list(cts.clock_gating_cells)}\n"
         f"set wolf_cts_target_skew "
         f"{cts.target_skew if cts.target_skew is not None else '\"\"'}\n"

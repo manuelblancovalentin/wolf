@@ -1053,6 +1053,23 @@ class GenusCtsCellTests(GenusFixtureTestCase):
         self.assertIn("set wolf_cts_target_max_transition_time 0.2", flow_config)
         self.assertIn("set wolf_cts_max_fanout 16", flow_config)
 
+    def test_top_and_leaf_cell_variants_are_written_into_flow_config(self):
+        inputs = prepare_genus_inputs(
+            self._context(backend_overrides={"cadence-flowtool": {
+                **self.flowtool_overrides["cadence-flowtool"],
+                "cts": {
+                    "buffer_cells_top": ["BUFTOPX*"], "buffer_cells_leaf": ["BUFLEAFX*"],
+                    "inverter_cells_top": ["INVTOPX*"], "inverter_cells_leaf": ["INVLEAFX*"],
+                },
+            }}),
+            self.root / "backend" / "cadence-genus",
+        )
+        flow_config = inputs.flow_config_script.read_text(encoding="utf-8")
+        self.assertIn('set wolf_cts_buffer_cells_top {"BUFTOPX*"}', flow_config)
+        self.assertIn('set wolf_cts_buffer_cells_leaf {"BUFLEAFX*"}', flow_config)
+        self.assertIn('set wolf_cts_inverter_cells_top {"INVTOPX*"}', flow_config)
+        self.assertIn('set wolf_cts_inverter_cells_leaf {"INVLEAFX*"}', flow_config)
+
     def test_unsupported_cts_key_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "unsupported backend.cadence-flowtool.cts key"):
             prepare_genus_inputs(
@@ -1083,10 +1100,21 @@ class GenusCtsCellTests(GenusFixtureTestCase):
     def test_set_cts_config_step_applies_every_resolved_value(self):
         step = builtin_flow_root("cadence-genus") / "common_steps.tcl"
         body = _extract_step_bodies(step.read_text(encoding="utf-8"))["set_cts_config"]
+        # Cell-list attributes (including the top/leaf variants) are
+        # applied via one generic foreach {attr var} loop, not one `if`
+        # block per attribute -- assert the loop actually lists each one.
         for attribute, variable in (
             ("cts_buffer_cells", "wolf_cts_buffer_cells"),
+            ("cts_buffer_cells_top", "wolf_cts_buffer_cells_top"),
+            ("cts_buffer_cells_leaf", "wolf_cts_buffer_cells_leaf"),
             ("cts_inverter_cells", "wolf_cts_inverter_cells"),
+            ("cts_inverter_cells_top", "wolf_cts_inverter_cells_top"),
+            ("cts_inverter_cells_leaf", "wolf_cts_inverter_cells_leaf"),
             ("cts_clock_gating_cells", "wolf_cts_clock_gating_cells"),
+        ):
+            self.assertIn(f"{attribute} {variable}", body)
+        self.assertIn("set_db $wolf_cts_attr $wolf_cts_value", body)
+        for attribute, variable in (
             ("cts_target_skew", "wolf_cts_target_skew"),
             ("cts_target_max_transition_time", "wolf_cts_target_max_transition_time"),
             ("cts_max_fanout", "wolf_cts_max_fanout"),

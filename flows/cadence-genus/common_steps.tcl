@@ -180,20 +180,26 @@ create_flow_step -name report_check_design -owner wolf {
 create_flow_step -name set_cts_config -owner wolf {
     wolf_inject_for_step set_cts_config pre
     set wolf_cts_applied 0
-    if {[llength $::wolf_cts_buffer_cells]} {
-        set_db cts_buffer_cells $::wolf_cts_buffer_cells
-        wolf_info "cts_buffer_cells: $::wolf_cts_buffer_cells"
-        set wolf_cts_applied 1
-    }
-    if {[llength $::wolf_cts_inverter_cells]} {
-        set_db cts_inverter_cells $::wolf_cts_inverter_cells
-        wolf_info "cts_inverter_cells: $::wolf_cts_inverter_cells"
-        set wolf_cts_applied 1
-    }
-    if {[llength $::wolf_cts_clock_gating_cells]} {
-        set_db cts_clock_gating_cells $::wolf_cts_clock_gating_cells
-        wolf_info "cts_clock_gating_cells: $::wolf_cts_clock_gating_cells"
-        set wolf_cts_applied 1
+    # cts_buffer_cells_top/_leaf and cts_inverter_cells_top/_leaf
+    # (confirmed real, man 20.15) narrow the plain/default attribute to
+    # top-net-only or leaf-net-only cells; there is no _trunk variant for
+    # either (trunk nets use the plain attribute). clock_gating_cells has
+    # no top/leaf variant at all.
+    foreach {wolf_cts_attr wolf_cts_var} {
+        cts_buffer_cells wolf_cts_buffer_cells
+        cts_buffer_cells_top wolf_cts_buffer_cells_top
+        cts_buffer_cells_leaf wolf_cts_buffer_cells_leaf
+        cts_inverter_cells wolf_cts_inverter_cells
+        cts_inverter_cells_top wolf_cts_inverter_cells_top
+        cts_inverter_cells_leaf wolf_cts_inverter_cells_leaf
+        cts_clock_gating_cells wolf_cts_clock_gating_cells
+    } {
+        set wolf_cts_value [set ::$wolf_cts_var]
+        if {[llength $wolf_cts_value]} {
+            set_db $wolf_cts_attr $wolf_cts_value
+            wolf_info "$wolf_cts_attr: $wolf_cts_value"
+            set wolf_cts_applied 1
+        }
     }
     if {$::wolf_cts_target_skew ne ""} {
         set_db cts_target_skew $::wolf_cts_target_skew
