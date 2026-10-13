@@ -976,6 +976,34 @@ def _build_signoff_catalog(
     return tuple(opconds), tuple(delay_corners), tuple(analysis_views)
 
 
+def resolve_technology_reference(
+    package: Optional[str], track: Optional[str] = None, vths: tuple = (),
+    metal_stack: Optional[str] = None,
+) -> Optional[ResolvedTechnology]:
+    """Resolve one technology package's real LEF/library views from just
+    its selection (no design/flow/workspace needed) -- for callers that
+    want a technology's own resolved files (e.g. `wolf env menu`'s cell
+    browser) without requiring a complete, installable environment.
+    Returns None whenever the package isn't selected or isn't actually
+    installed yet; callers should treat that as "not resolvable right
+    now" (fall back to free-text entry), not an error.
+    """
+    if not package:
+        return None
+    try:
+        manifest = PackageRegistry().get(package)
+    except (ValueError, KeyError):
+        return None
+    installed = PackageStore().read(manifest)
+    if installed is None:
+        return None
+    reference = ComponentReference(
+        package=package, track=track, vth=vths[0] if vths else None,
+        vths=tuple(vths), metal_stack=metal_stack,
+    )
+    return _technology_inputs(manifest, installed, reference)
+
+
 def _technology_inputs(
     manifest: Any, installed: Any, reference: Optional[ComponentReference] = None,
 ) -> Optional[ResolvedTechnology]:

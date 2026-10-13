@@ -6,7 +6,9 @@ from unittest.mock import patch
 
 import yaml
 
-from wolf.environment import load_environment, resolve_declarative_environment
+from wolf.environment import (
+    load_environment, resolve_declarative_environment, resolve_technology_reference,
+)
 
 
 class DeclarativeEnvironmentTests(unittest.TestCase):
@@ -1237,6 +1239,25 @@ class FlowBackendPersistenceTests(DeclarativeEnvironmentTests):
         )
         self.assertEqual(context.backend, "cadence-flowtool")
         self.assertIsNone(context.flow_name)
+
+
+class ResolveTechnologyReferenceTests(DeclarativeEnvironmentTests):
+    """resolve_technology_reference -- a technology package's own
+    resolved LEF/library views from just its selection, with no design/
+    flow/workspace needed (wolf env menu's cell browser calls this to
+    resolve the technology the user has already picked in the same
+    wizard session, before a complete environment even exists)."""
+
+    def test_no_package_selected_returns_none(self):
+        self.assertIsNone(resolve_technology_reference(None))
+
+    def test_an_unknown_package_returns_none_not_an_error(self):
+        self.assertIsNone(resolve_technology_reference("pdk/does-not-exist"))
+
+    def test_an_installed_package_resolves(self):
+        technology = resolve_technology_reference("pdk/asap7")
+        self.assertIsNotNone(technology)
+        self.assertEqual(technology.name, "asap7")
 
 
 if __name__ == "__main__":
