@@ -154,6 +154,70 @@ class RunProvenanceTests(unittest.TestCase):
         self.assertEqual(frozen["scripts_directory"], str(run / "scripts.2"))
         self.assertEqual(frozen["generated"]["files"]["x"], str(run / "scripts.2" / "x.tcl"))
 
+    def test_a_volatile_path_tolerates_a_nested_field_changing_without_exempting_its_whole_key(self):
+        """Regression, hit for real continuing an actual run into
+        floorplan: technology.cell_lefs/technology.rc_files were always
+        hardcoded empty for a tracked PDK package before a WOLF bug fix,
+        regardless of what the package manifest actually declared, so an
+        already-allocated run from before that fix landed could never
+        continue -- even though nothing about the run's actual identity
+        (which package, which revision, which track/vth) had changed.
+        volatile_paths must tolerate exactly that nested field changing
+        without exempting the rest of "technology" from comparison."""
+        run = self.root / "run"
+        destination = freeze_run_manifest(
+            self.source, run, volatile_paths=("technology.cell_lefs",),
+        )
+
+        data = yaml.safe_load(self.source.read_text(encoding="utf-8"))
+        data["technology"]["cell_lefs"] = ["/pdk/cells.lef"]
+        self.source.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+        updated = freeze_run_manifest(
+            self.source, run, volatile_paths=("technology.cell_lefs",),
+        )
+        self.assertEqual(updated, destination)
+        frozen = yaml.safe_load(destination.read_text(encoding="utf-8"))
+        self.assertEqual(frozen["technology"]["cell_lefs"], ["/pdk/cells.lef"])
+
+    def test_a_volatile_path_still_rejects_a_real_change_elsewhere_in_the_same_key(self):
+        """The whole point: volatile_paths is scoped to the one nested
+        field named, not a blanket exemption for its containing key -- a
+        genuine mid-run PDK package swap (a different field inside the
+        same "technology" dict) must still raise."""
+        run = self.root / "run"
+        freeze_run_manifest(self.source, run, volatile_paths=("technology.cell_lefs",))
+
+        data = yaml.safe_load(self.source.read_text(encoding="utf-8"))
+        data["technology"]["package"] = "pdk/tsmc65"
+        self.source.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "different immutable provenance"):
+            freeze_run_manifest(self.source, run, volatile_paths=("technology.cell_lefs",))
+
+    def test_volatile_keys_and_volatile_paths_combine(self):
+        """Both mechanisms apply together when a caller passes both --
+        confirmed real, this is exactly how run_genus's own
+        freeze_run_manifest call site uses them (scripts_directory/
+        generated as top-level volatile_keys, technology.cell_lefs/
+        technology.rc_files as nested volatile_paths, simultaneously)."""
+        run = self.root / "run"
+        destination = freeze_run_manifest(
+            self.source, run,
+            volatile_keys=("from_stage",), volatile_paths=("technology.cell_lefs",),
+        )
+
+        data = yaml.safe_load(self.source.read_text(encoding="utf-8"))
+        data["from_stage"] = "floorplan"
+        data["technology"]["cell_lefs"] = ["/pdk/cells.lef"]
+        self.source.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+        updated = freeze_run_manifest(
+            self.source, run,
+            volatile_keys=("from_stage",), volatile_paths=("technology.cell_lefs",),
+        )
+        self.assertEqual(updated, destination)
+        frozen = yaml.safe_load(destination.read_text(encoding="utf-8"))
+        self.assertEqual(frozen["from_stage"], "floorplan")
+        self.assertEqual(frozen["technology"]["cell_lefs"], ["/pdk/cells.lef"])
+
 
 if __name__ == "__main__":
     unittest.main()

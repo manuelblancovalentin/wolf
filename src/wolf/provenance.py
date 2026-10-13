@@ -68,6 +68,26 @@ def materialize_run_manifest(
     return data
 
 
+def _strip_volatile_paths(value: Any, prefix: str, volatile_paths: frozenset) -> Any:
+    """Return a deep copy of `value` with any key at dotted path
+    `prefix.key` appearing in `volatile_paths` removed, regardless of
+    nesting depth -- comparing the result with `==` then ignores
+    exactly those fields without needing to blanket-exclude their
+    whole containing key (e.g. "technology.cell_lefs" without also
+    exempting "technology.package"/"technology.revision" from
+    comparison, which would silently tolerate a genuine PDK swap
+    mid-run). Non-dict values pass through unchanged."""
+    if not isinstance(value, dict):
+        return value
+    result = {}
+    for key, sub_value in value.items():
+        path = f"{prefix}.{key}" if prefix else key
+        if path in volatile_paths:
+            continue
+        result[key] = _strip_volatile_paths(sub_value, path, volatile_paths)
+    return result
+
+
 def _write_immutable(destination: Path, payload: bytes) -> None:
     """Atomically replace destination's content: write to a sibling temp
     file, chmod read-only, then hardlink it into place -- the same
@@ -104,6 +124,7 @@ def freeze_run_manifest(
     generated_directory: Optional[Path] = None,
     generated_files: Optional[Mapping[str, str]] = None,
     volatile_keys: Sequence[str] = (),
+    volatile_paths: Sequence[str] = (),
 ) -> Path:
     """Atomically create, or verify, a resolved run manifest.
 
@@ -123,6 +144,19 @@ def freeze_run_manifest(
     identity -- but a key the schema used to record and no longer does
     is still a hard mismatch. Callers that pass nothing (the default)
     get the original fully strict, byte-for-byte comparison.
+
+    `volatile_paths` is `volatile_keys`' own sibling for a field nested
+    *inside* an otherwise-strict top-level key -- dotted paths (e.g.
+    "technology.cell_lefs") stripped from both sides before comparison
+    (see `_strip_volatile_paths`), so a real WOLF resolution-logic fix
+    that makes a previously-empty nested field start getting populated
+    (confirmed real: `cell_lefs`/`rc_files` were always hardcoded empty
+    for a tracked technology package before a bug fix, regardless of
+    what the package manifest actually declared) doesn't block
+    continuing an already-allocated run, without blanket-exempting the
+    whole containing key (marking all of "technology" volatile would
+    also silently tolerate a genuine mid-run PDK package swap, which
+    must still raise).
     """
     run_directory = run_directory.expanduser().resolve()
     destination = (destination or run_directory / RUN_MANIFEST_FILENAME).resolve()
@@ -141,8 +175,16 @@ def freeze_run_manifest(
     if destination.exists():
         if destination.read_bytes() == payload:
             return destination
-        if volatile_keys:
+        if volatile_keys or volatile_paths:
             existing = yaml.safe_load(destination.read_bytes())
+            volatile_path_set = frozenset(volatile_paths)
+            comparable_existing = (
+                _strip_volatile_paths(existing, "", volatile_path_set)
+                if volatile_path_set else existing
+            )
+            comparable_data = (
+                _strip_volatile_paths(data, "", volatile_path_set) if volatile_path_set else data
+            )
             # A key present in `existing` but absent from today's `data`
             # (a field WOLF's own schema removed or renamed) is still a
             # hard mismatch -- but a key present in `data` and absent
@@ -152,13 +194,17 @@ def freeze_run_manifest(
             # different run identity just because today's WOLF knows
             # more about it than the version that first allocated it.
             non_volatile_existing = (
-                set(existing) - set(volatile_keys) if isinstance(existing, dict) else set()
+                set(comparable_existing) - set(volatile_keys)
+                if isinstance(comparable_existing, dict) else set()
             )
-            non_volatile_data = set(data) - set(volatile_keys)
+            non_volatile_data = set(comparable_data) - set(volatile_keys)
             identity_matches = (
-                isinstance(existing, dict)
+                isinstance(comparable_existing, dict)
                 and non_volatile_existing <= non_volatile_data
-                and all(existing.get(key) == data.get(key) for key in non_volatile_existing)
+                and all(
+                    comparable_existing.get(key) == comparable_data.get(key)
+                    for key in non_volatile_existing
+                )
             )
             if identity_matches:
                 _write_immutable(destination, payload)

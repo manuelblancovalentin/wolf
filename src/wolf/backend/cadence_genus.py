@@ -2097,6 +2097,16 @@ def run_genus(
             "from_stage", "to_stage", "synthesis_stages", "outputs", "execution",
             "scripts_directory", "generated",
         ),
+        # technology.cell_lefs/technology.rc_files specifically (not all
+        # of "technology" -- a genuine mid-run PDK package/revision/
+        # track/vth swap must still raise): confirmed real, a tracked
+        # technology package's cell_lefs/rc_files were always hardcoded
+        # empty before a WOLF bug fix, regardless of what the package
+        # manifest actually declared, so an already-allocated run from
+        # before that fix landed would otherwise be stuck forever,
+        # unable to continue into floorplan with the very fix meant to
+        # unblock it.
+        volatile_paths=("technology.cell_lefs", "technology.rc_files"),
         generated_directory=inputs.directory,
         generated_files={
             **({"genus_technology": str(inputs.technology_script)} if inputs.technology_script else {}),
