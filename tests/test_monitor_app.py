@@ -139,6 +139,28 @@ class MonitorAppTests(unittest.TestCase):
 
         _run_async(drive())
 
+    def test_the_cursor_position_survives_a_periodic_refresh(self):
+        """Regression: TreeNode._line (what move_cursor reads to pick a
+        line) is only populated once Tree's own _tree_lines is built --
+        lazily, on next access -- not synchronously when a node is
+        added. Without forcing that build before move_cursor, the
+        cursor silently snapped back to the first row on every single
+        periodic refresh, making it impossible to navigate away from
+        row 0 while the panel kept auto-updating."""
+        async def drive():
+            app = MonitorApp(self.run_directory)
+            async with app.run_test(size=(160, 55)) as pilot:
+                await pilot.pause()
+                tree = app.query_one("#stages", Tree)
+                tree.move_cursor(self._node_for(app, "syn_opt"))
+                await pilot.pause()
+                self.assertEqual(tree.cursor_node.data, "syn_opt")
+                app._refresh()
+                await pilot.pause()
+                self.assertEqual(tree.cursor_node.data, "syn_opt")
+
+        _run_async(drive())
+
     def test_no_running_stage_leaves_nothing_expanded_by_default(self):
         async def drive():
             app = MonitorApp(self.run_directory)

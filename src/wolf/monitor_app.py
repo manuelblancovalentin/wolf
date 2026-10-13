@@ -100,7 +100,6 @@ class MonitorApp(App[None]):
 
     CSS = """
     Screen { background: $surface; }
-    #banner { color: #ad4ce5; }
     #info { padding: 0 1; }
     #columns-header { padding: 1 1 0 1; }
     #stages { padding: 0 1; }
@@ -201,6 +200,15 @@ class MonitorApp(App[None]):
             else:
                 node.collapse()
         if cursor_target is not None:
+            # TreeNode._line (what move_cursor reads to pick a line) is
+            # only populated when Tree's own _tree_lines is actually
+            # built -- lazily, on next access, not synchronously when a
+            # node is added. Referencing it here first forces that
+            # build immediately; skipping this makes move_cursor read
+            # a stale _line of -1, which Tree's own cursor-line
+            # validation then clamps to 0 -- the real bug behind the
+            # cursor always snapping back to the first row on refresh.
+            tree._tree_lines  # noqa: B018 -- forces the lazy rebuild, see above
             tree.move_cursor(cursor_target)
 
     def on_tree_node_selected(self, event: Tree.NodeSelected) -> None:
