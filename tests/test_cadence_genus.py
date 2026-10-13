@@ -1017,6 +1017,245 @@ class GenusFloorplanDefExportTests(GenusFixtureTestCase):
         self.assertIn("write_def $wolf_fp_def_out", body)
 
 
+class GenusCtsCellTests(GenusFixtureTestCase):
+    """backend.cadence-flowtool.cts -- CCOpt buffer/inverter/clock-gating
+    cell selection and timing targets, resolved into real Innovus
+    cts_buffer_cells/cts_inverter_cells/cts_clock_gating_cells/
+    cts_target_skew/cts_target_max_transition_time/cts_max_fanout
+    attributes (set_cts_config, shared by prects and cts)."""
+
+    def test_default_is_empty(self):
+        inputs = prepare_genus_inputs(self._context(), self.root / "backend" / "cadence-genus")
+        flow_config = inputs.flow_config_script.read_text(encoding="utf-8")
+        self.assertIn("set wolf_cts_buffer_cells {}", flow_config)
+        self.assertIn("set wolf_cts_inverter_cells {}", flow_config)
+        self.assertIn("set wolf_cts_clock_gating_cells {}", flow_config)
+        self.assertIn('set wolf_cts_target_skew ""', flow_config)
+        self.assertIn('set wolf_cts_max_fanout ""', flow_config)
+
+    def test_resolved_cells_and_targets_are_written_into_flow_config(self):
+        inputs = prepare_genus_inputs(
+            self._context(backend_overrides={"cadence-flowtool": {
+                **self.flowtool_overrides["cadence-flowtool"],
+                "cts": {
+                    "buffer_cells": ["BUFX*"], "inverter_cells": ["INVX*"],
+                    "clock_gating_cells": ["CKGX*"], "target_skew": 0.05,
+                    "target_max_transition_time": 0.2, "max_fanout": 16,
+                },
+            }}),
+            self.root / "backend" / "cadence-genus",
+        )
+        flow_config = inputs.flow_config_script.read_text(encoding="utf-8")
+        self.assertIn('set wolf_cts_buffer_cells {"BUFX*"}', flow_config)
+        self.assertIn('set wolf_cts_inverter_cells {"INVX*"}', flow_config)
+        self.assertIn('set wolf_cts_clock_gating_cells {"CKGX*"}', flow_config)
+        self.assertIn("set wolf_cts_target_skew 0.05", flow_config)
+        self.assertIn("set wolf_cts_target_max_transition_time 0.2", flow_config)
+        self.assertIn("set wolf_cts_max_fanout 16", flow_config)
+
+    def test_unsupported_cts_key_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "unsupported backend.cadence-flowtool.cts key"):
+            prepare_genus_inputs(
+                self._context(backend_overrides={"cadence-flowtool": {
+                    **self.flowtool_overrides["cadence-flowtool"], "cts": {"bogus": []},
+                }}),
+                self.root / "backend" / "cadence-genus",
+            )
+
+    def test_target_skew_must_be_a_number(self):
+        with self.assertRaisesRegex(ValueError, "cts.target_skew must be a number"):
+            prepare_genus_inputs(
+                self._context(backend_overrides={"cadence-flowtool": {
+                    **self.flowtool_overrides["cadence-flowtool"],
+                    "cts": {"target_skew": "fast"},
+                }}),
+                self.root / "backend" / "cadence-genus",
+            )
+
+    def test_set_cts_config_is_shared_by_prects_and_cts(self):
+        flows_text = (builtin_flow_root("cadence-genus") / "common_flows.tcl").read_text(
+            encoding="utf-8",
+        )
+        self.assertIn("set_cts_config", flows_text)
+        prects_line = next(line for line in flows_text.splitlines() if "set_cts_config" in line)
+        self.assertIn("set_cts_config", prects_line)
+
+    def test_set_cts_config_step_applies_every_resolved_value(self):
+        step = builtin_flow_root("cadence-genus") / "common_steps.tcl"
+        body = _extract_step_bodies(step.read_text(encoding="utf-8"))["set_cts_config"]
+        for attribute, variable in (
+            ("cts_buffer_cells", "wolf_cts_buffer_cells"),
+            ("cts_inverter_cells", "wolf_cts_inverter_cells"),
+            ("cts_clock_gating_cells", "wolf_cts_clock_gating_cells"),
+            ("cts_target_skew", "wolf_cts_target_skew"),
+            ("cts_target_max_transition_time", "wolf_cts_target_max_transition_time"),
+            ("cts_max_fanout", "wolf_cts_max_fanout"),
+        ):
+            self.assertIn(f"set_db {attribute} $::{variable}", body)
+
+
+class GenusTieoffTests(GenusFixtureTestCase):
+    """backend.cadence-flowtool.tieoffs -- resolves add_tieoffs_cells (at
+    most two: tie-high/tie-low) and its companion attributes before
+    add_tieoffs's own existing guard."""
+
+    def test_default_is_empty(self):
+        inputs = prepare_genus_inputs(self._context(), self.root / "backend" / "cadence-genus")
+        flow_config = inputs.flow_config_script.read_text(encoding="utf-8")
+        self.assertIn("set wolf_tieoff_cells {}", flow_config)
+        self.assertIn('set wolf_tieoff_honor_dont_use ""', flow_config)
+
+    def test_resolved_cells_are_written_into_flow_config(self):
+        inputs = prepare_genus_inputs(
+            self._context(backend_overrides={"cadence-flowtool": {
+                **self.flowtool_overrides["cadence-flowtool"],
+                "tieoffs": {
+                    "cells": ["TIEHIX1", "TIELOX1"], "honor_dont_use": True,
+                    "max_fanout": 10, "max_distance": 20.0,
+                },
+            }}),
+            self.root / "backend" / "cadence-genus",
+        )
+        flow_config = inputs.flow_config_script.read_text(encoding="utf-8")
+        self.assertIn('set wolf_tieoff_cells {"TIEHIX1" "TIELOX1"}', flow_config)
+        self.assertIn("set wolf_tieoff_honor_dont_use true", flow_config)
+        self.assertIn("set wolf_tieoff_max_fanout 10", flow_config)
+        self.assertIn("set wolf_tieoff_max_distance 20.0", flow_config)
+
+    def test_more_than_two_cells_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "at most two cells"):
+            prepare_genus_inputs(
+                self._context(backend_overrides={"cadence-flowtool": {
+                    **self.flowtool_overrides["cadence-flowtool"],
+                    "tieoffs": {"cells": ["A", "B", "C"]},
+                }}),
+                self.root / "backend" / "cadence-genus",
+            )
+
+    def test_add_tieoffs_step_resolves_and_reports(self):
+        step = builtin_flow_root("cadence-genus") / "cts.tcl"
+        body = _extract_step_bodies(step.read_text(encoding="utf-8"))["add_tieoffs"]
+        self.assertIn("set_db add_tieoffs_cells $::wolf_tieoff_cells", body)
+        self.assertIn("get_db insts -if {.base_cell.name == $wolf_tie_cell}", body)
+        self.assertIn("check_tieoffs", body)
+        self.assertIn("wolf_error", body)
+
+
+class GenusClockRoutingTests(GenusFixtureTestCase):
+    """backend.cadence-flowtool.clock_routing -- a non-default route rule
+    and top/trunk/leaf route types for add_clock_route_types, with layer
+    names validated Tcl-side against the loaded technology (WOLF itself
+    has no layer list to check against at config-generation time)."""
+
+    def test_default_is_empty(self):
+        inputs = prepare_genus_inputs(self._context(), self.root / "backend" / "cadence-genus")
+        flow_config = inputs.flow_config_script.read_text(encoding="utf-8")
+        self.assertIn("set wolf_clock_routing_width_mult {}", flow_config)
+        self.assertIn("set wolf_clock_routing_spacing_mult {}", flow_config)
+        self.assertIn("set wolf_clock_routing_types {}", flow_config)
+
+    def test_resolved_rule_and_types_are_written_into_flow_config(self):
+        inputs = prepare_genus_inputs(
+            self._context(backend_overrides={"cadence-flowtool": {
+                **self.flowtool_overrides["cadence-flowtool"],
+                "clock_routing": {
+                    "rule": {
+                        "width_multiplier": {"M6:M5": 2.0}, "spacing_multiplier": {"M6:M5": 2.0},
+                    },
+                    "types": {
+                        "trunk": {"route_rule": True, "top_preferred_layer": "M6",
+                                  "bottom_preferred_layer": "M5"},
+                        "leaf": {"route_rule": True, "top_preferred_layer": "M4",
+                                 "bottom_preferred_layer": "M3"},
+                    },
+                },
+            }}),
+            self.root / "backend" / "cadence-genus",
+        )
+        flow_config = inputs.flow_config_script.read_text(encoding="utf-8")
+        self.assertIn('set wolf_clock_routing_width_mult {"M6:M5" "2.0"}', flow_config)
+        self.assertIn('"trunk" {"use_rule" "true"', flow_config)
+        self.assertIn('"top_preferred_layer" "M6"', flow_config)
+        self.assertIn('"leaf" {"use_rule" "true"', flow_config)
+
+    def test_unsupported_route_type_name_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "unsupported backend.cadence-flowtool.clock_routing.types key"):
+            prepare_genus_inputs(
+                self._context(backend_overrides={"cadence-flowtool": {
+                    **self.flowtool_overrides["cadence-flowtool"],
+                    "clock_routing": {"types": {"bogus": {}}},
+                }}),
+                self.root / "backend" / "cadence-genus",
+            )
+
+    def test_add_clock_route_types_step_validates_layers_and_creates_rule_and_types(self):
+        step = builtin_flow_root("cadence-genus") / "floorplanning.tcl"
+        body = _extract_step_bodies(step.read_text(encoding="utf-8"))["add_clock_route_types"]
+        self.assertIn("create_route_rule", body)
+        self.assertIn("create_route_type", body)
+        self.assertIn("get_db layers .name", body)
+        self.assertIn("set_db cts_route_type_$wolf_type_name", body)
+
+
+class GenusReportStepsTests(GenusFixtureTestCase):
+    """report_check_design's stage-appropriate -type, and the previously
+    empty report_early_summary_innovus/report_early_paths/
+    report_late_summary_innovus -- all read-only report_timing_summary/
+    report_timing commands (confirmed no optimization side effect, man
+    20.15), unlike timeDesign which left these empty before."""
+
+    def test_report_check_design_picks_cts_type_for_cts_stages(self):
+        step = builtin_flow_root("cadence-genus") / "common_steps.tcl"
+        body = _extract_step_bodies(step.read_text(encoding="utf-8"))["report_check_design"]
+        self.assertIn('{cts postcts} $report_check_design_stage', body)
+        self.assertIn("check_design -type $report_check_design_type", body)
+
+    def test_early_and_late_summary_and_paths_use_read_only_reports(self):
+        step = builtin_flow_root("cadence-genus") / "common_steps.tcl"
+        bodies = _extract_step_bodies(step.read_text(encoding="utf-8"))
+        self.assertIn("report_timing_summary -checks {hold drv}", bodies["report_early_summary_innovus"])
+        self.assertIn("report_timing -early -nworst 5", bodies["report_early_paths"])
+        self.assertIn("report_timing_summary -checks {setup drv}", bodies["report_late_summary_innovus"])
+
+
+class GenusCongestionReapplyTests(GenusFixtureTestCase):
+    """CMD_set_cong_aware (design_cong_effort/opt_consider_routing_congestion/
+    place_global_cong_effort) was only ever in the floorplan flow, but
+    run_place_opt (prects) also depends on it -- each stage is a separate
+    Innovus invocation restored from a checkpoint, and whether root set_db
+    attributes survive that restore is not documented, so it is re-applied
+    (the same existing step, reused) at the start of prects too."""
+
+    def test_cmd_set_cong_aware_runs_at_the_start_of_prects_too(self):
+        flows_text = (builtin_flow_root("cadence-genus") / "common_flows.tcl").read_text(
+            encoding="utf-8",
+        )
+        prects_line = next(
+            line for line in flows_text.splitlines() if "init_innovus CMD_set_cong_aware" in line
+        )
+        self.assertIn("CMD_set_cong_aware", prects_line)
+
+
+class GenusClockTreeVisibilityTests(GenusFixtureTestCase):
+    """Read-only clock-tree reporting after add_clock_spec and
+    add_clock_tree -- get_db clock_trees .name (already used elsewhere in
+    this flow to check whether a spec exists) and report_clock_trees
+    (confirmed real, read-only, man 20.15)."""
+
+    def test_add_clock_spec_logs_clock_tree_names(self):
+        step = builtin_flow_root("cadence-genus") / "floorplanning.tcl"
+        body = _extract_step_bodies(step.read_text(encoding="utf-8"))["add_clock_spec"]
+        self.assertIn("get_db clock_trees .name", body)
+        self.assertIn("wolf_info", body)
+
+    def test_add_clock_tree_reports_clock_tree_structure(self):
+        step = builtin_flow_root("cadence-genus") / "cts.tcl"
+        body = _extract_step_bodies(step.read_text(encoding="utf-8"))["add_clock_tree"]
+        self.assertIn("get_db clock_trees .name", body)
+        self.assertIn("report_clock_trees -out_file", body)
+        self.assertIn("wolf_file", body)
+
+
 class GenusExtraConstraintsTests(GenusFixtureTestCase):
     """constraints.files/constraints.lines -- raw SDC content WOLF never parses."""
 

@@ -174,12 +174,73 @@ create_flow_step -name add_clock_spec -owner wolf {
     } else {
         wolf_info "reusing existing clock tree spec"
     }
+    # Visibility into how the SDC clocks turned into clock trees -- read
+    # only (get_db clock_trees .name is the same enumeration already used
+    # above to check whether a spec exists at all).
+    set wolf_clock_tree_names [get_db clock_trees .name]
+    wolf_info "clock trees after add_clock_spec: $wolf_clock_tree_names"
     wolf_inject_for_step add_clock_spec post
+    puts [wolf_sep]
 }
 
 create_flow_step -name add_clock_route_types -owner wolf {
     wolf_step "add_clock_route_types"
     wolf_inject_for_step add_clock_route_types pre
+    # backend.cadence-flowtool.clock_routing: an optional non-default rule
+    # (create_route_rule -width_multiplier/-spacing_multiplier, confirmed
+    # real, man 20.15) and top/trunk/leaf route types (create_route_type
+    # -route_rule/-top_preferred_layer/-bottom_preferred_layer) for
+    # cts_route_type_top/trunk/leaf below. Layer names are validated
+    # against the loaded technology's own layers (get_db layers .name) --
+    # not guessed -- and this step fails clearly, before CTS runs, if a
+    # configured layer does not exist. Left unset (today's default): this
+    # step is a no-op, same as before this existed.
+    set wolf_route_rule_name ""
+    if {[llength $::wolf_clock_routing_width_mult] || [llength $::wolf_clock_routing_spacing_mult]} {
+        set wolf_configured_layers {}
+        foreach {wolf_layer_range wolf_mult} [concat $::wolf_clock_routing_width_mult $::wolf_clock_routing_spacing_mult] {
+            foreach wolf_layer [split $wolf_layer_range ":"] { lappend wolf_configured_layers $wolf_layer }
+        }
+        set wolf_known_layers [get_db layers .name]
+        foreach wolf_layer $wolf_configured_layers {
+            if {[lsearch -exact $wolf_known_layers $wolf_layer] < 0} {
+                wolf_error "add_clock_route_types: layer '$wolf_layer' (from backend.cadence-flowtool.clock_routing.rule) does not exist in the loaded technology -- known layers: $wolf_known_layers"
+                return -code error "add_clock_route_types: unknown layer '$wolf_layer'"
+            }
+        }
+        set wolf_route_rule_name wolf_cts_rule
+        set wolf_rule_args [list -name $wolf_route_rule_name]
+        if {[llength $::wolf_clock_routing_width_mult]} {
+            lappend wolf_rule_args -width_multiplier $::wolf_clock_routing_width_mult
+        }
+        if {[llength $::wolf_clock_routing_spacing_mult]} {
+            lappend wolf_rule_args -spacing_multiplier $::wolf_clock_routing_spacing_mult
+        }
+        eval create_route_rule $wolf_rule_args
+        wolf_info "create_route_rule $wolf_route_rule_name: width_multiplier=$::wolf_clock_routing_width_mult spacing_multiplier=$::wolf_clock_routing_spacing_mult"
+    }
+    foreach {wolf_type_name wolf_type_spec} $::wolf_clock_routing_types {
+        set wolf_use_rule [dict get $wolf_type_spec use_rule]
+        set wolf_top [dict get $wolf_type_spec top_preferred_layer]
+        set wolf_bottom [dict get $wolf_type_spec bottom_preferred_layer]
+        foreach wolf_layer [list $wolf_top $wolf_bottom] {
+            if {$wolf_layer ne "" && [lsearch -exact [get_db layers .name] $wolf_layer] < 0} {
+                wolf_error "add_clock_route_types: layer '$wolf_layer' (clock_routing.types.$wolf_type_name) does not exist in the loaded technology"
+                return -code error "add_clock_route_types: unknown layer '$wolf_layer'"
+            }
+        }
+        set wolf_type_name_full "wolf_cts_$wolf_type_name"
+        set wolf_type_args [list -name $wolf_type_name_full]
+        if {$wolf_use_rule && $wolf_route_rule_name ne ""} { lappend wolf_type_args -route_rule $wolf_route_rule_name }
+        if {$wolf_top ne ""} { lappend wolf_type_args -top_preferred_layer $wolf_top }
+        if {$wolf_bottom ne ""} { lappend wolf_type_args -bottom_preferred_layer $wolf_bottom }
+        eval create_route_type $wolf_type_args
+        set_db cts_route_type_$wolf_type_name $wolf_type_name_full
+        wolf_info "create_route_type $wolf_type_name_full -> cts_route_type_$wolf_type_name (route_rule=$wolf_use_rule top=$wolf_top bottom=$wolf_bottom)"
+    }
+    if {[dict size $::wolf_clock_routing_types] == 0 && $wolf_route_rule_name eq ""} {
+        wolf_info "add_clock_route_types: no backend.cadence-flowtool.clock_routing configured -- using CTS's own default route types"
+    }
     wolf_inject_for_step add_clock_route_types post
     puts [wolf_sep]
 }

@@ -15,7 +15,7 @@ import re
 import shutil
 import subprocess
 import time
-from typing import Any, Mapping, Optional
+from typing import Any, Mapping, NamedTuple, Optional
 
 import yaml
 
@@ -53,12 +53,24 @@ GENUS_REQUIRED_DEFINES = ("SYNTHESIS",)
 # hdl_max_memory_address_range past a generic-inference default). These are
 # tool policy, not canonical WOLF semantics, so they arrive only through the
 # explicit backend.cadence-flowtool escape hatch.
-_ALLOWED_CADENCE_FLOWTOOL_OVERRIDES = frozenset(
-    {"genus", "flowtool", "postsyn_netlists", "inject", "active_views"}
-)
+_ALLOWED_CADENCE_FLOWTOOL_OVERRIDES = frozenset({
+    "genus", "flowtool", "postsyn_netlists", "inject", "active_views",
+    "cts", "tieoffs", "clock_routing",
+})
 _ALLOWED_ACTIVE_VIEWS_KEYS = frozenset({"setup", "hold"})
 _ALLOWED_INJECT_PHASES = frozenset({"pre", "post"})
 _ALLOWED_GENUS_OVERRIDES = frozenset({"set_db"})
+_ALLOWED_CTS_KEYS = frozenset({
+    "buffer_cells", "inverter_cells", "clock_gating_cells",
+    "target_skew", "target_max_transition_time", "max_fanout",
+})
+_ALLOWED_TIEOFFS_KEYS = frozenset({"cells", "honor_dont_use", "max_fanout", "max_distance"})
+_ALLOWED_CLOCK_ROUTING_KEYS = frozenset({"rule", "types"})
+_ALLOWED_CLOCK_ROUTING_RULE_KEYS = frozenset({"width_multiplier", "spacing_multiplier"})
+_ALLOWED_CLOCK_ROUTING_TYPE_NAMES = frozenset({"top", "trunk", "leaf"})
+_ALLOWED_CLOCK_ROUTING_TYPE_KEYS = frozenset(
+    {"route_rule", "top_preferred_layer", "bottom_preferred_layer"}
+)
 
 # The institution-supplied Flowtool project descriptors this backend renders
 # WOLF's resolved values into (see _flowtool_templates/_render_template).
@@ -214,6 +226,18 @@ def _tcl_list(values: tuple[str, ...]) -> str:
     return "{" + " ".join(_tcl_quote(value) for value in values) + "}"
 
 
+def _tcl_bool(value: bool) -> str:
+    return "true" if value else "false"
+
+
+def _tcl_dict_literal(pairs: tuple[tuple[str, Any], ...]) -> str:
+    """A flat Tcl dict literal {key1 value1 key2 value2 ...}, each key/value
+    individually quoted the same way _tcl_list quotes a flat list element.
+    Not named _tcl_dict -- that name is already the (unrelated) parser for
+    reading a Tcl dict literal back into Python, below."""
+    return "{" + " ".join(f"{_tcl_quote(str(key))} {_tcl_quote(str(value))}" for key, value in pairs) + "}"
+
+
 def _tcl_brace_list(values: tuple[str, ...]) -> str:
     """Brace-quote each element instead of double-quoting it.
 
@@ -300,6 +324,207 @@ def _active_views_overrides(context: ResolvedContext) -> tuple[tuple[str, ...], 
                 )
         result.append(tuple(views))
     return result[0], result[1]
+
+
+def _optional_float(value: Any, field: str) -> Optional[float]:
+    if value is None:
+        return None
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        raise ValueError(f"{field} must be a number")
+    return float(value)
+
+
+def _optional_int(value: Any, field: str) -> Optional[int]:
+    if value is None:
+        return None
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise ValueError(f"{field} must be an integer")
+    return value
+
+
+def _cell_pattern_list(value: Any, field: str) -> tuple[str, ...]:
+    if not isinstance(value, list) or not all(isinstance(item, str) and item for item in value):
+        raise ValueError(f"{field} must be a list of nonempty strings")
+    return tuple(value)
+
+
+class CtsOverrides(NamedTuple):
+    buffer_cells: tuple[str, ...] = ()
+    inverter_cells: tuple[str, ...] = ()
+    clock_gating_cells: tuple[str, ...] = ()
+    target_skew: Optional[float] = None
+    target_max_transition_time: Optional[float] = None
+    max_fanout: Optional[int] = None
+
+
+def _cts_overrides(context: ResolvedContext) -> CtsOverrides:
+    """Validate backend.cadence-flowtool.cts -> CCOpt cell selection and
+    timing targets applied before clock tree synthesis (set_cts_config,
+    re-applied at the start of both prects and cts -- see docs on why).
+
+    Cell lists are real Innovus cts_buffer_cells/cts_inverter_cells/
+    cts_clock_gating_cells values directly (confirmed real, man 20.15):
+    each one takes either exact cell names or name *patterns* ("bufAX*"),
+    expanded against the loaded library by CCOpt itself -- WOLF does not
+    need to resolve or guess at base_cell attributes (is_buffer, ...) to
+    offer this; a project supplies the pattern(s) its own library uses.
+    Left unset (today's default): CCOpt chooses from the whole library,
+    unchanged.
+    """
+    cts = _cadence_flowtool_overrides(context).get("cts", {})
+    if not isinstance(cts, Mapping):
+        raise ValueError("backend.cadence-flowtool.cts must be a mapping")
+    unknown = set(cts) - _ALLOWED_CTS_KEYS
+    if unknown:
+        raise ValueError(f"unsupported backend.cadence-flowtool.cts key: {sorted(unknown)[0]}")
+    return CtsOverrides(
+        buffer_cells=_cell_pattern_list(cts.get("buffer_cells", []), "backend.cadence-flowtool.cts.buffer_cells"),
+        inverter_cells=_cell_pattern_list(
+            cts.get("inverter_cells", []), "backend.cadence-flowtool.cts.inverter_cells"
+        ),
+        clock_gating_cells=_cell_pattern_list(
+            cts.get("clock_gating_cells", []), "backend.cadence-flowtool.cts.clock_gating_cells"
+        ),
+        target_skew=_optional_float(cts.get("target_skew"), "backend.cadence-flowtool.cts.target_skew"),
+        target_max_transition_time=_optional_float(
+            cts.get("target_max_transition_time"),
+            "backend.cadence-flowtool.cts.target_max_transition_time",
+        ),
+        max_fanout=_optional_int(cts.get("max_fanout"), "backend.cadence-flowtool.cts.max_fanout"),
+    )
+
+
+class TieoffOverrides(NamedTuple):
+    cells: tuple[str, ...] = ()
+    honor_dont_use: Optional[bool] = None
+    max_fanout: Optional[int] = None
+    max_distance: Optional[float] = None
+
+
+def _tieoff_overrides(context: ResolvedContext) -> TieoffOverrides:
+    """Validate backend.cadence-flowtool.tieoffs -> the real Innovus
+    add_tieoffs_cells (max two: one tie-high, one tie-low driver, man
+    20.15) and its companion attributes. Left unset (today's default):
+    add_tieoffs_cells stays empty and add_tieoffs's own guard
+    ([get_db add_tieoffs_cells] ne "") keeps the step a no-op, same as
+    before this existed.
+    """
+    tieoffs = _cadence_flowtool_overrides(context).get("tieoffs", {})
+    if not isinstance(tieoffs, Mapping):
+        raise ValueError("backend.cadence-flowtool.tieoffs must be a mapping")
+    unknown = set(tieoffs) - _ALLOWED_TIEOFFS_KEYS
+    if unknown:
+        raise ValueError(f"unsupported backend.cadence-flowtool.tieoffs key: {sorted(unknown)[0]}")
+    cells = _cell_pattern_list(tieoffs.get("cells", []), "backend.cadence-flowtool.tieoffs.cells")
+    if len(cells) > 2:
+        raise ValueError(
+            "backend.cadence-flowtool.tieoffs.cells accepts at most two cells "
+            "(one tie-high driver, one tie-low driver)"
+        )
+    honor_dont_use = tieoffs.get("honor_dont_use")
+    if honor_dont_use is not None and not isinstance(honor_dont_use, bool):
+        raise ValueError("backend.cadence-flowtool.tieoffs.honor_dont_use must be a boolean")
+    return TieoffOverrides(
+        cells=cells,
+        honor_dont_use=honor_dont_use,
+        max_fanout=_optional_int(
+            tieoffs.get("max_fanout"), "backend.cadence-flowtool.tieoffs.max_fanout"
+        ),
+        max_distance=_optional_float(
+            tieoffs.get("max_distance"), "backend.cadence-flowtool.tieoffs.max_distance"
+        ),
+    )
+
+
+class ClockRoutingType(NamedTuple):
+    use_rule: bool = False
+    top_preferred_layer: Optional[str] = None
+    bottom_preferred_layer: Optional[str] = None
+
+
+class ClockRoutingOverrides(NamedTuple):
+    width_multiplier: tuple[tuple[str, float], ...] = ()
+    spacing_multiplier: tuple[tuple[str, float], ...] = ()
+    types: tuple[tuple[str, ClockRoutingType], ...] = ()
+
+
+def _clock_routing_overrides(context: ResolvedContext) -> ClockRoutingOverrides:
+    """Validate backend.cadence-flowtool.clock_routing -> a non-default
+    routing rule (create_route_rule -width_multiplier/-spacing_multiplier,
+    confirmed real, man 20.15) and top/trunk/leaf route types
+    (create_route_type -route_rule/-top_preferred_layer/
+    -bottom_preferred_layer) for add_clock_route_types. Layer names are
+    taken exactly as given here -- WOLF does not know the loaded
+    technology's own layer set at config-generation time (that only
+    exists once Innovus has actually loaded the tech LEF), so
+    add_clock_route_types itself validates each one against
+    `get_db layers .name` and fails clearly if a layer does not exist,
+    rather than Python guessing. Left unset (today's default):
+    add_clock_route_types stays a no-op.
+    """
+    clock_routing = _cadence_flowtool_overrides(context).get("clock_routing", {})
+    if not isinstance(clock_routing, Mapping):
+        raise ValueError("backend.cadence-flowtool.clock_routing must be a mapping")
+    unknown = set(clock_routing) - _ALLOWED_CLOCK_ROUTING_KEYS
+    if unknown:
+        raise ValueError(f"unsupported backend.cadence-flowtool.clock_routing key: {sorted(unknown)[0]}")
+
+    def _multiplier_map(value: Any, field: str) -> tuple[tuple[str, float], ...]:
+        if not isinstance(value, Mapping):
+            raise ValueError(f"{field} must be a mapping of layer range to multiplier")
+        result = []
+        for layer, multiplier in value.items():
+            if not isinstance(layer, str) or not layer:
+                raise ValueError(f"{field} keys must be nonempty layer range strings")
+            if not isinstance(multiplier, (int, float)) or isinstance(multiplier, bool):
+                raise ValueError(f"{field}.{layer} must be a number")
+            result.append((layer, float(multiplier)))
+        return tuple(sorted(result))
+
+    rule = clock_routing.get("rule", {})
+    if not isinstance(rule, Mapping):
+        raise ValueError("backend.cadence-flowtool.clock_routing.rule must be a mapping")
+    unknown_rule = set(rule) - _ALLOWED_CLOCK_ROUTING_RULE_KEYS
+    if unknown_rule:
+        raise ValueError(
+            f"unsupported backend.cadence-flowtool.clock_routing.rule key: {sorted(unknown_rule)[0]}"
+        )
+    width_multiplier = _multiplier_map(
+        rule.get("width_multiplier", {}), "backend.cadence-flowtool.clock_routing.rule.width_multiplier"
+    )
+    spacing_multiplier = _multiplier_map(
+        rule.get("spacing_multiplier", {}),
+        "backend.cadence-flowtool.clock_routing.rule.spacing_multiplier",
+    )
+
+    types_value = clock_routing.get("types", {})
+    if not isinstance(types_value, Mapping):
+        raise ValueError("backend.cadence-flowtool.clock_routing.types must be a mapping")
+    unknown_type_names = set(types_value) - _ALLOWED_CLOCK_ROUTING_TYPE_NAMES
+    if unknown_type_names:
+        raise ValueError(
+            f"unsupported backend.cadence-flowtool.clock_routing.types key: {sorted(unknown_type_names)[0]} "
+            f"-- must be one of {sorted(_ALLOWED_CLOCK_ROUTING_TYPE_NAMES)}"
+        )
+    types = []
+    for name, spec in sorted(types_value.items()):
+        field = f"backend.cadence-flowtool.clock_routing.types.{name}"
+        if not isinstance(spec, Mapping):
+            raise ValueError(f"{field} must be a mapping")
+        unknown_spec = set(spec) - _ALLOWED_CLOCK_ROUTING_TYPE_KEYS
+        if unknown_spec:
+            raise ValueError(f"unsupported {field} key: {sorted(unknown_spec)[0]}")
+        use_rule = spec.get("route_rule", False)
+        if not isinstance(use_rule, bool):
+            raise ValueError(f"{field}.route_rule must be a boolean")
+        top_layer = spec.get("top_preferred_layer")
+        if top_layer is not None and not (isinstance(top_layer, str) and top_layer):
+            raise ValueError(f"{field}.top_preferred_layer must be a nonempty string")
+        bottom_layer = spec.get("bottom_preferred_layer")
+        if bottom_layer is not None and not (isinstance(bottom_layer, str) and bottom_layer):
+            raise ValueError(f"{field}.bottom_preferred_layer must be a nonempty string")
+        types.append((name, ClockRoutingType(use_rule, top_layer, bottom_layer)))
+    return ClockRoutingOverrides(width_multiplier, spacing_multiplier, tuple(types))
 
 
 def _postsyn_netlists(context: ResolvedContext) -> tuple[str, ...]:
@@ -1729,6 +1954,9 @@ def prepare_genus_inputs(
     genus_overrides = _genus_set_db_overrides(context)
     overrides_script = destination / "overrides.tcl" if genus_overrides else None
     active_setup_views, active_hold_views = _active_views_overrides(context)
+    cts = _cts_overrides(context)
+    tieoffs = _tieoff_overrides(context)
+    clock_routing = _clock_routing_overrides(context)
     flow_config_script = destination / "flow-config.tcl"
     manifest = destination / "genus-inputs.yaml"
     constraints = destination / "constraints.sdc"
@@ -1925,6 +2153,32 @@ def prepare_genus_inputs(
         f"set wolf_active_hold_views {_tcl_list(active_hold_views)}\n"
         f"set wolf_power_nets {_tcl_list(context.power_nets)}\n"
         f"set wolf_ground_nets {_tcl_list(context.ground_nets)}\n"
+        f"set wolf_cts_buffer_cells {_tcl_list(cts.buffer_cells)}\n"
+        f"set wolf_cts_inverter_cells {_tcl_list(cts.inverter_cells)}\n"
+        f"set wolf_cts_clock_gating_cells {_tcl_list(cts.clock_gating_cells)}\n"
+        f"set wolf_cts_target_skew "
+        f"{cts.target_skew if cts.target_skew is not None else '\"\"'}\n"
+        f"set wolf_cts_target_max_transition_time "
+        f"{cts.target_max_transition_time if cts.target_max_transition_time is not None else '\"\"'}\n"
+        f"set wolf_cts_max_fanout {cts.max_fanout if cts.max_fanout is not None else '\"\"'}\n"
+        f"set wolf_tieoff_cells {_tcl_list(tieoffs.cells)}\n"
+        f"set wolf_tieoff_honor_dont_use "
+        f"{_tcl_bool(tieoffs.honor_dont_use) if tieoffs.honor_dont_use is not None else '\"\"'}\n"
+        f"set wolf_tieoff_max_fanout {tieoffs.max_fanout if tieoffs.max_fanout is not None else '\"\"'}\n"
+        f"set wolf_tieoff_max_distance "
+        f"{tieoffs.max_distance if tieoffs.max_distance is not None else '\"\"'}\n"
+        f"set wolf_clock_routing_width_mult {_tcl_dict_literal(clock_routing.width_multiplier)}\n"
+        f"set wolf_clock_routing_spacing_mult {_tcl_dict_literal(clock_routing.spacing_multiplier)}\n"
+        f"set wolf_clock_routing_types "
+        + "{" + " ".join(
+            f"{_tcl_quote(name)} "
+            + _tcl_dict_literal((
+                ("use_rule", _tcl_bool(spec.use_rule)),
+                ("top_preferred_layer", spec.top_preferred_layer or ""),
+                ("bottom_preferred_layer", spec.bottom_preferred_layer or ""),
+            ))
+            for name, spec in clock_routing.types
+        ) + "}\n"
         # Not resolved from any PDK/environment field yet -- always empty,
         # so the guarded steps in synthesis.tcl that read these quietly
         # skip rather than running on a fabricated value. See

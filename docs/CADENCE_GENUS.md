@@ -988,6 +988,125 @@ are also recorded in `genus-inputs.yaml` and frozen run provenance. Unknown
 keys under `backend.cadence-flowtool` or `backend.cadence-flowtool.genus`
 are rejected rather than silently ignored.
 
+## CTS cell selection, timing targets, tie-offs, and clock routing
+
+These all default to today's behaviour (CCOpt/add_tieoffs/
+add_clock_route_types use their own library-wide defaults, unchanged)
+when left unset, and are generic across any technology package -- WOLF
+never hard-codes a cell or layer name; a project supplies its own.
+
+**`backend.cadence-flowtool.cts`** -- CCOpt buffer/inverter/clock-gating
+cell selection and timing targets, applied by a shared `set_cts_config`
+step at the start of both `prects` (before `add_clock_spec`) and `cts`
+(before `CMD_check_design_cts`), since each is a separate Innovus
+invocation restored from a checkpoint and attribute persistence across
+that restore is not documented (see "Settings across implementation
+stages" below):
+
+```yaml
+backend:
+  cadence-flowtool:
+    cts:
+      buffer_cells: ["BUFX*"]           # name or pattern list
+      inverter_cells: ["INVX*"]
+      clock_gating_cells: ["CKGX*"]
+      target_skew: 0.05                 # ns, optional
+      target_max_transition_time: 0.2   # ns, optional
+      max_fanout: 16                    # optional
+```
+
+Cell lists map directly onto Innovus's own `cts_buffer_cells`/
+`cts_inverter_cells`/`cts_clock_gating_cells` (confirmed real, man 20.15):
+each accepts exact names *or* patterns (`BUFX*`), expanded against the
+loaded library by CCOpt itself -- WOLF does not need to query `base_cell`
+attributes (`is_buffer`, ...) to offer this, and does not (no confirmed
+20.15 reference for those attributes was found; guessing them risked the
+same class of error `genus_turn_on_analysis_views`'s `.active` bug was).
+
+**`backend.cadence-flowtool.tieoffs`** -- resolves `add_tieoffs_cells`
+(at most two: one tie-high driver, one tie-low driver, man 20.15) and its
+companion attributes, applied inside the existing `add_tieoffs` step
+right before its own `[get_db add_tieoffs_cells] ne ""` guard:
+
+```yaml
+backend:
+  cadence-flowtool:
+    tieoffs:
+      cells: ["TIEHIX1", "TIELOX1"]
+      honor_dont_use: true   # optional
+      max_fanout: 10         # optional
+      max_distance: 20.0     # optional, microns
+```
+
+Left unset, `add_tieoffs` stays a no-op, same as before this existed --
+but a synthesized netlist with literal `1'b0`/`1'b1` connections and no
+tie cells is a likely LVS/DRC problem, so `add_tieoffs` now logs a loud
+`wolf_error` (not a silent skip) when nothing is configured. When cells
+*are* configured, the step reports how many tie-cell instances were
+actually added (`get_db insts -if {.base_cell.name == ...}`, confirmed
+real query pattern, man 20.15) and runs `check_tieoffs` for a full
+connectivity report. This is independent of, and coexists with, a
+project's own floorplan script calling `connect_global_net -type tie_hi`/
+`-type tie_lo`: that only ties *existing* tie pins on cells already in the
+netlist to the power/ground rails, it does not insert any tie-cell
+instances -- `add_tieoffs` is what actually inserts the driver cells for
+synthesis's own literal constants, and should (and does, in the bundled
+flow order) run after the floorplan script's own global net connections.
+
+**`backend.cadence-flowtool.clock_routing`** -- a non-default routing
+rule and top/trunk/leaf route types for `add_clock_route_types`
+(`CMD_set_cong_aware`'s sibling extension point in the `prects` flow,
+previously always empty):
+
+```yaml
+backend:
+  cadence-flowtool:
+    clock_routing:
+      rule:
+        width_multiplier: {"M6:M5": 2.0}
+        spacing_multiplier: {"M6:M5": 2.0}
+      types:
+        trunk: {route_rule: true, top_preferred_layer: M6, bottom_preferred_layer: M5}
+        leaf: {route_rule: true, top_preferred_layer: M4, bottom_preferred_layer: M3}
+```
+
+Maps directly onto `create_route_rule -width_multiplier/-spacing_multiplier`
+and `create_route_type -route_rule/-top_preferred_layer/
+-bottom_preferred_layer` (both confirmed real, man 20.15), then
+`set_db cts_route_type_<name>` for each configured type. Layer names are
+used exactly as given -- WOLF has no layer list to validate against at
+config-generation time (that only exists once Innovus has loaded the
+tech LEF) -- so `add_clock_route_types` itself validates every configured
+layer against `get_db layers .name` and raises a clear error naming the
+unknown layer before CTS ever runs, rather than a confusing failure deep
+inside `create_route_rule`/`create_route_type`. `commit_route_types`
+(`commit_clock_tree_route_attributes`) needed no changes: confirmed safe
+whether or not any route type exists.
+
+### Active analysis views apply uniformly, not yet per stage
+
+`backend.cadence-flowtool.active_views` (see "Multi-corner (MMMC)
+technology packages" above) applies the same setup/hold view selection to
+every implementation stage. A project wanting a narrow view set through
+`prects`..`postcts` and every declared view again at `route`/`postroute`
+has to edit `wolf.yaml` between stages today; per-stage selection (e.g. a
+mapping keyed by stage name, falling back to the global value) is a real,
+reasonably-sized follow-up, not implemented yet.
+
+### Settings across implementation stages
+
+Each implementation stage (`floorplan`/`prects`/`cts`/`postcts`/`route`/
+`postroute`) is a separate Flowtool/Innovus invocation restored from the
+previous stage's own checkpoint. Whether root `set_db` attributes set in
+one stage (`design_cong_effort`/`opt_consider_routing_congestion`/
+`place_global_cong_effort` from `CMD_set_cong_aware`, or the CTS
+attributes above) survive that restore into the next stage is not
+documented anywhere WOLF found, and was not assumed either way. The safe
+default implemented here: re-apply idempotently at the start of every
+stage that depends on them -- `CMD_set_cong_aware` now also runs at the
+start of `prects` (previously only `floorplan`), and `set_cts_config` runs
+at the start of both `prects` and `cts`.
+
 Preparation is exposed by `wolf.backend.cadence_genus.prepare_genus_inputs`
 and is intentionally separate from the legacy Flowtool shell runner. For
 declarative `cadence-flowtool` environments, the run bridge validates

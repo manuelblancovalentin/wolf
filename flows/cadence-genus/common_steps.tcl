@@ -146,13 +146,74 @@ create_flow_step -name report_check_design -owner wolf {
     wolf_inject_for_step report_check_design pre
     set report_check_design_file \
         [file join [get_db flow_report_directory] "checkDesign.[get_db flow_report_name].rpt"]
-    # "place" is the one -type value already confirmed real and valid
-    # against this flow (see CMD_check_place/CMD_check_design_cts) --
-    # reused here rather than guessing a per-stage enum value Innovus
-    # may not actually accept.
-    check_design -type place -out_file $report_check_design_file
+    # "place" and "cts" are both confirmed real, valid -type values (man
+    # 20.15; "cts" is also already used as-is by CMD_check_design_cts).
+    # This step is shared by report_floorplan/report_prects (still in
+    # place-oriented stages) and report_postcts/report_postroute (already
+    # past CTS) -- [lindex [get_db flow_hier_path] 0] is the same
+    # top-level stage-name lookup block_finish's own flow_report_name
+    # reset already relies on, just indexed at the start of the path
+    # instead of the end.
+    set report_check_design_stage [lindex [get_db flow_hier_path] 0]
+    if {[lsearch -exact {cts postcts} $report_check_design_stage] >= 0} {
+        set report_check_design_type cts
+    } else {
+        set report_check_design_type place
+    }
+    check_design -type $report_check_design_type -out_file $report_check_design_file
     wolf_file $report_check_design_file
     wolf_inject_for_step report_check_design post
+}
+
+#=============================================================================
+# set_cts_config -- shared by prects and cts: CCOpt cell selection
+# (cts_buffer_cells/cts_inverter_cells/cts_clock_gating_cells) and timing
+# targets (cts_target_skew/cts_target_max_transition_time/cts_max_fanout),
+# from backend.cadence-flowtool.cts. Each stage is a separate Innovus
+# invocation restored from a checkpoint, and whether these root
+# attributes survive that restore is not documented anywhere WOLF found
+# -- re-applying idempotently at the start of both stages (prects, before
+# add_clock_spec; cts, before CMD_check_design_cts) is the safe default
+# rather than assuming persistence.
+#=============================================================================
+
+create_flow_step -name set_cts_config -owner wolf {
+    wolf_inject_for_step set_cts_config pre
+    set wolf_cts_applied 0
+    if {[llength $::wolf_cts_buffer_cells]} {
+        set_db cts_buffer_cells $::wolf_cts_buffer_cells
+        wolf_info "cts_buffer_cells: $::wolf_cts_buffer_cells"
+        set wolf_cts_applied 1
+    }
+    if {[llength $::wolf_cts_inverter_cells]} {
+        set_db cts_inverter_cells $::wolf_cts_inverter_cells
+        wolf_info "cts_inverter_cells: $::wolf_cts_inverter_cells"
+        set wolf_cts_applied 1
+    }
+    if {[llength $::wolf_cts_clock_gating_cells]} {
+        set_db cts_clock_gating_cells $::wolf_cts_clock_gating_cells
+        wolf_info "cts_clock_gating_cells: $::wolf_cts_clock_gating_cells"
+        set wolf_cts_applied 1
+    }
+    if {$::wolf_cts_target_skew ne ""} {
+        set_db cts_target_skew $::wolf_cts_target_skew
+        wolf_info "cts_target_skew: $::wolf_cts_target_skew"
+        set wolf_cts_applied 1
+    }
+    if {$::wolf_cts_target_max_transition_time ne ""} {
+        set_db cts_target_max_transition_time $::wolf_cts_target_max_transition_time
+        wolf_info "cts_target_max_transition_time: $::wolf_cts_target_max_transition_time"
+        set wolf_cts_applied 1
+    }
+    if {$::wolf_cts_max_fanout ne ""} {
+        set_db cts_max_fanout $::wolf_cts_max_fanout
+        wolf_info "cts_max_fanout: $::wolf_cts_max_fanout"
+        set wolf_cts_applied 1
+    }
+    if {!$wolf_cts_applied} {
+        wolf_info "set_cts_config: no backend.cadence-flowtool.cts overrides configured -- CCOpt uses its own library-wide defaults"
+    }
+    wolf_inject_for_step set_cts_config post
 }
 
 #=============================================================================
@@ -224,26 +285,37 @@ create_flow_step -name report_route_density -owner wolf {
     wolf_inject_for_step report_route_density post
 }
 
-# Early-mode (hold-oriented) timing summary/paths. Left as extension
-# points rather than guessing: the real Innovus command for a *report*
-# here is `timeDesign`, which in some modes also performs real timing
-# optimization as a side effect -- guessing the wrong flag combination
-# risks silently changing the design, not just erroring loudly the way a
-# bad report command would. Fill in via wolf_inject_for_step once the
-# exact read-only invocation for this project's Innovus version is
-# confirmed.
+# Early (hold) / late (setup) timing summary and paths -- report_timing_summary
+# and report_timing are both confirmed pure read-only report commands
+# (man 20.15: neither's description mentions any optimization side
+# effect, unlike timeDesign, which some modes of *do* perform real
+# optimization -- that risk is why these were left empty before).
+# -checks drv is included in both summaries the same way the Genus-side
+# report_timing_summary_late_genus and this file's own run_opt_postcts_hold
+# already do.
 create_flow_step -name report_early_summary_innovus -owner wolf {
     wolf_inject_for_step report_early_summary_innovus pre
+    set report_early_summary_innovus_file \
+        [file join $::wolf_reports_dir "early_summary.[get_db flow_report_name].rpt"]
+    report_timing_summary -checks {hold drv} > $report_early_summary_innovus_file
+    wolf_file $report_early_summary_innovus_file
     wolf_inject_for_step report_early_summary_innovus post
 }
 
 create_flow_step -name report_early_paths -owner wolf {
     wolf_inject_for_step report_early_paths pre
+    set report_early_paths_file [file join $::wolf_reports_dir "early_paths.[get_db flow_report_name].rpt"]
+    report_timing -early -nworst 5 > $report_early_paths_file
+    wolf_file $report_early_paths_file
     wolf_inject_for_step report_early_paths post
 }
 
 create_flow_step -name report_late_summary_innovus -owner wolf {
     wolf_inject_for_step report_late_summary_innovus pre
+    set report_late_summary_innovus_file \
+        [file join $::wolf_reports_dir "late_summary.[get_db flow_report_name].rpt"]
+    report_timing_summary -checks {setup drv} > $report_late_summary_innovus_file
+    wolf_file $report_late_summary_innovus_file
     wolf_inject_for_step report_late_summary_innovus post
 }
 

@@ -110,12 +110,13 @@ create_flow -name floorplan -owner wolf -tool innovus -tool_options -disable_use
      report_floorplan lec export DRC}
 
 create_flow -name prects -owner wolf -tool innovus -tool_options -disable_user_startup \
-    {block_start init_innovus add_clock_spec add_clock_route_types commit_route_types \
-     run_place_opt CMD_check_place CMD_resolve_place_violations block_finish report_prects}
+    {block_start init_innovus CMD_set_cong_aware set_cts_config add_clock_spec \
+     add_clock_route_types commit_route_types run_place_opt CMD_check_place \
+     CMD_resolve_place_violations block_finish report_prects}
 
 create_flow -name cts -owner wolf -tool innovus -tool_options -disable_user_startup \
-    {block_start init_innovus CMD_check_design_cts add_clock_tree add_tieoffs block_finish \
-     report_postcts}
+    {block_start init_innovus set_cts_config CMD_check_design_cts add_clock_tree add_tieoffs \
+     block_finish report_postcts}
 
 create_flow -name postcts -owner wolf -tool innovus -tool_options -disable_user_startup \
     {block_start init_innovus run_opt_postcts_hold block_finish report_postcts export}
