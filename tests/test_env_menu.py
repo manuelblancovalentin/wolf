@@ -607,6 +607,262 @@ class EnvWizardEndToEndTests(unittest.TestCase):
         )
 
 
+_FAKE_LEF = """\
+VERSION 5.8 ;
+MACRO FAKEBUFX2
+  CLASS CORE ;
+  SIZE 1.5 BY 2.0 ;
+END FAKEBUFX2
+MACRO FAKEBUFX4
+  CLASS CORE ;
+  SIZE 3.0 BY 2.0 ;
+END FAKEBUFX4
+MACRO FAKEINVX1
+  CLASS CORE ;
+  SIZE 0.8 BY 2.0 ;
+END FAKEINVX1
+MACRO FAKETIEHIX1
+  CLASS CORE ;
+  SIZE 0.5 BY 2.0 ;
+END FAKETIEHIX1
+MACRO FAKETIELOX1
+  CLASS CORE ;
+  SIZE 0.5 BY 2.0 ;
+END FAKETIELOX1
+LAYER FAKEM1
+  TYPE ROUTING ;
+END FAKEM1
+LAYER FAKEM2
+  TYPE ROUTING ;
+END FAKEM2
+"""
+
+
+class CadenceCellBrowserTests(unittest.TestCase):
+    """`wolf env menu`'s CTS/tie-off/routing cell browser -- picks real
+    cell/layer names out of a resolved technology's own (synthetic, for
+    this test) LEF files instead of hand-editing YAML. Only made-up
+    names are used anywhere in this fixture (FAKEBUFX2, FAKEM1, ...),
+    never real PDK data."""
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory(prefix="wolf-cell-browser-menu-")
+        self.root = Path(self.temporary.name)
+        self.state = self.root / "state"
+        self.registry = self.root / "registry"
+        self.state.mkdir(parents=True)
+        self.variables = patch.dict(
+            os.environ,
+            {"WOLF_HOME": str(self.state), "WOLF_REGISTRY": str(self.registry)},
+        )
+        self.variables.start()
+        self._register_pdk()
+        self.env_dir = self.state / "envs" / "cellbrowser-demo"
+        self.env_dir.mkdir(parents=True)
+        (self.env_dir / "wolf.yaml").write_text(
+            "schema: wolf.environment/v1\nname: cellbrowser-demo\n"
+            "design:\n  name: demo\n  top: demo\n  sources:\n    - path: /dev/null\n"
+            "technology:\n  package: pdk/fakecells\n"
+            "flow:\n  backend: cadence-flowtool\n"
+            f"project:\n  root: {self.root / 'project'}\n",
+            encoding="utf-8",
+        )
+
+    def tearDown(self):
+        self.variables.stop()
+        self.temporary.cleanup()
+
+    def _register_pdk(self):
+        manifest = {
+            "schema_version": 1, "kind": "pdk", "name": "fakecells", "description": "fakecells",
+            "source": {"type": "local-path", "root": str(self.root / "pdksrc"), "revision": "V1"},
+            "validation": {"required_paths": []},
+            "metadata": {"technology": {
+                "name": "fakecells",
+                "physical": {"technology_lefs": ["fake_tech.lef"]},
+            }},
+        }
+        pdk_dir = self.registry / "pdk"
+        pdk_dir.mkdir(parents=True, exist_ok=True)
+        (pdk_dir / "fakecells.yaml").write_text(yaml.safe_dump(manifest), encoding="utf-8")
+        installation = self.state / "packages" / "pdk" / "fakecells" / "V1"
+        (installation / "source").mkdir(parents=True)
+        (installation / "source" / "fake_tech.lef").write_text(_FAKE_LEF, encoding="utf-8")
+        (installation / "installed.yaml").write_text(
+            yaml.safe_dump({
+                "package": "pdk/fakecells", "revision": "V1", "source_revision": "V1",
+                "content_path": "source", "installed_at": "2026-10-05T00:00:00Z",
+            }),
+            encoding="utf-8",
+        )
+
+    def _select(self, option_list, label):
+        options = [o.prompt for o in option_list.options]
+        option_list.highlighted = options.index(label)
+
+    def test_picking_all_matches_stores_the_expanded_cell_names(self):
+        async def drive():
+            app = EnvWizardApp("cellbrowser-demo")
+            async with app.run_test() as pilot:
+                app.technology_package = "pdk/fakecells"
+                self._select(app.query_one(OptionList), "CTS / tie-off / routing cells...")
+                await pilot.press("enter")
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "CTS buffer cells (default) [0]")
+                await pilot.press("enter")
+                await pilot.pause()
+                await pilot.press("a")
+                await pilot.pause()
+                app.screen.query_one(Input).value = "FAKEBUF*"
+                await pilot.press("enter")
+                await pilot.pause()
+                # "'FAKEBUF*' matches 2 cell(s) -- store as" -> all matched names
+                self._select(app.screen.query_one(OptionList), "all 2 matched names")
+                await pilot.press("enter")
+                await pilot.pause()
+                # Closing the list returns straight to the main menu
+                # (same precedent as _edit_power_ground_nets) rather than
+                # reopening the cts/tieoffs submenu -- Textual's escape
+                # handling on a screen re-pushed from within another
+                # screen's own dismiss callback is not reliable.
+                await pilot.press("escape")  # done with the list
+                await pilot.pause()
+                await pilot.press("s")
+                await pilot.pause()
+        asyncio.run(drive())
+        saved = yaml.safe_load((self.env_dir / "wolf.yaml").read_text(encoding="utf-8"))
+        self.assertEqual(
+            sorted(saved["backend"]["cadence-flowtool"]["cts"]["buffer_cells"]),
+            ["FAKEBUFX2", "FAKEBUFX4"],
+        )
+
+    def test_keeping_the_pattern_stores_it_literally(self):
+        async def drive():
+            app = EnvWizardApp("cellbrowser-demo")
+            async with app.run_test() as pilot:
+                app.technology_package = "pdk/fakecells"
+                self._select(app.query_one(OptionList), "CTS / tie-off / routing cells...")
+                await pilot.press("enter")
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "CTS inverter cells (default) [0]")
+                await pilot.press("enter")
+                await pilot.pause()
+                await pilot.press("a")
+                await pilot.pause()
+                app.screen.query_one(Input).value = "FAKEINV*"
+                await pilot.press("enter")
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "the pattern 'FAKEINV*' itself")
+                await pilot.press("enter")
+                await pilot.pause()
+                await pilot.press("escape")
+                await pilot.pause()
+                await pilot.press("s")
+                await pilot.pause()
+        asyncio.run(drive())
+        saved = yaml.safe_load((self.env_dir / "wolf.yaml").read_text(encoding="utf-8"))
+        self.assertEqual(saved["backend"]["cadence-flowtool"]["cts"]["inverter_cells"], ["FAKEINV*"])
+
+    def test_a_pattern_matching_nothing_warns_but_allows_storing_it_anyway(self):
+        async def drive():
+            app = EnvWizardApp("cellbrowser-demo")
+            async with app.run_test() as pilot:
+                app.technology_package = "pdk/fakecells"
+                self._select(app.query_one(OptionList), "CTS / tie-off / routing cells...")
+                await pilot.press("enter")
+                await pilot.pause()
+                self._select(
+                    app.screen.query_one(OptionList), "CTS clock-gating cells [0]",
+                )
+                await pilot.press("enter")
+                await pilot.pause()
+                await pilot.press("a")
+                await pilot.pause()
+                app.screen.query_one(Input).value = "NOTHING_MATCHES_THIS*"
+                await pilot.press("enter")
+                await pilot.pause()
+                self._select(
+                    app.screen.query_one(OptionList),
+                    "Store it anyway (Innovus may still expand it)",
+                )
+                await pilot.press("enter")
+                await pilot.pause()
+                await pilot.press("escape")
+                await pilot.pause()
+                await pilot.press("s")
+                await pilot.pause()
+        asyncio.run(drive())
+        saved = yaml.safe_load((self.env_dir / "wolf.yaml").read_text(encoding="utf-8"))
+        self.assertEqual(
+            saved["backend"]["cadence-flowtool"]["cts"]["clock_gating_cells"],
+            ["NOTHING_MATCHES_THIS*"],
+        )
+
+    def test_tieoff_cells_are_capped_at_two(self):
+        async def drive():
+            app = EnvWizardApp("cellbrowser-demo")
+            async with app.run_test() as pilot:
+                app.technology_package = "pdk/fakecells"
+                self._select(app.query_one(OptionList), "CTS / tie-off / routing cells...")
+                await pilot.press("enter")
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "Tie-off cells [0]")
+                await pilot.press("enter")
+                await pilot.pause()
+                for name in ("FAKETIEHIX1", "FAKETIELOX1"):
+                    await pilot.press("a")
+                    await pilot.pause()
+                    app.screen.query_one(Input).value = name
+                    await pilot.press("enter")
+                    await pilot.pause()
+                    self._select(app.screen.query_one(OptionList), f"the pattern '{name}' itself")
+                    await pilot.press("enter")
+                    await pilot.pause()
+                before = list(app.screen.query_one(OptionList).options)
+                # A third add attempt is a no-op (max_items=2) -- no new
+                # screen opens, so the list is unchanged.
+                await pilot.press("a")
+                await pilot.pause()
+                after = list(app.screen.query_one(OptionList).options)
+                self.assertEqual(len(before), len(after))
+                await pilot.press("escape")
+                await pilot.pause()
+                await pilot.press("s")
+                await pilot.pause()
+        asyncio.run(drive())
+        saved = yaml.safe_load((self.env_dir / "wolf.yaml").read_text(encoding="utf-8"))
+        self.assertEqual(
+            sorted(saved["backend"]["cadence-flowtool"]["tieoffs"]["cells"]),
+            ["FAKETIEHIX1", "FAKETIELOX1"],
+        )
+
+    def test_clock_routing_preferred_layer_is_picked_from_resolved_layers(self):
+        async def drive():
+            app = EnvWizardApp("cellbrowser-demo")
+            async with app.run_test() as pilot:
+                app.technology_package = "pdk/fakecells"
+                self._select(app.query_one(OptionList), "CTS / tie-off / routing cells...")
+                await pilot.press("enter")
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "Clock routing trunk top layer [-]")
+                await pilot.press("enter")
+                await pilot.pause()
+                self._select(app.screen.query_one(OptionList), "FAKEM2")
+                await pilot.press("enter")
+                await pilot.pause()
+                # Picking an option on _PickScreen dismisses it immediately
+                # (no separate "done" escape needed) -- back at the main
+                # menu already.
+                await pilot.press("s")
+                await pilot.pause()
+        asyncio.run(drive())
+        saved = yaml.safe_load((self.env_dir / "wolf.yaml").read_text(encoding="utf-8"))
+        self.assertEqual(
+            saved["backend"]["cadence-flowtool"]["clock_routing"]["types"]["trunk"]["top_preferred_layer"],
+            "FAKEM2",
+        )
+
+
 class BundledFlowNameTests(unittest.TestCase):
     """The bundled-default flow must never be written as flow.name:
     "default" -- "default" is not a real flow identity, it collided with

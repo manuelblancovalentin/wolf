@@ -17,6 +17,7 @@ root.
 
 from __future__ import annotations
 
+import fnmatch
 import os
 from pathlib import Path
 import re
@@ -37,8 +38,12 @@ from textual.widgets.tree import TreeNode
 _RTL_SUFFIXES = (".v", ".sv", ".vhd", ".vhdl")
 
 from wolf.backend import backend_names
+from wolf.cell_browser import (
+    analysis_view_names_for_technology, cells_for_technology, routing_layers_for_technology,
+)
 from wolf.environment import (
     ENVIRONMENT_FILENAME, ENVIRONMENT_SCHEMA, inspect_manifest_toml, load_environment,
+    resolve_technology_reference,
 )
 from wolf.flow_inspect import FlowStructure, parse_flow_directory
 from wolf.package.installer import PackageInstaller
@@ -948,6 +953,145 @@ class _NetListScreen(ModalScreen[Optional[list]]):
         self.dismiss(self._names)
 
 
+class _CellPatternListScreen(ModalScreen[Optional[list]]):
+    """Add/remove entries for a cts_*_cells/add_tieoffs_cells-style
+    value: each one is either a name pattern Innovus itself expands
+    against the loaded library (confirmed real, man 20.15 -- WOLF never
+    needs to resolve the pattern itself), or an exact cell name. Typing
+    one previews what it currently matches in the resolved technology's
+    own LEF files (names and area only -- never a file path or any other
+    library content); the user then keeps the pattern as-is, takes every
+    match, or picks a subset. Falls back to a bare pattern/name with no
+    preview when `candidates` is None (no technology resolved, or its
+    files were not readable)."""
+
+    BINDINGS = [
+        ("a", "add", "Add"),
+        ("d", "delete", "Delete"),
+        ("escape", "done", "Done"),
+    ]
+
+    def __init__(
+        self, title: str, values: list[str], candidates: Optional[list], max_items: Optional[int] = None,
+    ):
+        super().__init__()
+        self._title = title
+        self._values = list(values)
+        self._max_items = max_items
+        # candidates: list[CellInfo] (.name/.area) or list[str] (plain
+        # names, e.g. layers) -- normalized to plain names for matching,
+        # with an optional area lookup kept alongside for display.
+        self._areas: dict[str, float] = {}
+        if candidates is None:
+            self._names: Optional[list[str]] = None
+        else:
+            names = []
+            for item in candidates:
+                name = getattr(item, "name", item)
+                names.append(name)
+                area = getattr(item, "area", None)
+                if area is not None:
+                    self._areas[name] = area
+            self._names = names
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="dialog"):
+            yield Static(self._title, id="dialog-title")
+            yield OptionList(*self._options())
+            hint = "a: add — d: delete highlighted — esc: done"
+            if self._names is None:
+                hint = "(no technology resolved -- free text only) " + hint
+            yield Static(hint, id="dialog-hint")
+
+    def _options(self) -> list[Option]:
+        if not self._values:
+            return [Option("(none yet — press 'a' to add)", id="__empty__", disabled=True)]
+        return [Option(self._label(value), id=str(index)) for index, value in enumerate(self._values)]
+
+    def _refresh(self) -> None:
+        option_list = self.query_one(OptionList)
+        option_list.clear_options()
+        for option in self._options():
+            option_list.add_option(option)
+
+    def _label(self, name: str) -> str:
+        area = self._areas.get(name)
+        return f"{name}  ({area:g} um^2)" if area is not None else name
+
+    def action_add(self) -> None:
+        if self._max_items is not None and len(self._values) >= self._max_items:
+            self.app.bell()
+            return
+
+        def handle_pattern(pattern: Optional[str]) -> None:
+            if not pattern:
+                return
+            if self._names is None:
+                self._values.append(pattern)
+                self._refresh()
+                return
+            matches = sorted(name for name in self._names if fnmatch.fnmatch(name, pattern))
+            if not matches:
+                def handle_anyway(choice: Optional[str]) -> None:
+                    if choice == "keep":
+                        self._values.append(pattern)
+                        self._refresh()
+                self.app.push_screen(
+                    _PickScreen(
+                        f"'{pattern}' matches nothing in the resolved library",
+                        [("Store it anyway (Innovus may still expand it)", "keep"),
+                         ("Cancel", "cancel")],
+                    ),
+                    handle_anyway,
+                )
+                return
+
+            def handle_how(choice: Optional[str]) -> None:
+                if choice == "pattern":
+                    self._values.append(pattern)
+                    self._refresh()
+                elif choice == "all":
+                    for name in matches:
+                        if name not in self._values:
+                            self._values.append(name)
+                    self._refresh()
+                elif choice == "subset":
+                    def handle_subset(chosen: Optional[list]) -> None:
+                        if chosen is None:
+                            return
+                        for name in chosen:
+                            if name not in self._values:
+                                self._values.append(name)
+                        self._refresh()
+                    self.app.push_screen(
+                        _MultiPickScreen(f"Pick from {len(matches)} match(es)", matches, ()),
+                        handle_subset,
+                    )
+            self.app.push_screen(
+                _PickScreen(
+                    f"'{pattern}' matches {len(matches)} cell(s) -- store as",
+                    [(f"the pattern '{pattern}' itself", "pattern"),
+                     (f"all {len(matches)} matched names", "all"),
+                     ("a subset I pick", "subset")],
+                ),
+                handle_how,
+            )
+        self.app.push_screen(
+            _TextScreen(f"Pattern (glob) or exact name for {self._title}"), handle_pattern,
+        )
+
+    def action_delete(self) -> None:
+        option_list = self.query_one(OptionList)
+        index = option_list.highlighted
+        if index is None or index >= len(self._values):
+            return
+        del self._values[index]
+        self._refresh()
+
+    def action_done(self) -> None:
+        self.dismiss(self._values)
+
+
 class _MultiPickScreen(ModalScreen[Optional[list]]):
     """A checklist, not a single pick -- 'enter' toggles the highlighted
     item's membership, 'esc' finishes with whatever's checked (possibly
@@ -1391,7 +1535,7 @@ class EnvWizardApp(App[None]):
         # unselectable (not hidden) so it's clear what's gating the rest,
         # not just missing.
         gated = not self.project_root
-        return [
+        options = [
             Option(f"Project root: {self.project_root or 'not set'}", id="project"),
             Option(f"RTL sources: {sources_label}", id="sources", disabled=gated),
             Option(f"Design name / top: {design_label}", id="design", disabled=gated),
@@ -1401,6 +1545,15 @@ class EnvWizardApp(App[None]):
             Option(f"Power/ground nets: {power_ground_label}", id="power_ground_nets", disabled=gated),
             Option(f"Workspace root: {workspace_label}", id="workspace", disabled=gated),
         ]
+        if self.backend == "cadence-flowtool":
+            # Cell/layer/view picking only means anything for the
+            # cadence-flowtool backend (CTS/tie-off cells, active
+            # analysis views, clock routing layers) -- hidden entirely
+            # for any other backend rather than shown disabled.
+            options.append(Option(
+                "CTS / tie-off / routing cells...", id="cadence_cells", disabled=gated,
+            ))
+        return options
 
     def _refresh(self) -> None:
         """Rebuild the main menu's option list after an edit, which always
@@ -1437,6 +1590,8 @@ class EnvWizardApp(App[None]):
             self.push_screen(_ConstraintFilesScreen(self.constraint_files), handle)
         elif choice == "power_ground_nets":
             self._edit_power_ground_nets()
+        elif choice == "cadence_cells":
+            self._edit_cadence_cts_tieoffs_routing()
         elif choice == "project":
             self._edit_project_root()
         elif choice == "workspace":
@@ -1574,6 +1729,181 @@ class EnvWizardApp(App[None]):
         self._edit_directory_field(
             "Workspace root (optional -- defaults to project root / workspace)",
             self.workspace_root or self.project_root, on_set,
+        )
+
+    def _resolved_technology(self):
+        """The real ResolvedTechnology for whatever track/vth(s)/metal
+        stack are currently picked in this same wizard session -- None
+        when no technology is selected yet, or it is not actually
+        installed (resolve_technology_reference's own fallback), in
+        which case every cell/layer/view picker below falls back to free
+        text with no preview."""
+        return resolve_technology_reference(
+            self.technology_package, self.technology_track, self.technology_vths,
+            self.technology_metal_stack,
+        )
+
+    def _override_get(self, *path: str, default=None):
+        node = self.backend_overrides.get("cadence-flowtool", {})
+        for key in path:
+            if not isinstance(node, dict) or key not in node:
+                return default
+            node = node[key]
+        return node
+
+    def _override_set(self, *path: str, value) -> None:
+        """Immutably write `value` at backend.cadence-flowtool.<path> --
+        rebuilds every dict level touched rather than mutating in place,
+        since self.backend_overrides is a shallow copy of the loaded
+        profile's own dict and must not alias it."""
+        cadence_flowtool = dict(self.backend_overrides.get("cadence-flowtool", {}))
+        node = cadence_flowtool
+        for key in path[:-1]:
+            node[key] = dict(node.get(key, {}))
+            node = node[key]
+        if value in (None, [], ()):
+            node.pop(path[-1], None)
+        else:
+            node[path[-1]] = value
+        self.backend_overrides = {**self.backend_overrides, "cadence-flowtool": cadence_flowtool}
+
+    def _edit_cell_pattern_list(
+        self, title: str, path: tuple[str, ...], candidates, max_items: Optional[int] = None,
+        on_close=None,
+    ) -> None:
+        current = list(self._override_get(*path, default=[]))
+
+        def handle(result: Optional[list]) -> None:
+            if result is not None:
+                self._override_set(*path, value=result)
+                self._refresh()
+            if on_close:
+                on_close()
+        self.push_screen(_CellPatternListScreen(title, current, candidates, max_items), handle)
+
+    def _edit_view_name_list(self, title: str, path: tuple[str, ...], candidates, on_close=None) -> None:
+        current = tuple(self._override_get(*path, default=[]))
+
+        def handle(result: Optional[list]) -> None:
+            if result is not None:
+                self._override_set(*path, value=result)
+                self._refresh()
+            if on_close:
+                on_close()
+        if candidates is not None:
+            self.push_screen(_MultiPickScreen(title, candidates, current), handle)
+        else:
+            self.push_screen(_NetListScreen(title, list(current)), handle)
+
+    def _edit_preferred_layer(
+        self, title: str, path: tuple[str, ...], layers: Optional[list], on_close=None,
+    ) -> None:
+        current = self._override_get(*path)
+
+        def handle_pick(value: Optional[str]) -> None:
+            if value is not None:
+                self._override_set(*path, value=value if value != "__clear__" else None)
+                self._refresh()
+            if on_close:
+                on_close()
+        if layers:
+            choices = [(f"(clear){' [current]' if not current else ''}", "__clear__")]
+            choices += [(f"{name}{' [current]' if name == current else ''}", name) for name in layers]
+            self.push_screen(_PickScreen(title, choices), handle_pick)
+        else:
+            self.push_screen(_TextScreen(title, current or ""), handle_pick)
+
+    def _edit_cadence_cts_tieoffs_routing(self) -> None:
+        technology = self._resolved_technology()
+        cells = cells_for_technology(technology)
+        layers = routing_layers_for_technology(technology)
+        views = analysis_view_names_for_technology(technology)
+
+        def handle_choice(choice: Optional[str]) -> None:
+            if choice is None:
+                return
+            if choice == "buffer_cells":
+                self._edit_cell_pattern_list(
+                    "CTS buffer cells (default)", ("cts", "buffer_cells"), cells)
+            elif choice == "buffer_cells_top":
+                self._edit_cell_pattern_list(
+                    "CTS buffer cells (top nets)", ("cts", "buffer_cells_top"), cells)
+            elif choice == "buffer_cells_leaf":
+                self._edit_cell_pattern_list(
+                    "CTS buffer cells (leaf nets)", ("cts", "buffer_cells_leaf"), cells)
+            elif choice == "inverter_cells":
+                self._edit_cell_pattern_list(
+                    "CTS inverter cells (default)", ("cts", "inverter_cells"), cells)
+            elif choice == "inverter_cells_top":
+                self._edit_cell_pattern_list(
+                    "CTS inverter cells (top nets)", ("cts", "inverter_cells_top"), cells)
+            elif choice == "inverter_cells_leaf":
+                self._edit_cell_pattern_list(
+                    "CTS inverter cells (leaf nets)", ("cts", "inverter_cells_leaf"), cells)
+            elif choice == "clock_gating_cells":
+                self._edit_cell_pattern_list(
+                    "CTS clock-gating cells", ("cts", "clock_gating_cells"), cells)
+            elif choice == "tieoffs":
+                self._edit_cell_pattern_list(
+                    "Tie-off cells (max 2: one tie-high driver, one tie-low driver)",
+                    ("tieoffs", "cells"), cells, max_items=2,
+                )
+            elif choice == "active_setup":
+                self._edit_view_name_list(
+                    "Active views -- setup", ("active_views", "setup"), views)
+            elif choice == "active_hold":
+                self._edit_view_name_list(
+                    "Active views -- hold", ("active_views", "hold"), views)
+            elif choice == "trunk_top":
+                self._edit_preferred_layer(
+                    "Clock routing -- trunk top preferred layer",
+                    ("clock_routing", "types", "trunk", "top_preferred_layer"), layers)
+            elif choice == "trunk_bottom":
+                self._edit_preferred_layer(
+                    "Clock routing -- trunk bottom preferred layer",
+                    ("clock_routing", "types", "trunk", "bottom_preferred_layer"), layers)
+            elif choice == "leaf_top":
+                self._edit_preferred_layer(
+                    "Clock routing -- leaf top preferred layer",
+                    ("clock_routing", "types", "leaf", "top_preferred_layer"), layers)
+            elif choice == "leaf_bottom":
+                self._edit_preferred_layer(
+                    "Clock routing -- leaf bottom preferred layer",
+                    ("clock_routing", "types", "leaf", "bottom_preferred_layer"), layers)
+
+        def count(*path):
+            return len(self._override_get(*path, default=[]))
+        unresolved = "" if technology is not None else " (no technology resolved -- free text only)"
+        self.push_screen(
+            _PickScreen(
+                f"CTS / tie-off / routing cells{unresolved}",
+                [
+                    (f"CTS buffer cells (default) [{count('cts', 'buffer_cells')}]", "buffer_cells"),
+                    (f"CTS buffer cells (top) [{count('cts', 'buffer_cells_top')}]", "buffer_cells_top"),
+                    (f"CTS buffer cells (leaf) [{count('cts', 'buffer_cells_leaf')}]", "buffer_cells_leaf"),
+                    (f"CTS inverter cells (default) [{count('cts', 'inverter_cells')}]", "inverter_cells"),
+                    (f"CTS inverter cells (top) [{count('cts', 'inverter_cells_top')}]", "inverter_cells_top"),
+                    (f"CTS inverter cells (leaf) [{count('cts', 'inverter_cells_leaf')}]", "inverter_cells_leaf"),
+                    (f"CTS clock-gating cells [{count('cts', 'clock_gating_cells')}]", "clock_gating_cells"),
+                    (f"Tie-off cells [{count('tieoffs', 'cells')}]", "tieoffs"),
+                    (f"Active views -- setup [{count('active_views', 'setup')}]", "active_setup"),
+                    (f"Active views -- hold [{count('active_views', 'hold')}]", "active_hold"),
+                    (f"Clock routing trunk top layer "
+                     f"[{self._override_get('clock_routing', 'types', 'trunk', 'top_preferred_layer') or '-'}]",
+                     "trunk_top"),
+                    (f"Clock routing trunk bottom layer "
+                     f"[{self._override_get('clock_routing', 'types', 'trunk', 'bottom_preferred_layer') or '-'}]",
+                     "trunk_bottom"),
+                    (f"Clock routing leaf top layer "
+                     f"[{self._override_get('clock_routing', 'types', 'leaf', 'top_preferred_layer') or '-'}]",
+                     "leaf_top"),
+                    (f"Clock routing leaf bottom layer "
+                     f"[{self._override_get('clock_routing', 'types', 'leaf', 'bottom_preferred_layer') or '-'}]",
+                     "leaf_bottom"),
+                    ("Done", "__done__"),
+                ],
+            ),
+            lambda choice: handle_choice(None if choice in (None, "__done__") else choice),
         )
 
     def _edit_power_ground_nets(self) -> None:

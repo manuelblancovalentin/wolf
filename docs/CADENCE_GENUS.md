@@ -1083,6 +1083,74 @@ inside `create_route_rule`/`create_route_type`. `commit_route_types`
 (`commit_clock_tree_route_attributes`) needed no changes: confirmed safe
 whether or not any route type exists.
 
+### Picking cell/layer/view names interactively (`wolf env menu`)
+
+Hand-editing YAML to fill in `cts.buffer_cells`/`tieoffs.cells`/
+`clock_routing`'s layer names means typing exact names from a library you
+have to go look up separately. `wolf env menu`'s "CTS / tie-off /
+routing cells..." row (shown once `flow.backend: cadence-flowtool` is
+set) picks them interactively instead, against the real names the
+selected technology package actually declares:
+
+- **CTS buffer/inverter cells** (default, and the `_top`/`_leaf`
+  variants), **clock-gating cells**, and **tie-off cells** (capped at
+  two in the UI itself): type a glob pattern or exact name, see what it
+  currently matches in the resolved technology's own LEF files (names
+  and area only), then choose to store the pattern itself (Innovus
+  expands it at runtime, same as typing it by hand), every matched name,
+  or a subset you pick. A pattern matching nothing is flagged with a
+  warning but can still be stored as-is (Innovus might still expand it
+  against data WOLF's own cheap scan didn't catch).
+- **Active views (setup/hold)**: a checklist of the resolved technology's
+  own declared corner names (`technology.timing_corners`) -- the exact
+  same set `active_views` validates against -- or free text if the
+  technology has no named corners.
+- **Clock routing preferred layers** (trunk/leaf, top/bottom): a single
+  pick from the resolved technology's own routing-type LEF layers, or
+  free text if not resolvable. The route rule's own width/spacing
+  multipliers are numeric, not name-based, and stay hand-edited YAML --
+  picking a value doesn't help there, so it was left out rather than
+  forced in.
+
+No technology selected, or its files aren't readable, falls back to free
+text everywhere above -- the picker never blocks on something it can't
+resolve.
+
+**Where this is stored**: exactly the same `wolf.yaml` keys documented
+above (`backend.cadence-flowtool.{cts,tieoffs,clock_routing,
+active_views}`) -- the menu is a UI onto that same schema, not a parallel
+mechanism, so hand-editing and the menu round-trip through each other.
+Nothing from the library itself -- no file path, no LEF/liberty content
+-- ever reaches `wolf.yaml`, the repo, or any other project file: only
+the cell/layer/view *names* you actually picked. The extracted name
+list itself is cached once per resolved technology under WOLF's own
+state directory (`~/.wolf/cache/cells/`, or wherever `WOLF_HOME`
+points), keyed by the technology's package/revision/track/vth/metal
+stack identity plus each LEF file's own mtime, so re-opening the picker
+later filters an already-scanned list instead of re-reading real files
+every time; a PDK update (a file's mtime changing) invalidates it
+automatically.
+
+**Scriptable equivalent** (non-interactive, e.g. for an institution's
+own setup scripts): `wolf env set <name> <dotted.key> <yaml-value>`
+already supports exactly this schema, since it writes to an arbitrary
+structured path in the same `wolf.yaml`:
+
+```bash
+wolf env set myenv backend.cadence-flowtool.cts.buffer_cells '["BUFX*"]'
+wolf env set myenv backend.cadence-flowtool.tieoffs.cells '["TIEHIX1", "TIELOX1"]'
+```
+
+One real caveat, confirmed directly: `wolf env set` requires *every*
+intermediate key in the dotted path to already exist as a mapping (it
+edits a value in place, not create-or-update) -- `backend`,
+`backend.cadence-flowtool`, and `backend.cadence-flowtool.cts` must each
+already be present before `wolf env set ... backend.cadence-flowtool.cts.
+buffer_cells ...` can reach that deep. A brand-new environment with no
+`backend:` key at all needs each level seeded first, one `wolf env set`
+call per level (or the menu once) -- scripting a fresh environment from
+nothing needs that in mind.
+
 ### Active analysis views apply uniformly, not yet per stage
 
 `backend.cadence-flowtool.active_views` (see "Multi-corner (MMMC)
