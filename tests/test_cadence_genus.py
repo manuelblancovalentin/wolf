@@ -929,13 +929,25 @@ class GenusActiveViewsTests(GenusFixtureTestCase):
                 self.root / "backend" / "cadence-genus",
             )
 
-    def test_genus_turn_on_analysis_views_consumes_the_resolved_lists(self):
+    def test_init_innovus_activates_views_every_stage_not_only_floorplan(self):
+        """Regression, hit for real: the view-activation logic used to
+        live only in genus_turn_on_analysis_views, a step that only ever
+        appears in the floorplan flow's own step list -- prects/cts/
+        postcts/route/postroute never re-applied it at all, even though
+        each is a separate Innovus invocation restored from a checkpoint
+        (same persistence-across-stages concern as thread count and
+        set_cts_config). Moved into init_innovus, which already re-runs
+        at the start of every implementation stage."""
         step = builtin_flow_root("cadence-genus") / "floorplanning.tcl"
         bodies = _extract_step_bodies(step.read_text(encoding="utf-8"))
-        body = bodies["genus_turn_on_analysis_views"]
+        body = bodies["init_innovus"]
         self.assertIn("set_analysis_view -setup $wolf_setup_views -hold $wolf_hold_views", body)
         self.assertIn("if {[llength $::wolf_active_setup_views]}", body)
         self.assertIn("if {[llength $::wolf_active_hold_views]}", body)
+        # genus_turn_on_analysis_views itself is kept as a named,
+        # injectable extension point (so any existing wolf_inject hook
+        # for it still fires), but the real work no longer lives there.
+        self.assertNotIn("set_analysis_view", bodies["genus_turn_on_analysis_views"])
 
 
 class GenusPowerGroundNetsTests(GenusFixtureTestCase):

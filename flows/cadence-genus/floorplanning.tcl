@@ -61,6 +61,36 @@ create_flow_step -name init_innovus -owner wolf {
     } else {
         wolf_info "set_multi_cpu_usage: not set (resources.threads not configured) -- using Innovus's own default"
     }
+    # Works around a real Genus/MMMC limitation: when more than one
+    # analysis view came through the genus_to_innovus handoff, only the
+    # first is active by default on the Innovus side too. analysis_view's
+    # own is_active/is_setup/is_hold are read-only (Innovus rejects both
+    # `set_db .active` and `set_db .is_active`, IMPDBTCL-248/252) -- they
+    # reflect set_analysis_view, so re-running that same command
+    # Innovus-side with every view name is the actual fix, not a per-view
+    # attribute. Applied here (every implementation stage, restored from
+    # the previous stage's own checkpoint each time), not only in
+    # floorplan -- whether the active setup/hold selection survives that
+    # restore is not documented anywhere WOLF found, so re-applying
+    # idempotently at the start of every stage is the safe default, same
+    # reasoning as the thread count and set_cts_config above/below.
+    set wolf_analysis_view_names [get_db analysis_views .name]
+    if {[llength $wolf_analysis_view_names] > 1} {
+        # backend.cadence-flowtool.active_views.{setup,hold} narrows which
+        # of the handoff's declared views actually matter for this
+        # implementation stage (e.g. one slow/fast corner through
+        # place/CTS, every corner again at route/signoff) -- default
+        # (both empty) is every declared view, same as before this
+        # existed. Applies uniformly to every implementation stage, not
+        # selectable per stage yet (a real possible follow-up: this is
+        # exactly the place a later per-stage override would plug in).
+        set wolf_setup_views $wolf_analysis_view_names
+        set wolf_hold_views  $wolf_analysis_view_names
+        if {[llength $::wolf_active_setup_views]} { set wolf_setup_views $::wolf_active_setup_views }
+        if {[llength $::wolf_active_hold_views]}  { set wolf_hold_views  $::wolf_active_hold_views }
+        set_analysis_view -setup $wolf_setup_views -hold $wolf_hold_views
+        wolf_info "active analysis views -- setup: $wolf_setup_views, hold: $wolf_hold_views"
+    }
     wolf_inject_for_step init_innovus post
     puts [wolf_sep]
 }
@@ -72,31 +102,14 @@ create_flow_step -name add_post_syn_constraints -owner wolf {
     puts [wolf_sep]
 }
 
-# Works around a real Genus/MMMC limitation: when more than one analysis
-# view came through the genus_to_innovus handoff, only the first is
-# active by default on the Innovus side too. analysis_view's own
-# is_active/is_setup/is_hold are read-only (Innovus rejects both
-# `set_db .active` and `set_db .is_active`, IMPDBTCL-248/252) -- they
-# reflect set_analysis_view, so re-running that same command Innovus-side
-# with every view name is the actual fix, not a per-view attribute.
+# The real work now happens in init_innovus (above), which runs at the
+# start of every implementation stage, not only floorplan -- this step
+# is kept as a named, invokable extension point (its own
+# wolf_inject_for_step hooks still fire) rather than removed outright,
+# but re-running the same set_analysis_view call here is a harmless,
+# idempotent no-op by the time floorplan reaches it.
 create_flow_step -name genus_turn_on_analysis_views -owner wolf {
     wolf_inject_for_step genus_turn_on_analysis_views pre
-    set wolf_analysis_view_names [get_db analysis_views .name]
-    if {[llength $wolf_analysis_view_names] > 1} {
-        # backend.cadence-flowtool.active_views.{setup,hold} narrows which
-        # of the handoff's declared views actually matter for this
-        # implementation stage (e.g. one slow/fast corner through
-        # place/CTS, every corner again at route/signoff) -- default
-        # (both empty) is every declared view, same as before this
-        # existed. Applies uniformly to every implementation stage, not
-        # selectable per stage yet.
-        set wolf_setup_views $wolf_analysis_view_names
-        set wolf_hold_views  $wolf_analysis_view_names
-        if {[llength $::wolf_active_setup_views]} { set wolf_setup_views $::wolf_active_setup_views }
-        if {[llength $::wolf_active_hold_views]}  { set wolf_hold_views  $::wolf_active_hold_views }
-        set_analysis_view -setup $wolf_setup_views -hold $wolf_hold_views
-        wolf_info "active analysis views -- setup: $wolf_setup_views, hold: $wolf_hold_views"
-    }
     wolf_inject_for_step genus_turn_on_analysis_views post
 }
 

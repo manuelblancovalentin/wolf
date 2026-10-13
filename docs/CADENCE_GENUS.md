@@ -621,11 +621,13 @@ this.
 ### Choosing which views are active in implementation (`active_views`)
 
 Every declared analysis view is active for both setup and hold checks by
-default, in Genus and (via `floorplanning.tcl`'s `genus_turn_on_analysis_views`,
-re-applied at the start of every implementation stage) in Innovus too --
-simple, but checking every corner through every place/CTS/route iteration
-on a design with several corners is far heavier than most implementation
-stages need. `backend.cadence-flowtool.active_views` narrows it:
+default, in Genus and (via `floorplanning.tcl`'s `init_innovus`, which
+re-runs at the start of every implementation stage -- restored from the
+previous stage's own checkpoint each time, so this is re-applied, not a
+one-time setting) in Innovus too -- simple, but checking every corner
+through every place/CTS/route iteration on a design with several corners
+is far heavier than most implementation stages need.
+`backend.cadence-flowtool.active_views` narrows it:
 
 ```yaml
 backend:
@@ -1185,8 +1187,15 @@ attributes above) survive that restore into the next stage is not
 documented anywhere WOLF found, and was not assumed either way. The safe
 default implemented here: re-apply idempotently at the start of every
 stage that depends on them -- `CMD_set_cong_aware` now also runs at the
-start of `prects` (previously only `floorplan`), and `set_cts_config` runs
-at the start of both `prects` and `cts`.
+start of `prects` (previously only `floorplan`), `set_cts_config` runs
+at the start of both `prects` and `cts`, and the `active_views`
+setup/hold selection (`set_analysis_view`) is applied by `init_innovus`
+itself rather than only by `genus_turn_on_analysis_views`, which only
+ever appeared in `floorplan`'s own step list -- `prects`/`cts`/`postcts`/
+`route`/`postroute` never re-applied it at all before this.
+`genus_turn_on_analysis_views` is kept as a named, injectable extension
+point (any existing `wolf_inject_for_step` hook for it still fires), but
+the real work no longer lives there.
 
 Preparation is exposed by `wolf.backend.cadence_genus.prepare_genus_inputs`
 and is intentionally separate from the legacy Flowtool shell runner. For
