@@ -409,12 +409,17 @@ def _step_label(label: str, state: str, elapsed: float | None = None):
     """One tree row for `render_live`'s expanded stage view -- a live
     spinner for the one step actively running (plus its own blinking
     elapsed time, when the backend has a live timestamp for it -- see
-    stage_step_detail), a plain marker for everything else. Spinner's
-    own `text` parameter accepts any renderable and draws it right
-    after the spinner glyph on the same line, so the label and elapsed
-    span are built as one combined Text rather than two separate
-    renderables (Rich has no "lay these out on one line" composition
-    for a tree.add() child, which must be a single renderable)."""
+    stage_step_detail), a plain marker plus its own real duration (not
+    blinking -- a finished step's own duration is a static historical
+    figure, not something ticking up live) for anything already
+    complete/failed, and no elapsed shown at all for a stage flow.status
+    alone reports "running" with no live timestamp backing it.
+    Spinner's own `text` parameter accepts any renderable and draws it
+    right after the spinner glyph on the same line, so the label and
+    elapsed span are built as one combined Text rather than two
+    separate renderables (Rich has no "lay these out on one line"
+    composition for a tree.add() child, which must be a single
+    renderable)."""
     from rich.spinner import Spinner
     from rich.text import Text
 
@@ -425,4 +430,9 @@ def _step_label(label: str, state: str, elapsed: float | None = None):
             line.append(_format_elapsed(elapsed), style="yellow blink")
         return Spinner("dots", text=line, style="yellow")
     marker = _STATE_MARKERS.get(state, "○")
-    return Text(f"{marker} {label}", style=_STATE_STYLES.get(state, "dim"))
+    style = _STATE_STYLES.get(state, "dim")
+    line = Text(f"{marker} {label}", style=style)
+    if elapsed is not None:
+        line.append(" — ", style="dim")
+        line.append(_format_elapsed(elapsed), style=style)
+    return line

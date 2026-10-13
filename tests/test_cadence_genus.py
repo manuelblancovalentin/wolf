@@ -1396,6 +1396,117 @@ class GenusRunActiveElapsedTests(unittest.TestCase):
         self.assertAlmostEqual(elapsed, 100, delta=2)
 
 
+class GenusRunStepElapsedTests(unittest.TestCase):
+    """genus_run_step_elapsed derives each step's own real duration
+    (or how long a still-running one has been running) from
+    wolf.step-status's own starting/terminal timestamp pairs -- a
+    completed step's own real duration, not just "is it running"."""
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory(prefix="wolf-genus-step-elapsed-")
+        self.root = Path(self.temporary.name)
+        self.run_directory = self.root / "work" / "demo.1"
+        self.run_directory.mkdir(parents=True)
+
+    def tearDown(self):
+        self.temporary.cleanup()
+
+    def _write(self, text: str) -> None:
+        (self.run_directory / "wolf.step-status").write_text(text, encoding="utf-8")
+
+    def test_no_file_yet_returns_empty(self):
+        from wolf.backend.cadence_genus import genus_run_step_elapsed
+        self.assertEqual(genus_run_step_elapsed(self.run_directory), {})
+
+    def test_a_completed_steps_own_duration_is_success_minus_starting(self):
+        from wolf.backend.cadence_genus import genus_run_step_elapsed
+        self._write("block_start|starting|100|block.synthesis.syn_map.block_start\n"
+                     "block_start|success|137|block.synthesis.syn_map.block_start\n")
+        elapsed = genus_run_step_elapsed(self.run_directory)
+        self.assertEqual(elapsed["block.synthesis.syn_map.block_start"], 37.0)
+
+    def test_a_zero_second_duration_is_a_real_value_not_missing(self):
+        from wolf.backend.cadence_genus import genus_run_step_elapsed
+        self._write("block_start|starting|100|block.synthesis.syn_map.block_start\n"
+                     "block_start|success|100|block.synthesis.syn_map.block_start\n")
+        elapsed = genus_run_step_elapsed(self.run_directory)
+        self.assertEqual(elapsed["block.synthesis.syn_map.block_start"], 0.0)
+
+    def test_a_still_running_steps_own_elapsed_is_now_minus_starting(self):
+        from wolf.backend.cadence_genus import genus_run_step_elapsed
+        import time as time_module
+        self._write(f"run_syn_map|starting|{time_module.time() - 42}|"
+                     "block.synthesis.syn_map.run_syn_map\n")
+        elapsed = genus_run_step_elapsed(self.run_directory)
+        self.assertAlmostEqual(elapsed["block.synthesis.syn_map.run_syn_map"], 42, delta=2)
+
+    def test_a_terminal_record_with_no_starting_record_is_left_out(self):
+        from wolf.backend.cadence_genus import genus_run_step_elapsed
+        self._write("block_start|success|137|block.synthesis.syn_map.block_start\n")
+        self.assertEqual(genus_run_step_elapsed(self.run_directory), {})
+
+    def test_an_older_format_line_with_no_path_keys_by_bare_name(self):
+        from wolf.backend.cadence_genus import genus_run_step_elapsed
+        self._write("block_start|starting|100\nblock_start|success|137\n")
+        elapsed = genus_run_step_elapsed(self.run_directory)
+        self.assertEqual(elapsed["block_start"], 37.0)
+
+
+class GenusRunStatusElapsedTests(unittest.TestCase):
+    """genus_run_status_elapsed is genus_run_step_elapsed's own sibling,
+    sourced from flow.status instead -- the same real starting/terminal
+    timestamp pairs Flowtool itself writes per canonical path."""
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory(prefix="wolf-genus-flow-status-elapsed-")
+        self.root = Path(self.temporary.name)
+        self.run_directory = self.root / "work" / "demo.1"
+        self.run_directory.mkdir(parents=True)
+
+    def tearDown(self):
+        self.temporary.cleanup()
+
+    def _write(self, text: str) -> None:
+        (self.run_directory / "flow.status").write_text(text, encoding="utf-8")
+
+    def test_no_file_yet_returns_empty(self):
+        from wolf.backend.cadence_genus import genus_run_status_elapsed
+        self.assertEqual(genus_run_status_elapsed(self.run_directory), {})
+
+    def test_a_completed_steps_own_duration_is_success_minus_starting(self):
+        from wolf.backend.cadence_genus import genus_run_status_elapsed
+        self._write(
+            "{status starting time 1700000000 errors {} "
+            "steps_run {str block.synthesis.syn_generic.block_start}}\n"
+            "{status success time 1700000037 errors {} "
+            "steps_run {str block.synthesis.syn_generic.block_start}}\n"
+        )
+        elapsed = genus_run_status_elapsed(self.run_directory)
+        self.assertEqual(elapsed["block.synthesis.syn_generic.block_start"], 37.0)
+
+    def test_a_still_running_steps_own_elapsed_is_now_minus_starting(self):
+        from wolf.backend.cadence_genus import genus_run_status_elapsed
+        import time as time_module
+        self._write(
+            f"{{status starting time {time_module.time() - 42} errors {{}} "
+            "steps_run {str block.synthesis.syn_generic.block_start}}\n"
+        )
+        elapsed = genus_run_status_elapsed(self.run_directory)
+        self.assertAlmostEqual(elapsed["block.synthesis.syn_generic.block_start"], 42, delta=2)
+
+    def test_invocation_boundary_marker_lines_do_not_interfere(self):
+        from wolf.backend.cadence_genus import genus_run_status_elapsed
+        self._write(
+            "{status starting time 1700000000 errors {} "
+            "steps_run {str block.synthesis.syn_generic.block_start}}\n"
+            "{script flowtool status invoked arguments {-status}}\n"
+            "{status success time 1700000037 errors {} "
+            "steps_run {str block.synthesis.syn_generic.block_start}}\n"
+        )
+        elapsed = genus_run_status_elapsed(self.run_directory)
+        self.assertEqual(elapsed["block.synthesis.syn_generic.block_start"], 37.0)
+
+
 class GenusRunStatusTests(unittest.TestCase):
     """genus_run_status reads Flowtool's own real per-run execution
     record directly off disk (<run_directory>/flow.status) -- a plain
@@ -1865,17 +1976,36 @@ class StageStepDetailTests(unittest.TestCase):
         elapsed = self._elapsed(stage_step_detail(self.run_directory, "syn_map"))
         self.assertIsNone(elapsed["report_synth"])
 
-    def test_a_stage_level_running_state_from_flow_status_alone_has_no_elapsed(self):
-        """flow.status's own "running" state (no live wolf.step-status
-        timestamp backing it) has no live start time to derive
-        elapsed from -- correctly left absent rather than guessed."""
+    def test_a_stage_level_running_state_from_flow_status_alone_still_gets_a_live_elapsed(self):
+        """flow.status's own "starting" record carries a real
+        timestamp too -- genus_run_status_elapsed derives "now - that
+        timestamp" from it, same as wolf.step-status would, so a step
+        running per flow.status alone (no wolf.step-status entry at
+        all) still shows a live elapsed, not an absent one."""
+        from wolf.backend.cadence_genus import stage_step_detail
+        import time as time_module
+        self._write_status(
+            f"{{status starting time {time_module.time() - 42} errors {{}} "
+            "steps_run {str block.synthesis.syn_map.block_start}}\n"
+        )
+        elapsed = self._elapsed(stage_step_detail(self.run_directory, "syn_map"))
+        self.assertIsNotNone(elapsed["block_start"])
+        self.assertAlmostEqual(elapsed["block_start"], 42, delta=2)
+
+    def test_a_completed_steps_own_real_duration_comes_from_flow_status(self):
+        """A step that finished entirely under flow.status's own
+        prompt bookkeeping (no wolf.step-status involved at all) still
+        gets its own real duration, from flow.status's own starting
+        and success timestamps for the same canonical path."""
         from wolf.backend.cadence_genus import stage_step_detail
         self._write_status(
             "{status starting time 1700000000 errors {} "
             "steps_run {str block.synthesis.syn_map.block_start}}\n"
+            "{status success time 1700000037 errors {} "
+            "steps_run {str block.synthesis.syn_map.block_start}}\n"
         )
         elapsed = self._elapsed(stage_step_detail(self.run_directory, "syn_map"))
-        self.assertIsNone(elapsed["block_start"])
+        self.assertEqual(elapsed["block_start"], 37.0)
 
 
 class CadenceFlowtoolBackendStatusTests(unittest.TestCase):

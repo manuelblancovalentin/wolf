@@ -774,12 +774,31 @@ Each event also carries a real timestamp, so `wolf status --watch` can
 show not just *that* something is running but *how long* it has been:
 `genus_run_active_elapsed` derives the current invocation's own elapsed
 time from `wolf.step-status`'s earliest timestamp (shown on the
-currently-running stage's own row in the Stages table), and
+currently-running stage's own row in the Stages table). That renders as
+a blinking `HH:MM:SS` -- the one visual cue that a number is actively
+ticking up in place, not a stale snapshot sitting next to live
+spinners.
+
 `stage_step_detail`'s own per-leaf elapsed (its third tuple element)
-does the same for whichever single step is actively running inside the
-expanded tree. Both render as a blinking `HH:MM:SS` in the watch panel
--- the one visual cue that a number is actively ticking up in place,
-not a stale snapshot sitting next to live spinners.
+goes further than just the one actively-running step: `genus_run_step_elapsed`
+and its sibling `genus_run_status_elapsed` (the same idea, from
+`flow.status` instead) each track **both** a step's own `starting` and
+later terminal (`success`/`failed`) timestamp for the same key, not just
+the latest one -- `genus_run_step_events` only ever keeps the latest
+(by design, for current status), which discards exactly the earlier
+timestamp a *completed* step's own duration needs. So every leaf step in
+the expanded tree shows its own real duration once it finishes, not just
+the one still running -- `stage_step_detail` prefers
+`genus_run_step_elapsed` (live, this invocation's own `wolf.step-status`)
+and falls back to `genus_run_status_elapsed` (`flow.status`, for a step
+that finished before this run's `wolf.step-status` existed, or one
+genuinely driven by Flowtool's own prompt invocation where `flow.status`
+itself stays prompt). A completed step's own duration renders plain, not
+blinking -- only a still-running step's own live-ticking elapsed does.
+One real bug caught checking this against an actual run: the fallback
+chain was originally `a or b or c`, which silently treats a genuine
+`0.0`-second duration as falsy and skips straight to the next fallback
+-- fixed to check each source with `is not None` instead.
 
 ### QoR (area/timing/power) by stage
 

@@ -83,6 +83,9 @@ def _stage_row_cells(stage, qor_by_stage: dict, active_stage_elapsed: Optional[f
 
 
 def _step_row_text(label: str, state: str, elapsed: Optional[float]):
+    """A finished step's own elapsed is a static historical duration,
+    not something ticking up live -- only a "running" step's own
+    elapsed blinks."""
     from rich.text import Text
 
     style = _STATE_STYLES.get(state, "dim")
@@ -90,7 +93,8 @@ def _step_row_text(label: str, state: str, elapsed: Optional[float]):
     text = Text(f"{marker} {label}", style=style)
     if elapsed is not None:
         text.append(" — ", style="dim")
-        text.append(_format_elapsed(elapsed), style=f"{style} blink")
+        elapsed_style = f"{style} blink" if state == "running" else style
+        text.append(_format_elapsed(elapsed), style=elapsed_style)
     return text
 
 

@@ -866,6 +866,109 @@ def genus_run_active_elapsed(run_directory: Path) -> Optional[float]:
     return time.time() - min(timestamps) if timestamps else None
 
 
+def genus_run_step_elapsed(run_directory: Path) -> dict[str, float]:
+    """Real per-step duration -- how long a step that has finished
+    actually took, or how long a still-running one has been running so
+    far -- derived from wolf.step-status's own `starting` and later
+    terminal (`success`/`failed`) records for the same key.
+    genus_run_step_events only ever keeps the *latest* record per key
+    (by design, for current status), which discards the earlier
+    `starting` timestamp a completed step would need to compute its own
+    duration from; this re-reads the same file to keep both.
+
+    Returns {key: elapsed_seconds} -- keyed the same way
+    genus_run_step_events is (the real canonical dotted path when
+    presentation.tcl recorded one, the bare step name as a fallback for
+    an older-format line). A key with no `starting` record seen (a run
+    continuing from a checkpoint older than this file, say) is simply
+    left out rather than guessed."""
+    events_file = run_directory / "wolf.step-status"
+    if not events_file.is_file():
+        return {}
+    start_times: dict[str, float] = {}
+    latest: dict[str, tuple[str, float]] = {}
+    for line in events_file.read_text(encoding="utf-8", errors="replace").splitlines():
+        parts = line.split("|")
+        if len(parts) < 3:
+            continue
+        name, status = parts[0], parts[1].lower()
+        try:
+            event_time = float(parts[2])
+        except ValueError:
+            continue
+        key = parts[3] if len(parts) > 3 and parts[3] else name
+        if status in _FLOW_STATUS_RUNNING_STATES:
+            start_times[key] = event_time
+            latest[key] = ("running", event_time)
+        elif status in _FLOW_STATUS_SUCCESS_STATES:
+            latest[key] = ("complete", event_time)
+        elif status in _FLOW_STATUS_FAILED_STATES:
+            latest[key] = ("failed", event_time)
+    now = time.time()
+    elapsed: dict[str, float] = {}
+    for key, (state, event_time) in latest.items():
+        start = start_times.get(key)
+        if start is None:
+            continue
+        elapsed[key] = (now - start) if state == "running" else (event_time - start)
+    return elapsed
+
+
+def genus_run_status_elapsed(run_directory: Path) -> dict[str, float]:
+    """The same real per-step duration as genus_run_step_elapsed, from
+    flow.status instead of wolf.step-status -- Flowtool's own
+    `starting`/terminal record pairs per canonical path, confirmed real
+    (each one carries its own real unix `time`). This covers a
+    completed step that finished before wolf.step-status existed for
+    this run (an older stage, run under a previous presentation.tcl),
+    or any step genuinely driven by Flowtool's own prompt invocation
+    rather than a manually-typed `run_flow` (where flow.status itself
+    is confirmed to stay prompt). `stage_step_detail` tries
+    genus_run_step_elapsed first and falls back to this.
+
+    Returns {canonical_path: elapsed_seconds}, left out for a path
+    whose own `starting` record this run hasn't seen."""
+    status_file = run_directory / "flow.status"
+    if not status_file.is_file():
+        return {}
+    start_times: dict[str, float] = {}
+    latest: dict[str, tuple[str, float]] = {}
+    for line in status_file.read_text(encoding="utf-8", errors="replace").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        if line.startswith("{") and line.endswith("}"):
+            line = line[1:-1]
+        record = _tcl_dict(line)
+        if record.get("script") == "flowtool":
+            continue
+        steps_run = record.get("steps_run")
+        path = _tcl_dict(steps_run).get("str") if steps_run else None
+        status = record.get("status", "").lower()
+        time_field = record.get("time")
+        if not path or not status or time_field is None:
+            continue
+        try:
+            event_time = float(time_field)
+        except ValueError:
+            continue
+        if status in _FLOW_STATUS_RUNNING_STATES:
+            start_times[path] = event_time
+            latest[path] = ("running", event_time)
+        elif status in _FLOW_STATUS_SUCCESS_STATES:
+            latest[path] = ("complete", event_time)
+        elif status in _FLOW_STATUS_FAILED_STATES:
+            latest[path] = ("failed", event_time)
+    now = time.time()
+    elapsed: dict[str, float] = {}
+    for path, (state, event_time) in latest.items():
+        start = start_times.get(path)
+        if start is None:
+            continue
+        elapsed[path] = (now - start) if state == "running" else (event_time - start)
+    return elapsed
+
+
 def _memory_mb(value: Optional[str]) -> Optional[float]:
     """Flowtool reports memory as a free-text string like "39197 MB" --
     pull out just the leading number, degrading to None (left out of the
@@ -1398,19 +1501,25 @@ def stage_step_detail(
     nested leaf steps) and the bare step name only as a fallback for an
     older-format wolf.step-status line with no path recorded.
     genus_run_status's own states already carry this same overlay for
-    paths within the active invocation's own stage range, so this is
-    mostly about the elapsed seconds (third tuple element), which
-    `states` alone can't carry -- only ever derived from a leaf
-    member's own live start timestamp, None for anything else (not
-    running, or running per flow.status alone with no live timestamp
-    available; a nested sub-flow's own aggregate row never gets one
-    either, since there is no single real "start" for an aggregate)."""
+    paths within the active invocation's own stage range.
+
+    The elapsed seconds (third tuple element) is a direct leaf
+    member's own real duration -- how long it actually took once it
+    finished, or how long it's been running so far -- from
+    genus_run_step_elapsed, falling back to genus_run_status_elapsed
+    (the same real `starting`/terminal timestamp pairs, from
+    flow.status instead, for a step that finished before this run's
+    wolf.step-status existed). None when neither source has a
+    `starting` record for it; a nested sub-flow's own aggregate row
+    never gets one either, since there is no single real "start" for
+    an aggregate."""
     if stage not in STAGE_ORDER:
         return ()
     membership = membership if membership is not None else flow_membership()
     _, states = genus_run_status(run_directory)
     events = genus_run_step_events(run_directory)
-    now = time.time()
+    live_elapsed = genus_run_step_elapsed(run_directory)
+    flow_status_elapsed = genus_run_status_elapsed(run_directory)
     prefix = f"block.{_STAGE_TOPLEVEL_FLOW[stage]}.{stage}"
     detail: list[tuple[str, str, Optional[float]]] = []
     for member in membership.get(stage, ()):
@@ -1422,10 +1531,16 @@ def stage_step_detail(
             bare_name = path.rsplit(".", 1)[-1]
             live_event = events.get(path) or events.get(bare_name)
             if live_event is not None:
-                event_status, event_time = live_event
-                known[path] = event_status
-                if bare_name == member and event_status == "running":
-                    member_elapsed = now - event_time
+                known[path] = live_event[0]
+            if bare_name == member:
+                # Not `a or b or c` -- a real 0.0-second duration is
+                # falsy and would otherwise be mistaken for "missing"
+                # and silently overridden by a less specific fallback.
+                member_elapsed = live_elapsed.get(path)
+                if member_elapsed is None:
+                    member_elapsed = live_elapsed.get(bare_name)
+                if member_elapsed is None:
+                    member_elapsed = flow_status_elapsed.get(path)
         detail.append((member, _rollup_one_state(known, len(leaf_paths)), member_elapsed))
     return tuple(detail)
 
