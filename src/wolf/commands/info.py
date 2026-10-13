@@ -12,6 +12,7 @@ from wolf.commands.run import _context
 from wolf.environment import environment_manifest, load_environment, profile_semantics
 from wolf.package.registry import PackageRegistry
 from wolf.package.store import PackageStore
+from wolf.paths import builtin_flow_root
 
 
 def command_info(args: argparse.Namespace) -> int:
@@ -96,8 +97,19 @@ def _declarative_info(name, path, manifest) -> int:
     for reference in (profile.design, profile.technology, profile.flow):
         if reference and reference.package:
             package = PackageRegistry().get(reference.package)
-            status = PackageStore().status(package)
+            store = PackageStore()
+            status = store.status(package)
             ui.key_value(f"  {reference.package}", f"{package.revision} ({status})")
+            installed = store.read(package)
+            if installed:
+                ui.key_value("    Location", installed.content_path)
+    if semantics["backend"] == "cadence-flowtool" and not (profile.flow and profile.flow.package):
+        # No flow package at all -- WOLF's own bundled flow, the Tcl
+        # scripts an environment like this one actually runs (scripts.*
+        # under the run directory are a per-run snapshot of these, not
+        # the editable source -- see docs/CADENCE_GENUS.md's "scripts.*"
+        # section).
+        ui.key_value("  Flow scripts", builtin_flow_root("cadence-genus"))
     if (
         profile.clocks or profile.constraint_files or profile.constraint_lines
         or profile.floorplan_def or profile.power_nets or profile.ground_nets

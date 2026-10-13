@@ -98,6 +98,21 @@ name: demo
         self.assertIn("flow", result.stdout)
         self.assertIn("workspace.root", result.stdout)
 
+    def test_bundled_flow_scripts_location_is_shown(self):
+        self._create("demo", """schema: wolf.environment/v1
+name: demo
+design:
+  name: my_design
+flow:
+  backend: cadence-flowtool
+project:
+  root: ./project
+""")
+        result = self.wolf("info", "demo")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Flow scripts:", result.stdout)
+        self.assertIn("cadence-genus", result.stdout)
+
     def test_custom_backend_overrides_and_constraints_are_shown(self):
         """Everything a project can set beyond the basics -- injected
         scripts, active-view selection, power/ground nets, a floorplan
