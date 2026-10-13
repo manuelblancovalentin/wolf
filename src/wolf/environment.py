@@ -1377,7 +1377,11 @@ def profile_semantics(profile: EnvironmentProfile) -> Mapping[str, Optional[str]
         "top": profile.design.top if profile.design else None,
         "technology": profile.technology.name if profile.technology else None,
         "flow": profile.flow.name if profile.flow else None,
-        "backend": None,
+        # flow.backend (no flow package at all -- WOLF's own bundled flow,
+        # the common case) is a direct, complete backend selection on its
+        # own; an installed flow package's own declared backend below only
+        # fills this in when the environment didn't already say so itself.
+        "backend": profile.flow.backend if profile.flow else None,
     }
     for role, reference, section in (
         ("design", profile.design, "design"),
@@ -1391,7 +1395,7 @@ def profile_semantics(profile: EnvironmentProfile) -> Mapping[str, Optional[str]
         if role == "design":
             result["top"] = result["top"] or _semantic(manifest, "design", "top")
         if role == "flow":
-            result["backend"] = _semantic(manifest, "flow", "backend")
+            result["backend"] = result["backend"] or _semantic(manifest, "flow", "backend")
     return result
 
 
