@@ -298,6 +298,20 @@ through the external
 .B watch
 command, which strips Rich's own color/formatting. Mutually exclusive with
 --json.
+.TP
+.B wolf monitor
+A full-screen Textual TUI for the active environment's latest run -- a
+richer sibling of
+.B wolf status --watch,
+not a replacement: the same header/stage table (with QoR columns merged in
+when the backend has them), but with arrow-key navigation into any stage's
+own expanded step detail, not just whichever one is currently running.
+Highlight a stage and press enter to expand or collapse it; only one
+stage's detail is ever shown at a time. The currently running stage is
+expanded automatically on startup.
+.TP
+.BI "wolf monitor --run " "path"
+Monitor an explicit run directory or active-environment run ID.
 .SH SHELL INTEGRATION AND COMPLETION
 Source
 .I shell/wolf.bash

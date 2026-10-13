@@ -136,6 +136,10 @@
 
 `wolf status --watch`
 
+- Full-screen TUI: arrow keys to pick a stage, enter to expand/collapse its own steps:
+
+`wolf monitor`
+
 - Report basic installation and runtime facts:
 
 `wolf doctor`

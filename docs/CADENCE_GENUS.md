@@ -671,6 +671,42 @@ finer-than-stage granularity (ORFS, tracked only via
 `wolf.stage-results`) returns no detail, and the watch panel simply
 omits the tree.
 
+### `wolf monitor`
+
+A full-screen Textual TUI (`wolf.monitor_app.MonitorApp`), a richer
+sibling of `wolf status --watch` -- not a replacement, since the simple,
+scriptable, non-interactive panel is still the right choice for piping
+to a log or running over a flaky SSH session.
+
+Built as **one** nested tree-table, not a table alongside a separate
+detail pane: a Textual `Tree` whose top-level nodes are the real stage
+rows (Status/Elapsed/QoR columns, column-aligned via fixed widths
+shared with the header line above it), each expandable in place into
+its own step-detail children -- arrow to any stage row and press enter
+to expand or collapse it, not just whichever stage is currently
+running, with only one stage's detail ever shown at a time (selecting
+a different row, or re-pressing enter on the same one, replaces/
+collapses it; selecting a leaf step row itself is explicitly ignored,
+not mistaken for a stage toggle). The currently running stage is
+expanded automatically on startup. `_update_tree` rebuilds the whole
+tree from `status.stages`/`stage_step_detail` on every refresh tick,
+expanding only `self._expanded_stage`'s own node and leaving
+everything else collapsed with no children materialized at all --
+cheap, and the single source of truth for "which one stage is
+expanded" stays entirely in `self._expanded_stage`, not in Tree's own
+per-node state. Tree's own native toggle-on-select
+(`auto_expand`) is turned off to avoid racing this rebuild.
+
+Reuses `wolf.status`'s own formatting helpers directly
+(`_format_elapsed`, `_STATE_MARKERS`, `_STATE_STYLES`) so the two views
+stay visually consistent, but needed its own text-only row/label
+builders: Textual's `Tree` only accepts a plain `str`/Rich `Text` for a
+node label, not an arbitrary renderable, so it can't reuse
+`wolf.status._step_label` (which returns a `Spinner` for a running
+step, meant for `--watch`'s own `rich.live.Live` redraw loop). A
+running step's own elapsed still renders with Rich's `blink` style,
+which needs no animated object of its own.
+
 ### Live per-step status independent of Flowtool's own buffering
 
 Confirmed real on an actual run: Flowtool's own `flow.status`/
