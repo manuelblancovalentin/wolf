@@ -1542,6 +1542,27 @@ class GenusRunStatusTests(unittest.TestCase):
         self.assertNotIn("block.synthesis.syn_generic.block_start", states)
         self.assertNotIn("block.implementation.floorplan.block_start", states)
 
+    def test_a_canonical_path_keyed_event_does_not_bleed_into_an_unrelated_occurrence(self):
+        """Regression, hit for real continuing into syn_opt: init_genus
+        is both a direct syn_opt member AND one of report_synth's own
+        nested leaf steps -- a wolf.step-status line carrying its own
+        canonical path (presentation.tcl's wolf_step_canonical_path)
+        must be matched by that exact path, not the shared bare name,
+        so syn_opt's own direct init_genus completing does not also
+        mark report_synth's own unrelated, not-yet-started nested
+        init_genus as complete."""
+        from wolf.backend.cadence_genus import genus_run_status
+        self._write_status(
+            "{script flowtool status invoked arguments "
+            "{-from syn_opt -to syn_opt -interactive}}\n"
+        )
+        self._write_events(
+            "init_genus|success|1700000500|block.synthesis.syn_opt.init_genus\n"
+        )
+        _, states = genus_run_status(self.run_directory)
+        self.assertEqual(states["block.synthesis.syn_opt.init_genus"], "complete")
+        self.assertNotIn("block.synthesis.syn_opt.report_synth.init_genus", states)
+
     def test_a_live_event_outside_the_active_invocations_range_is_ignored(self):
         """wolf.step-status is truncated per invocation, so this
         shouldn't happen in practice, but the scoping must still hold:
@@ -1777,6 +1798,52 @@ class StageStepDetailTests(unittest.TestCase):
         detail = self._states(stage_step_detail(self.run_directory, "syn_map"))
         self.assertEqual(detail["block_start"], "complete")
         self.assertEqual(detail["init_genus"], "running")
+
+    def test_a_canonical_path_keyed_event_does_not_bleed_into_an_unrelated_occurrence(self):
+        """Regression, hit for real continuing into syn_opt: init_genus
+        is both a direct syn_opt member AND one of report_synth's own
+        nested leaf steps. syn_opt's own direct init_genus completing
+        must not falsely mark report_synth's own unrelated, not-yet-
+        started nested init_genus as complete too (which would in turn
+        make report_synth's own rollup show "running" from one false
+        partial match) -- the real fix: a wolf.step-status line that
+        carries its own canonical path (presentation.tcl's
+        wolf_step_canonical_path) is matched by that exact path, not
+        the shared bare name."""
+        from wolf.backend.cadence_genus import stage_step_detail
+        self._write_events(
+            "init_genus|starting|1700000000|block.synthesis.syn_opt.init_genus\n"
+            "init_genus|success|1700000001|block.synthesis.syn_opt.init_genus\n"
+        )
+        detail = self._states(stage_step_detail(self.run_directory, "syn_opt"))
+        self.assertEqual(detail["init_genus"], "complete")
+        self.assertEqual(detail["report_synth"], "pending")
+
+    def test_a_canonical_path_keyed_event_still_reaches_its_own_real_occurrence(self):
+        """The same init_genus event, this time genuinely logged for
+        report_synth's own nested occurrence, must still be picked up
+        there."""
+        from wolf.backend.cadence_genus import stage_step_detail
+        self._write_events(
+            "init_genus|starting|1700000000|block.synthesis.syn_opt.report_synth.init_genus\n"
+        )
+        detail = self._states(stage_step_detail(self.run_directory, "syn_opt"))
+        self.assertEqual(detail["report_synth"], "running")
+
+    def test_an_older_format_line_with_no_path_still_falls_back_to_bare_name(self):
+        """A session still running the previous presentation.tcl (no
+        canonical path recorded yet) must keep working exactly as
+        before -- same bare-name-matching behavior, not a hard
+        requirement that every line carry a path."""
+        from wolf.backend.cadence_genus import stage_step_detail
+        self._write_events("init_genus|success|1700000000\n")
+        detail = self._states(stage_step_detail(self.run_directory, "syn_opt"))
+        self.assertEqual(detail["init_genus"], "complete")
+        # The old, ambiguous bare-name behavior still bleeds into the
+        # nested occurrence too -- an accepted limitation of the
+        # fallback path, not a regression (this is exactly the
+        # previously-known behavior, unchanged for old-format data).
+        self.assertEqual(detail["report_synth"], "running")
 
     def test_a_running_leaf_members_own_elapsed_is_derived_from_its_live_timestamp(self):
         from wolf.backend.cadence_genus import stage_step_detail

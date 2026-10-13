@@ -705,11 +705,31 @@ the exact same failure it always would have; a `wolf_write_step_status`
 write failure (disk full, permissions, ...) is reported but never
 allowed to break the real flow.
 
-`genus_run_step_events` reads this file back, keyed by bare step name
-(safe -- not ambiguous the way a bare name would be in `flow.status` --
-because `prepare_genus_inputs` truncates `wolf.step-status` fresh on
-every invocation, so it only ever holds the current invocation's own
-events). `stage_step_detail` overlays it onto `flow.status`'s own
+Each line also carries a real canonical dotted path (the same form
+`flow.status` itself uses), via `presentation.tcl`'s own
+`wolf_step_canonical_path` -- `get_db flow_hier_path`, confirmed real
+and already in use elsewhere in this flow (`block_finish`'s own body
+reads its last entry's `.name` to get the current stage name for
+report file naming). `prepare_genus_inputs` truncating `wolf.step-status`
+fresh per invocation makes a *bare* name safe to key by across stages
+(there's only ever one stage's worth of events in it at a time), but
+not safe *within* one stage: a step name can be reused at more than one
+position in the same stage's own flow tree -- `init_genus` is both a
+direct `syn_opt` member and one of `report_synth`'s own nested leaf
+steps. Confirmed hit for real: `syn_opt`'s own already-complete direct
+`init_genus` cross-matched, by bare name alone, into `report_synth`'s
+own unrelated, not-yet-started nested `init_genus`, which (via
+`_rollup_one_state`'s own correct "some but not all descendants
+complete → running" logic) made `report_synth` falsely show "running"
+too. `genus_run_step_events` now keys each event by its own canonical
+path when one was recorded, falling back to the bare name only for an
+older-format line (a session still running the previous
+`presentation.tcl`); both `genus_run_status`'s own invocation-scoped
+overlay and `stage_step_detail` check the exact path first and the bare
+name second, which handles either format without needing to know which
+is in effect.
+
+`stage_step_detail` overlays this data onto `flow.status`'s own
 canonical-path state, for both a stage's direct members and a nested
 sub-flow's own leaf descendants, always preferring the live event when
 one exists.

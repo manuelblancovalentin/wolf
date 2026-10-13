@@ -108,14 +108,53 @@ proc wolf_inject_for_step {step phase} {
 # rather than guessing a path. A write failure for any other reason
 # (disk full, permissions, ...) is reported but never allowed to break
 # the real flow -- this is bookkeeping, not synthesis.
+# Attempts to reconstruct the real canonical dotted path (the same
+# form flow.status's own "str" field uses, e.g.
+# "block.synthesis.syn_opt.report_synth.init_genus") for whichever step
+# is currently executing, via `get_db flow_hier_path` -- confirmed
+# real and already in use elsewhere in this exact flow (block_finish's
+# own body reads its last entry's .name to get the current stage name
+# for report file naming; see common_flows.tcl/common_steps.tcl).
+# flow_hier_path's own last entry is the *enclosing flow* a step is
+# running inside (e.g. "syn_opt", or "report_synth" one level deeper),
+# not the step itself -- confirmed by that same existing usage, which
+# treats it as the current stage/flow name, not a step name -- so the
+# step's own name (already known, the caller's own argument) is
+# appended separately below.
+#
+# Disambiguates a step name reused at more than one position within
+# the SAME stage (e.g. init_genus, both a direct syn_opt member and
+# one of report_synth's own nested leaf steps) -- a real gap a bare
+# step name alone cannot resolve, confirmed hit for real: report_synth
+# falsely showed "running" because syn_opt's own already-complete
+# direct init_genus cross-matched into report_synth's own unrelated,
+# not-yet-started nested init_genus. Degrades to "" (the caller then
+# falls back to the bare step name alone, same as before this existed)
+# on any failure -- this is bookkeeping, and must never risk the real
+# flow.
+proc wolf_step_canonical_path {} {
+    if {[catch {
+        set names {}
+        foreach item [get_db flow_hier_path] {
+            lappend names [get_db $item .name]
+        }
+        join $names .
+    } result]} {
+        return ""
+    }
+    return $result
+}
+
 proc wolf_write_step_status {step_name status} {
     global wolf_run_directory
     if {![info exists wolf_run_directory] || $wolf_run_directory eq ""} {
         return
     }
     if {[catch {
+        set flow_path [wolf_step_canonical_path]
+        set canonical_path [expr {$flow_path eq "" ? "" : "$flow_path.$step_name"}]
         set handle [open [file join $wolf_run_directory wolf.step-status] a]
-        puts $handle "$step_name|$status|[clock seconds]"
+        puts $handle "$step_name|$status|[clock seconds]|$canonical_path"
         close $handle
     } message]} {
         wolf_error "wolf_write_step_status failed (ignored): $message"

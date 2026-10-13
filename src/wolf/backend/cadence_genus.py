@@ -758,12 +758,18 @@ def genus_run_status(run_directory: Path) -> tuple[str, dict[str, str]]:
             for stage in STAGE_ORDER[start:end + 1]:
                 for path in stage_canonical_paths(stage, membership):
                     bare_name = path.rsplit(".", 1)[-1]
-                    if bare_name in live_events:
-                        # Live, bare-name-keyed evidence always wins
-                        # within this invocation's own stage range,
-                        # whether promoting a path flow.status never
-                        # mentioned at all or correcting a stale one.
-                        states[path] = live_events[bare_name][0]
+                    # Exact canonical-path match first (unambiguous,
+                    # the real fix for a bare name reused more than
+                    # once within the same stage), bare name only as a
+                    # fallback for an older-format wolf.step-status
+                    # line with no path recorded.
+                    live_event = live_events.get(path) or live_events.get(bare_name)
+                    if live_event is not None:
+                        # Live evidence always wins within this
+                        # invocation's own stage range, whether
+                        # promoting a path flow.status never mentioned
+                        # at all or correcting a stale one.
+                        states[path] = live_event[0]
                     elif (
                         states.get(path) == "failed"
                         and last_update_index.get(path, -1) < invocation_index
@@ -776,9 +782,9 @@ def genus_run_step_events(run_directory: Path) -> dict[str, tuple[str, float]]:
     """Read WOLF's own live per-step status record directly --
     `<run_directory>/wolf.step-status`, written by presentation.tcl's
     own create_flow_step wrapper (one real step's own bookkeeping, not
-    Flowtool's) as `<step_name>|<status>|<unix_time>` lines, truncated
-    fresh by `prepare_genus_inputs` at the start of every flowtool
-    invocation.
+    Flowtool's) as `<step_name>|<status>|<unix_time>|<canonical_path>`
+    lines, truncated fresh by `prepare_genus_inputs` at the start of
+    every flowtool invocation.
 
     This exists specifically because Flowtool's own `flow.status`/
     `flow.metrics` are confirmed NOT promptly updated per step when a
@@ -788,18 +794,31 @@ def genus_run_step_events(run_directory: Path) -> dict[str, tuple[str, float]]:
     steps completing one after another. wolf.step-status instead reflects
     each step directly, independent of Flowtool's own buffering.
 
-    Returns {step_name: (state, unix_time)}, state one of "running"/
+    Returns {key: (state, unix_time)}, state one of "running"/
     "complete"/"failed" via the same vocabulary genus_run_status itself
     uses, and unix_time the real timestamp of that latest record (used
     by stage_step_detail to compute how long a still-running step has
-    actually been running). Keyed by bare step name, not a qualified
-    canonical path -- safe because the file is truncated fresh per
-    invocation, so a name several stages share (like block_start) is
-    never ambiguous within it (there is only ever one stage's worth of
-    real events in it at a time). A later record for the same name
-    always overwrites an earlier one, same as genus_run_status.
-    Degrades to {} rather than raising on a missing file -- e.g. before
-    any step has executed yet this invocation."""
+    actually been running). `key` is the real canonical dotted path
+    (flow.status's own form, via presentation.tcl's own
+    `wolf_step_canonical_path`) when the Tcl side could compute one,
+    which fully disambiguates a step name reused more than once within
+    the *same* stage (e.g. init_genus, both syn_opt's own direct member
+    and one of report_synth's own nested leaf steps -- confirmed hit
+    for real: report_synth falsely showed "running" because syn_opt's
+    own already-complete direct init_genus cross-matched, by bare name
+    alone, into report_synth's own unrelated, not-yet-started nested
+    init_genus). Falls back to the bare step name as `key` for an
+    older-format line with no canonical path recorded (a session still
+    running the previous presentation.tcl -- the same "won't affect an
+    already-running session" limit every Tcl change this session has
+    had). A caller matching a specific canonical path should check that
+    key first and the bare step name second (`stage_step_detail` and
+    genus_run_status's own live overlay both do), which correctly
+    handles either format without needing to know which is in effect.
+    A later record for the same key always overwrites an earlier one,
+    same as genus_run_status. Degrades to {} rather than raising on a
+    missing file -- e.g. before any step has executed yet this
+    invocation."""
     events_file = run_directory / "wolf.step-status"
     if not events_file.is_file():
         return {}
@@ -813,12 +832,13 @@ def genus_run_step_events(run_directory: Path) -> dict[str, tuple[str, float]]:
             event_time = float(parts[2])
         except ValueError:
             continue
+        key = parts[3] if len(parts) > 3 and parts[3] else name
         if status in _FLOW_STATUS_FAILED_STATES:
-            events[name] = ("failed", event_time)
+            events[key] = ("failed", event_time)
         elif status in _FLOW_STATUS_SUCCESS_STATES:
-            events[name] = ("complete", event_time)
+            events[key] = ("complete", event_time)
         elif status in _FLOW_STATUS_RUNNING_STATES:
-            events[name] = ("running", event_time)
+            events[key] = ("running", event_time)
     return events
 
 
@@ -1368,19 +1388,23 @@ def stage_step_detail(
     any is, otherwise "running" once anything has started. Returns ()
     for an unrecognized stage name or a run with no flow.status yet.
 
-    genus_run_step_events' own live, bare-name-keyed data (see its own
-    docstring for why it exists -- Flowtool's own flow.status isn't
-    promptly updated per step during an interactive `run_flow`) always
-    wins over flow.status's canonical-path state for a leaf whose bare
-    name it has an entry for, since it reflects this invocation's real
-    progress even when flow.status itself hasn't caught up yet. The
-    elapsed seconds (third tuple element) is likewise only ever derived
-    from that same live source -- a leaf member currently "running"
-    whose own start timestamp wolf.step-status recorded -- and is None
-    for anything else (not running, or running per flow.status alone
-    with no live timestamp available; a nested sub-flow's own aggregate
-    row never gets one either, since there is no single real "start" for
-    an aggregate)."""
+    genus_run_step_events' own live data (see its own docstring for why
+    it exists -- Flowtool's own flow.status isn't promptly updated per
+    step during an interactive `run_flow`) always wins over
+    flow.status's own canonical-path state for a leaf it has an entry
+    for, matched by exact canonical path first (unambiguous even for a
+    step name reused more than once within the same stage, like
+    init_genus as both a direct member and one of report_synth's own
+    nested leaf steps) and the bare step name only as a fallback for an
+    older-format wolf.step-status line with no path recorded.
+    genus_run_status's own states already carry this same overlay for
+    paths within the active invocation's own stage range, so this is
+    mostly about the elapsed seconds (third tuple element), which
+    `states` alone can't carry -- only ever derived from a leaf
+    member's own live start timestamp, None for anything else (not
+    running, or running per flow.status alone with no live timestamp
+    available; a nested sub-flow's own aggregate row never gets one
+    either, since there is no single real "start" for an aggregate)."""
     if stage not in STAGE_ORDER:
         return ()
     membership = membership if membership is not None else flow_membership()
@@ -1396,8 +1420,9 @@ def stage_step_detail(
         member_elapsed: Optional[float] = None
         for path in leaf_paths:
             bare_name = path.rsplit(".", 1)[-1]
-            if bare_name in events:
-                event_status, event_time = events[bare_name]
+            live_event = events.get(path) or events.get(bare_name)
+            if live_event is not None:
+                event_status, event_time = live_event
                 known[path] = event_status
                 if bare_name == member and event_status == "running":
                     member_elapsed = now - event_time
