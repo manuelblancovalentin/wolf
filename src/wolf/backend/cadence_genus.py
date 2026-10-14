@@ -224,8 +224,63 @@ def _flow_root(context: ResolvedContext) -> Path:
     return builtin_flow_root("cadence-genus")
 
 
+_TCL_LIST_WORD_SPECIAL = set(' \t\n{}[]$;"\\')
+
+
+def _tcl_list_word(value: str) -> str:
+    """Render one Tcl list element, quoting only when the element
+    actually needs it (whitespace or Tcl-special characters) -- a plain
+    bareword like `typical` or `M6:M5` is written as-is.
+
+    This matters because the *outer* `{...}` added by `_tcl_list`/
+    `_tcl_dict_literal` is itself only ever a single level of Tcl
+    quoting: whatever parses that outer brace (`set`, or the Tcl command
+    the list literal is embedded directly into, e.g. `-library_sets
+    {...}`) strips it once and stores/passes the *inner* text as-is.
+    Brace-quoting every element unconditionally -- the previous
+    behaviour -- added a second, un-stripped layer: a direct variable
+    substitution (`set_analysis_view -setup $wolf_setup_views`, a plain
+    word substitution, not a list-reparsing command) then received the
+    literal text `{typical}`, braces included, instead of `typical`.
+    Confirmed empirically with real tclsh: `set v {{typical}}` stores
+    the literal string `{typical}`; substituting `$v` into a command
+    argument position passes that string verbatim, braces and all.
+
+    Quoting only when needed avoids that extra layer while still
+    producing a valid Tcl list: `llength`/`lindex`/`foreach` (which
+    *do* re-parse their argument as a list) see exactly the intended
+    elements either way, and a bareword word needs no quoting at all
+    for either consumption style to see it clean.
+    """
+    if value == "":
+        return "{}"
+    if not any(ch in _TCL_LIST_WORD_SPECIAL for ch in value):
+        return value
+    if "{" in value or "}" in value:
+        raise ValueError(f"cannot represent Tcl list element containing braces: {value!r}")
+    return "{" + value + "}"
+
+
 def _tcl_list(values: tuple[str, ...]) -> str:
-    return "{" + " ".join(_tcl_quote(value) for value in values) + "}"
+    """A real Tcl list literal, written as a single `{...}`-quoted word
+    whose elements are each quoted only when necessary (see
+    `_tcl_list_word`).
+
+    Confirmed real production bug this fixes: the original writer
+    double-quoted each element (`"typical"`); the later first attempt
+    at a fix brace-quoted every element *and* kept the outer brace,
+    adding an un-stripped extra quoting layer instead. Either bug was
+    invisible to Tcl's own list-aware commands (`foreach`/`llength`/
+    `lindex`/`concat`, which re-parse a string as a Tcl list and strip
+    one layer of embedded quoting transparently), but not to a command
+    that receives its argument via plain word substitution without
+    re-parsing it as a list -- confirmed real: `set_analysis_view
+    -setup $wolf_setup_views` failed with `Can not find 'analysis
+    view' object with the name '"wcl"'` (quote-character bug) and,
+    after the first fix attempt, would have received `{wcl}` (brace
+    bug) instead of a clean `wcl`.
+    """
+    return "{" + " ".join(_tcl_list_word(value) for value in values) + "}"
 
 
 def _tcl_bool(value: bool) -> str:
@@ -233,11 +288,16 @@ def _tcl_bool(value: bool) -> str:
 
 
 def _tcl_dict_literal(pairs: tuple[tuple[str, Any], ...]) -> str:
-    """A flat Tcl dict literal {key1 value1 key2 value2 ...}, each key/value
-    individually quoted the same way _tcl_list quotes a flat list element.
-    Not named _tcl_dict -- that name is already the (unrelated) parser for
-    reading a Tcl dict literal back into Python, below."""
-    return "{" + " ".join(f"{_tcl_quote(str(key))} {_tcl_quote(str(value))}" for key, value in pairs) + "}"
+    """A flat Tcl dict literal {key1 value1 key2 value2 ...}, each
+    key/value quoted only when necessary (see `_tcl_list_word` -- same
+    bug, same fix). Not named _tcl_dict -- that name is already the
+    (unrelated) parser for reading a Tcl dict literal back into Python,
+    below."""
+    words = []
+    for key, value in pairs:
+        words.append(_tcl_list_word(str(key)))
+        words.append(_tcl_list_word(str(value)))
+    return "{" + " ".join(words) + "}"
 
 
 def _tcl_brace_list(values: tuple[str, ...]) -> str:
@@ -1987,7 +2047,9 @@ def prepare_genus_inputs(
             name = _tcl_quote(corner.name)
             libraries = _tcl_list(tuple(str(path) for path in corner.libraries))
             mmmc_lines.append(f"create_library_set -name {name} -timing {libraries}")
-            mmmc_lines.append(f"create_timing_condition -name {name} -library_sets {{{name}}}")
+            mmmc_lines.append(
+                f"create_timing_condition -name {name} -library_sets {_tcl_list((corner.name,))}"
+            )
             if corner.qrc_tech_file is not None:
                 qrc = _tcl_quote(str(corner.qrc_tech_file))
                 mmmc_lines.append(f"create_rc_corner -name {name} -qrc_tech_file {qrc}")
@@ -2184,7 +2246,7 @@ def prepare_genus_inputs(
         f"set wolf_clock_routing_spacing_mult {_tcl_dict_literal(clock_routing.spacing_multiplier)}\n"
         f"set wolf_clock_routing_types "
         + "{" + " ".join(
-            f"{_tcl_quote(name)} "
+            f"{_tcl_list_word(name)} "
             + _tcl_dict_literal((
                 ("use_rule", _tcl_bool(spec.use_rule)),
                 ("top_preferred_layer", spec.top_preferred_layer or ""),
