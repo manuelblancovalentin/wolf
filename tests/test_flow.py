@@ -83,6 +83,7 @@ class FlowInitCliTests(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn("does not exist", result.stderr)
 
+
     def test_installed_flow_package_resolves_end_to_end(self):
         init = self.wolf(
             "flow", "init", "demo-flow",
@@ -100,6 +101,88 @@ class FlowInitCliTests(unittest.TestCase):
         self.assertIn("cadence-flowtool", info.stdout)
         self.assertIn(str(self.destination), info.stdout)
 
+
+
+class FlowSnapshotCliTests(unittest.TestCase):
+    """`wolf flow snapshot <env>` -- an inspectable, versioned, project-level
+    copy of the bundled cadence-genus flow Tcl, cut only on explicit request
+    (never automatically by `wolf run`), under
+    inputs/flows/<design>/flow.<N>/."""
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory(prefix="wolf-flow-snapshot-")
+        self.root = Path(self.temporary.name)
+        self.project_root = self.root / "project"
+        self.environment = os.environ.copy()
+        self.environment.update({
+            "WOLF_HOME": str(self.root / "wolf-home"),
+            "XDG_CONFIG_HOME": str(self.root / "config"),
+            "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src"),
+        })
+        env_directory = self.root / "wolf-home" / "envs" / "demo-env"
+        env_directory.mkdir(parents=True)
+        (env_directory / "wolf.yaml").write_text(
+            yaml.safe_dump({
+                "schema": "wolf.environment/v1",
+                "name": "demo-env",
+                "design": {"name": "demo-design"},
+                "technology": {"name": "demo-tech"},
+                "flow": {"backend": "cadence-flowtool"},
+                "project": {"root": str(self.project_root)},
+                "workspace": {"root": str(self.project_root / "workspace")},
+            }),
+            encoding="utf-8",
+        )
+        self.flows_directory = self.project_root / "inputs" / "flows" / "demo-design"
+
+    def tearDown(self):
+        self.temporary.cleanup()
+
+    def wolf(self, *arguments):
+        return subprocess.run(
+            [sys.executable, "-m", "wolf.cli", *arguments], cwd="/",
+            env=self.environment, text=True, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, check=False,
+        )
+
+    def test_first_snapshot_creates_flow_1_and_a_changelog_header_row(self):
+        result = self.wolf("flow", "snapshot", "demo-env")
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertTrue((self.flows_directory / "flow.1" / "synthesis.tcl").is_file())
+        self.assertTrue((self.flows_directory / "flow.1" / "flow.sha256checksum").is_file())
+        self.assertEqual(
+            (self.flows_directory / "flow.latest").resolve(),
+            (self.flows_directory / "flow.1").resolve(),
+        )
+        changelog = (self.flows_directory / "CHANGELOG.md").read_text(encoding="utf-8")
+        self.assertIn("| 1 |", changelog)
+        self.assertIn("(initial snapshot)", changelog)
+
+    def test_second_snapshot_with_unchanged_content_is_a_noop(self):
+        first = self.wolf("flow", "snapshot", "demo-env")
+        self.assertEqual(first.returncode, 0, msg=first.stderr)
+        second = self.wolf("flow", "snapshot", "demo-env")
+        self.assertEqual(second.returncode, 0, msg=second.stderr)
+        self.assertIn("unchanged", second.stdout.lower())
+        self.assertFalse((self.flows_directory / "flow.2").exists())
+
+    def test_missing_project_root_is_rejected(self):
+        env_directory = self.root / "wolf-home" / "envs" / "no-project"
+        env_directory.mkdir(parents=True)
+        (env_directory / "wolf.yaml").write_text(
+            yaml.safe_dump({
+                "schema": "wolf.environment/v1",
+                "name": "no-project",
+                "design": {"name": "demo-design"},
+                "technology": {"name": "demo-tech"},
+                "flow": {"backend": "cadence-flowtool"},
+                "workspace": {"root": str(self.root / "workspace")},
+            }),
+            encoding="utf-8",
+        )
+        result = self.wolf("flow", "snapshot", "no-project")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("project.root", result.stderr)
 
 if __name__ == "__main__":
     unittest.main()

@@ -26,7 +26,9 @@ from typing import Optional
 # `wolf env auto-setup` directory spec (bin/wolf.env), backend-agnostic: no
 # files are created, only the directories every design's inputs are
 # expected to live under. Must match wolf.commands.env's own copy.
-PER_DESIGN_INPUT_CATEGORIES = ("calibre", "constraints", "env", "floorplans", "hdl", "scripts", "tb")
+PER_DESIGN_INPUT_CATEGORIES = (
+    "calibre", "constraints", "env", "floorplans", "flows", "hdl", "scripts", "tb",
+)
 # Shared across all designs in a project, not nested under a design name.
 SHARED_LIB_SUBDIRS = ("gds", "lef", "spice", "timing", "verilog")
 

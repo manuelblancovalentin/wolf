@@ -20,6 +20,7 @@ from typing import Any, Mapping, NamedTuple, Optional
 import yaml
 
 from wolf.context import ResolvedContext, ResolvedTechnology
+from wolf import flow_snapshot
 from wolf.paths import builtin_flow_root
 
 
@@ -902,18 +903,12 @@ def _snapshot_scripts(base_directory: Path, files: Mapping[str, str]) -> Path:
         for path in base_directory.glob("scripts.*")
         if path.is_dir() and (match := _SCRIPTS_DIR_RE.match(path.name))
     )
-    digest = hashlib.sha256()
-    for name in sorted(files):
-        digest.update(name.encode("utf-8"))
-        digest.update(b"\0")
-        digest.update(hashlib.sha256(files[name].encode("utf-8")).hexdigest().encode("utf-8"))
-        digest.update(b"\n")
-    content_digest = digest.hexdigest()
+    digest = flow_snapshot.content_digest(files)
 
     if existing:
         latest_index, latest_directory = existing[-1]
         checksum_file = latest_directory / "scripts.sha256checksum"
-        if checksum_file.is_file() and checksum_file.read_text(encoding="utf-8").strip() == content_digest:
+        if checksum_file.is_file() and checksum_file.read_text(encoding="utf-8").strip() == digest:
             _relink_scripts_latest(base_directory, latest_directory)
             return latest_directory
         next_index = latest_index + 1
@@ -926,7 +921,7 @@ def _snapshot_scripts(base_directory: Path, files: Mapping[str, str]) -> Path:
         path = scripts_directory / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
-    (scripts_directory / "scripts.sha256checksum").write_text(content_digest, encoding="utf-8")
+    (scripts_directory / "scripts.sha256checksum").write_text(digest, encoding="utf-8")
     _relink_scripts_latest(base_directory, scripts_directory)
     return scripts_directory
 

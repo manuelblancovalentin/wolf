@@ -514,7 +514,7 @@ class EnvWizardEndToEndTests(unittest.TestCase):
                 # The scan screen appears unprompted, listing the one
                 # design its shallow scan found.
                 scan_opts = [o.prompt for o in app.screen.query_one(OptionList).options]
-                self.assertEqual(scan_opts, ["top (missing: calibre, env, floorplans, scripts, tb)"])
+                self.assertEqual(scan_opts, ["top (missing: calibre, env, floorplans, flows, scripts, tb)"])
                 self._select(app.screen.query_one(OptionList), scan_opts[0])
                 await pilot.press("enter")
                 await pilot.pause()
@@ -536,7 +536,7 @@ class EnvWizardEndToEndTests(unittest.TestCase):
         )
         # Saving must have scaffolded every missing standard directory --
         # not just left the scan's "missing: ..." list as a diagnosis.
-        for category in ("calibre", "env", "floorplans", "scripts", "tb"):
+        for category in ("calibre", "env", "floorplans", "flows", "scripts", "tb"):
             self.assertTrue((existing_root / "inputs" / category / "top").is_dir(), category)
         self.assertTrue((existing_root / "outputs" / "top").is_dir())
         self.assertTrue((existing_root / "workspace").is_dir())
@@ -584,7 +584,7 @@ class EnvWizardEndToEndTests(unittest.TestCase):
 
         asyncio.run(drive())
 
-        for category in ("calibre", "constraints", "env", "floorplans", "hdl", "scripts", "tb"):
+        for category in ("calibre", "constraints", "env", "floorplans", "flows", "hdl", "scripts", "tb"):
             self.assertTrue((existing_root / "inputs" / category / "newdesign").is_dir(), category)
         self.assertTrue((existing_root / "outputs" / "newdesign").is_dir())
         self.assertTrue((existing_root / "workspace").is_dir())

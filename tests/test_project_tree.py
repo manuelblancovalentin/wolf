@@ -57,7 +57,7 @@ class ProjectTreeScanTests(unittest.TestCase):
         self.assertFalse(scan.categories["tb"].exists)
         self.assertEqual(
             scan.designs_missing_categories("ALU_MIPS_32b"),
-            ("calibre", "env", "floorplans", "scripts", "tb"),
+            ("calibre", "env", "floorplans", "flows", "scripts", "tb"),
         )
 
     def test_scan_design_collects_hdl_files_constraints_and_run_counts(self):
@@ -82,7 +82,7 @@ class ProjectTreeScanTests(unittest.TestCase):
         # Exactly the 3 numbered run directories -- the ".latest" symlink
         # does not count as a run of its own.
         self.assertEqual(design.workspace_run_count, 3)
-        self.assertEqual(design.missing_categories, ("calibre", "env", "floorplans", "scripts", "tb"))
+        self.assertEqual(design.missing_categories, ("calibre", "env", "floorplans", "flows", "scripts", "tb"))
 
     def test_unknown_design_scans_as_empty_not_an_error(self):
         self._touch("inputs/hdl/top/a.sv")
@@ -108,7 +108,10 @@ class RealAluTreeScanTests(unittest.TestCase):
         self.assertTrue(scan.inputs_exists)
         self.assertTrue(scan.workspace_exists)
         self.assertEqual(scan.design_names, ("ALU_MIPS_32b",))
-        self.assertEqual(scan.designs_missing_categories("ALU_MIPS_32b"), ())
+        # "flows" is a newer category than this real tutorial tree predates;
+        # legitimately missing until `wolf env auto-setup`/`wolf flow
+        # snapshot` is run against it.
+        self.assertEqual(scan.designs_missing_categories("ALU_MIPS_32b"), ("flows",))
 
     def test_deep_scan_matches_the_real_file_counts(self):
         design = scan_design(self.ROOT, "ALU_MIPS_32b")

@@ -134,6 +134,22 @@ directory with
 .B wolf registry add
 to make the flow installable as
 .IR flow/name .
+.TP
+.BI "wolf flow snapshot " "[environment]"
+Cut an inspectable, versioned copy of
+.I environment Ns 's
+flow scripts (the real Tcl a run would execute) under
+.IR project.root /inputs/flows/ design /flow. N ,
+only when invoked \(em never automatically by
+.BR "wolf run" .
+A digest comparison against the latest existing snapshot skips writing a
+duplicate when nothing changed; otherwise the new snapshot and a
+.B CHANGELOG.md
+row naming the changed step bodies are written, and
+.B flow.latest
+is repointed at it.
+.I environment
+defaults to the active environment when omitted.
 .SH PDK COMMANDS
 .TP
 .B wolf pdk list

@@ -64,6 +64,10 @@
 
 `wolf flow init {{name}} --from {{/path/to/base/flow}} --to {{/path/to/project/flows/name}} --manifest {{/path/to/registry/flow/name.yaml}} --backend {{cadence-flowtool}} --revision {{label}}`
 
+- Cut an inspectable, versioned snapshot of an environment's flow scripts under inputs/flows/<design>/ (only when you ask -- never automatic):
+
+`wolf flow snapshot {{environment}}`
+
 - List all pdk/* registry manifests, or show one in detail:
 
 `wolf pdk {{list|info tsmc65}}`
