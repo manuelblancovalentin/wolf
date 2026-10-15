@@ -57,9 +57,10 @@ project:
         project = self.root / "project"
         for relative in (
             "inputs/calibre/my_design", "inputs/constraints/my_design", "inputs/env/my_design",
-            "inputs/floorplans/my_design", "inputs/hdl/my_design", "inputs/scripts/my_design",
-            "inputs/tb/my_design", "inputs/lib/gds", "inputs/lib/lef", "inputs/lib/spice",
-            "inputs/lib/timing", "inputs/lib/verilog", "outputs/my_design", "workspace",
+            "inputs/floorplans/my_design", "inputs/flows/my_design", "inputs/hdl/my_design",
+            "inputs/scripts/my_design", "inputs/tb/my_design", "inputs/lib/gds", "inputs/lib/lef",
+            "inputs/lib/spice", "inputs/lib/timing", "inputs/lib/verilog",
+            "outputs/my_design", "workspace",
         ):
             self.assertTrue((project / relative).is_dir(), f"missing {relative}")
         self.assertIn("created", result.stdout)
@@ -68,6 +69,20 @@ project:
         self.assertEqual(second.returncode, 0, second.stderr)
         self.assertIn("already present", second.stdout)
         self.assertNotIn("inputs: created", second.stdout)
+
+    def test_auto_setup_also_links_wolf_yaml_into_inputs_env(self):
+        self._create("demo", """schema: wolf.environment/v1
+name: demo
+design:
+  name: my_design
+project:
+  root: ./project
+""")
+        result = self.wolf("env", "auto-setup", "demo")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        link = self.root / "project" / "inputs" / "env" / "my_design" / "wolf.demo.yaml"
+        self.assertTrue(link.is_symlink())
+        self.assertEqual(link.resolve(), (self.state / "envs" / "demo" / "wolf.yaml").resolve())
 
     def test_project_root_is_relative_to_the_source_yaml_not_cwd(self):
         nested = self.root / "nested"

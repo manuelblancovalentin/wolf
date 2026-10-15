@@ -102,6 +102,31 @@ Persist a legacy variable, or update an existing structured path such as
 or
 .B env.GENUS_NUM_CPUS
 in a declarative profile.
+A key whose first segment is a design-level cadence-flowtool knob
+(e.g.
+.BR cts_buffer_cells ,
+.BR add_tieoffs_cells ,
+.BR active_views ,
+.BR clock_routing_types ,
+.BR genus_set_db ,
+.BR postsyn_netlists ", or " inject )
+is instead written to that design's own
+.B setup. Ns \fIdesign\fR Ns .yaml
+under
+.IB project.root /inputs/env/ design /
+(see the Cadence Genus backend documentation), not
+.BR wolf.yaml .
+.I name
+defaults to the active environment when omitted.
+.TP
+.BI "wolf env unset " "[name] key"
+Remove a key written by
+.BR "wolf env set" ,
+pruning any now-empty parent mapping, from whichever file it actually
+lives in (same routing rule as
+.BR "wolf env set" ).
+Removing a key, or a parent segment, that was never set is a no-op, not
+an error.
 .I name
 defaults to the active environment when omitted.
 .TP
@@ -110,7 +135,11 @@ Scaffold a declarative-v1 environment's
 .B project.root
 with its
 .IR inputs/ ", " outputs/ ", and " workspace/
-directories (backend-agnostic; directories only, no PDK or flow content).
+directories (backend-agnostic; directories only, no PDK or flow content),
+and (re)link
+.IB project.root /inputs/env/ design /wolf. name .yaml
+to this environment's own
+.BR wolf.yaml .
 Safe to run repeatedly.
 .I name
 defaults to the active environment when omitted.

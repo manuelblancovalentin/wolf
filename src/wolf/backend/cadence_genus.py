@@ -19,6 +19,7 @@ from typing import Any, Mapping, NamedTuple, Optional
 
 import yaml
 
+from wolf.backend.cadence_genus_setup import design_setup_path, load_design_setup
 from wolf.context import ResolvedContext, ResolvedTechnology
 from wolf import flow_snapshot
 from wolf.paths import builtin_flow_root
@@ -50,26 +51,15 @@ class GenusInputs:
 # package metadata, and are therefore added only to emitted Genus inputs.
 GENUS_REQUIRED_DEFINES = ("SYNTHESIS",)
 
-# Backend-native Genus attributes a run may need to override (e.g. raising
-# hdl_max_memory_address_range past a generic-inference default). These are
-# tool policy, not canonical WOLF semantics, so they arrive only through the
-# explicit backend.cadence-flowtool escape hatch.
-_ALLOWED_CADENCE_FLOWTOOL_OVERRIDES = frozenset({
-    "genus", "flowtool", "postsyn_netlists", "inject", "active_views",
-    "cts", "tieoffs", "clock_routing",
-})
+# backend.cadence-flowtool (wolf.yaml) now carries only genuinely
+# environment-level choices -- which setup/flow Flowtool templates to
+# render. Every design-tuning knob that used to live here (genus set_db
+# overrides, active_views, cts, tieoffs, clock_routing, postsyn_netlists,
+# inject) moved to the design's own setup.<design_name>.yaml -- see
+# cadence_genus_setup.DESIGN_SETUP_ALLOWED_KEYS and _design_setup, below.
+_ALLOWED_CADENCE_FLOWTOOL_OVERRIDES = frozenset({"flowtool"})
 _ALLOWED_ACTIVE_VIEWS_KEYS = frozenset({"setup", "hold"})
 _ALLOWED_INJECT_PHASES = frozenset({"pre", "post"})
-_ALLOWED_GENUS_OVERRIDES = frozenset({"set_db"})
-_ALLOWED_CTS_KEYS = frozenset({
-    "buffer_cells", "buffer_cells_top", "buffer_cells_leaf",
-    "inverter_cells", "inverter_cells_top", "inverter_cells_leaf",
-    "clock_gating_cells",
-    "target_skew", "target_max_transition_time", "max_fanout",
-})
-_ALLOWED_TIEOFFS_KEYS = frozenset({"cells", "honor_dont_use", "max_fanout", "max_distance"})
-_ALLOWED_CLOCK_ROUTING_KEYS = frozenset({"rule", "types"})
-_ALLOWED_CLOCK_ROUTING_RULE_KEYS = frozenset({"width_multiplier", "spacing_multiplier"})
 _ALLOWED_CLOCK_ROUTING_TYPE_NAMES = frozenset({"top", "trunk", "leaf"})
 _ALLOWED_CLOCK_ROUTING_TYPE_KEYS = frozenset(
     {"route_rule", "top_preferred_layer", "bottom_preferred_layer"}
@@ -330,22 +320,32 @@ def _cadence_flowtool_overrides(context: ResolvedContext) -> Mapping[str, Any]:
     return overrides
 
 
+def _design_setup(context: ResolvedContext) -> Mapping[str, Any]:
+    """The parsed, top-level-key-validated content of this design's
+    setup.<design_name>.yaml (<project_root>/inputs/env/<design_name>/),
+    if a project root and design name are both known and the file exists
+    -- {} otherwise, same as an unconfigured design-level knob always
+    did. Every function below reads from this single source instead of
+    backend_overrides["cadence-flowtool"] -- cts/tieoffs/clock_routing/
+    active_views/genus_set_db/postsyn_netlists/inject all moved out of
+    wolf.yaml into this file (see cadence_genus_setup's own module
+    docstring for why)."""
+    if context.project_root is None or not context.design_name:
+        return {}
+    return load_design_setup(design_setup_path(context.project_root, context.design_name))
+
+
 def _genus_set_db_overrides(context: ResolvedContext) -> tuple[tuple[str, Any], ...]:
-    """Return ordered, validated set_db overrides from backend.cadence-flowtool.genus."""
-    genus = _cadence_flowtool_overrides(context).get("genus", {})
-    if not isinstance(genus, Mapping):
-        raise ValueError("backend.cadence-flowtool.genus must be a mapping")
-    unknown = set(genus) - _ALLOWED_GENUS_OVERRIDES
-    if unknown:
-        raise ValueError(f"unsupported backend.cadence-flowtool.genus override: {sorted(unknown)[0]}")
-    set_db = genus.get("set_db", {})
+    """Return ordered, validated set_db overrides from this design's
+    setup.yaml genus_set_db key."""
+    set_db = _design_setup(context).get("genus_set_db", {})
     if not isinstance(set_db, Mapping):
-        raise ValueError("backend.cadence-flowtool.genus.set_db must be a mapping")
+        raise ValueError("genus_set_db must be a mapping")
     return tuple(sorted(set_db.items()))
 
 
 def _active_views_overrides(context: ResolvedContext) -> tuple[tuple[str, ...], tuple[str, ...]]:
-    """Validate backend.cadence-flowtool.active_views.{setup,hold} -> an
+    """Validate this design's setup.yaml active_views.{setup,hold} -> an
     (setup_views, hold_views) pair, each a tuple of declared analysis-view
     (corner) names -- empty when not overridden, which keeps today's
     default behaviour (every declared view active for both setup and
@@ -363,12 +363,12 @@ def _active_views_overrides(context: ResolvedContext) -> tuple[tuple[str, ...], 
     implementation stage (not yet selectable per stage); narrowing that
     further is a real possible follow-up, not implemented here.
     """
-    active_views = _cadence_flowtool_overrides(context).get("active_views", {})
+    active_views = _design_setup(context).get("active_views", {})
     if not isinstance(active_views, Mapping):
-        raise ValueError("backend.cadence-flowtool.active_views must be a mapping")
+        raise ValueError("active_views must be a mapping")
     unknown = set(active_views) - _ALLOWED_ACTIVE_VIEWS_KEYS
     if unknown:
-        raise ValueError(f"unsupported backend.cadence-flowtool.active_views key: {sorted(unknown)[0]}")
+        raise ValueError(f"unsupported active_views key: {sorted(unknown)[0]}")
     declared = (
         {corner.name for corner in context.technology.timing_corners}
         if context.technology else set()
@@ -377,12 +377,12 @@ def _active_views_overrides(context: ResolvedContext) -> tuple[tuple[str, ...], 
     for key in ("setup", "hold"):
         views = active_views.get(key, [])
         if not isinstance(views, list) or not all(isinstance(view, str) and view for view in views):
-            raise ValueError(f"backend.cadence-flowtool.active_views.{key} must be a list of strings")
+            raise ValueError(f"active_views.{key} must be a list of strings")
         if declared:
             unknown_views = sorted(set(views) - declared)
             if unknown_views:
                 raise ValueError(
-                    f"backend.cadence-flowtool.active_views.{key} names undeclared view(s): "
+                    f"active_views.{key} names undeclared view(s): "
                     f"{unknown_views[0]} -- declared views are {sorted(declared)}"
                 )
         result.append(tuple(views))
@@ -425,9 +425,10 @@ class CtsOverrides(NamedTuple):
 
 
 def _cts_overrides(context: ResolvedContext) -> CtsOverrides:
-    """Validate backend.cadence-flowtool.cts -> CCOpt cell selection and
-    timing targets applied before clock tree synthesis (set_cts_config,
-    re-applied at the start of both prects and cts -- see docs on why).
+    """Validate this design's setup.yaml cts_* keys -> CCOpt cell
+    selection and timing targets applied before clock tree synthesis
+    (set_cts_config, re-applied at the start of both prects and cts --
+    see docs on why).
 
     Cell lists are real Innovus cts_buffer_cells/cts_inverter_cells/
     cts_clock_gating_cells values directly (confirmed real, man 20.15):
@@ -438,29 +439,24 @@ def _cts_overrides(context: ResolvedContext) -> CtsOverrides:
     Left unset (today's default): CCOpt chooses from the whole library,
     unchanged.
     """
-    cts = _cadence_flowtool_overrides(context).get("cts", {})
-    if not isinstance(cts, Mapping):
-        raise ValueError("backend.cadence-flowtool.cts must be a mapping")
-    unknown = set(cts) - _ALLOWED_CTS_KEYS
-    if unknown:
-        raise ValueError(f"unsupported backend.cadence-flowtool.cts key: {sorted(unknown)[0]}")
+    setup = _design_setup(context)
+
     def _cells(key: str) -> tuple[str, ...]:
-        return _cell_pattern_list(cts.get(key, []), f"backend.cadence-flowtool.cts.{key}")
+        return _cell_pattern_list(setup.get(key, []), key)
 
     return CtsOverrides(
-        buffer_cells=_cells("buffer_cells"),
-        buffer_cells_top=_cells("buffer_cells_top"),
-        buffer_cells_leaf=_cells("buffer_cells_leaf"),
-        inverter_cells=_cells("inverter_cells"),
-        inverter_cells_top=_cells("inverter_cells_top"),
-        inverter_cells_leaf=_cells("inverter_cells_leaf"),
-        clock_gating_cells=_cells("clock_gating_cells"),
-        target_skew=_optional_float(cts.get("target_skew"), "backend.cadence-flowtool.cts.target_skew"),
+        buffer_cells=_cells("cts_buffer_cells"),
+        buffer_cells_top=_cells("cts_buffer_cells_top"),
+        buffer_cells_leaf=_cells("cts_buffer_cells_leaf"),
+        inverter_cells=_cells("cts_inverter_cells"),
+        inverter_cells_top=_cells("cts_inverter_cells_top"),
+        inverter_cells_leaf=_cells("cts_inverter_cells_leaf"),
+        clock_gating_cells=_cells("cts_clock_gating_cells"),
+        target_skew=_optional_float(setup.get("cts_target_skew"), "cts_target_skew"),
         target_max_transition_time=_optional_float(
-            cts.get("target_max_transition_time"),
-            "backend.cadence-flowtool.cts.target_max_transition_time",
+            setup.get("cts_target_max_transition_time"), "cts_target_max_transition_time",
         ),
-        max_fanout=_optional_int(cts.get("max_fanout"), "backend.cadence-flowtool.cts.max_fanout"),
+        max_fanout=_optional_int(setup.get("cts_max_fanout"), "cts_max_fanout"),
     )
 
 
@@ -472,37 +468,27 @@ class TieoffOverrides(NamedTuple):
 
 
 def _tieoff_overrides(context: ResolvedContext) -> TieoffOverrides:
-    """Validate backend.cadence-flowtool.tieoffs -> the real Innovus
-    add_tieoffs_cells (max two: one tie-high, one tie-low driver, man
-    20.15) and its companion attributes. Left unset (today's default):
-    add_tieoffs_cells stays empty and add_tieoffs's own guard
+    """Validate this design's setup.yaml add_tieoffs_* keys -> the real
+    Innovus add_tieoffs_cells (max two: one tie-high, one tie-low
+    driver, man 20.15) and its companion attributes. Left unset (today's
+    default): add_tieoffs_cells stays empty and add_tieoffs's own guard
     ([get_db add_tieoffs_cells] ne "") keeps the step a no-op, same as
     before this existed.
     """
-    tieoffs = _cadence_flowtool_overrides(context).get("tieoffs", {})
-    if not isinstance(tieoffs, Mapping):
-        raise ValueError("backend.cadence-flowtool.tieoffs must be a mapping")
-    unknown = set(tieoffs) - _ALLOWED_TIEOFFS_KEYS
-    if unknown:
-        raise ValueError(f"unsupported backend.cadence-flowtool.tieoffs key: {sorted(unknown)[0]}")
-    cells = _cell_pattern_list(tieoffs.get("cells", []), "backend.cadence-flowtool.tieoffs.cells")
+    setup = _design_setup(context)
+    cells = _cell_pattern_list(setup.get("add_tieoffs_cells", []), "add_tieoffs_cells")
     if len(cells) > 2:
         raise ValueError(
-            "backend.cadence-flowtool.tieoffs.cells accepts at most two cells "
-            "(one tie-high driver, one tie-low driver)"
+            "add_tieoffs_cells accepts at most two cells (one tie-high driver, one tie-low driver)"
         )
-    honor_dont_use = tieoffs.get("honor_dont_use")
+    honor_dont_use = setup.get("add_tieoffs_honor_dont_use")
     if honor_dont_use is not None and not isinstance(honor_dont_use, bool):
-        raise ValueError("backend.cadence-flowtool.tieoffs.honor_dont_use must be a boolean")
+        raise ValueError("add_tieoffs_honor_dont_use must be a boolean")
     return TieoffOverrides(
         cells=cells,
         honor_dont_use=honor_dont_use,
-        max_fanout=_optional_int(
-            tieoffs.get("max_fanout"), "backend.cadence-flowtool.tieoffs.max_fanout"
-        ),
-        max_distance=_optional_float(
-            tieoffs.get("max_distance"), "backend.cadence-flowtool.tieoffs.max_distance"
-        ),
+        max_fanout=_optional_int(setup.get("add_tieoffs_max_fanout"), "add_tieoffs_max_fanout"),
+        max_distance=_optional_float(setup.get("add_tieoffs_max_distance"), "add_tieoffs_max_distance"),
     )
 
 
@@ -519,10 +505,10 @@ class ClockRoutingOverrides(NamedTuple):
 
 
 def _clock_routing_overrides(context: ResolvedContext) -> ClockRoutingOverrides:
-    """Validate backend.cadence-flowtool.clock_routing -> a non-default
-    routing rule (create_route_rule -width_multiplier/-spacing_multiplier,
-    confirmed real, man 20.15) and top/trunk/leaf route types
-    (create_route_type -route_rule/-top_preferred_layer/
+    """Validate this design's setup.yaml clock_routing_* keys -> a
+    non-default routing rule (create_route_rule -width_multiplier/
+    -spacing_multiplier, confirmed real, man 20.15) and top/trunk/leaf
+    route types (create_route_type -route_rule/-top_preferred_layer/
     -bottom_preferred_layer) for add_clock_route_types. Layer names are
     taken exactly as given here -- WOLF does not know the loaded
     technology's own layer set at config-generation time (that only
@@ -532,12 +518,7 @@ def _clock_routing_overrides(context: ResolvedContext) -> ClockRoutingOverrides:
     rather than Python guessing. Left unset (today's default):
     add_clock_route_types stays a no-op.
     """
-    clock_routing = _cadence_flowtool_overrides(context).get("clock_routing", {})
-    if not isinstance(clock_routing, Mapping):
-        raise ValueError("backend.cadence-flowtool.clock_routing must be a mapping")
-    unknown = set(clock_routing) - _ALLOWED_CLOCK_ROUTING_KEYS
-    if unknown:
-        raise ValueError(f"unsupported backend.cadence-flowtool.clock_routing key: {sorted(unknown)[0]}")
+    setup = _design_setup(context)
 
     def _multiplier_map(value: Any, field: str) -> tuple[tuple[str, float], ...]:
         if not isinstance(value, Mapping):
@@ -551,34 +532,25 @@ def _clock_routing_overrides(context: ResolvedContext) -> ClockRoutingOverrides:
             result.append((layer, float(multiplier)))
         return tuple(sorted(result))
 
-    rule = clock_routing.get("rule", {})
-    if not isinstance(rule, Mapping):
-        raise ValueError("backend.cadence-flowtool.clock_routing.rule must be a mapping")
-    unknown_rule = set(rule) - _ALLOWED_CLOCK_ROUTING_RULE_KEYS
-    if unknown_rule:
-        raise ValueError(
-            f"unsupported backend.cadence-flowtool.clock_routing.rule key: {sorted(unknown_rule)[0]}"
-        )
     width_multiplier = _multiplier_map(
-        rule.get("width_multiplier", {}), "backend.cadence-flowtool.clock_routing.rule.width_multiplier"
+        setup.get("clock_routing_width_multiplier", {}), "clock_routing_width_multiplier",
     )
     spacing_multiplier = _multiplier_map(
-        rule.get("spacing_multiplier", {}),
-        "backend.cadence-flowtool.clock_routing.rule.spacing_multiplier",
+        setup.get("clock_routing_spacing_multiplier", {}), "clock_routing_spacing_multiplier",
     )
 
-    types_value = clock_routing.get("types", {})
+    types_value = setup.get("clock_routing_types", {})
     if not isinstance(types_value, Mapping):
-        raise ValueError("backend.cadence-flowtool.clock_routing.types must be a mapping")
+        raise ValueError("clock_routing_types must be a mapping")
     unknown_type_names = set(types_value) - _ALLOWED_CLOCK_ROUTING_TYPE_NAMES
     if unknown_type_names:
         raise ValueError(
-            f"unsupported backend.cadence-flowtool.clock_routing.types key: {sorted(unknown_type_names)[0]} "
+            f"unsupported clock_routing_types key: {sorted(unknown_type_names)[0]} "
             f"-- must be one of {sorted(_ALLOWED_CLOCK_ROUTING_TYPE_NAMES)}"
         )
     types = []
     for name, spec in sorted(types_value.items()):
-        field = f"backend.cadence-flowtool.clock_routing.types.{name}"
+        field = f"clock_routing_types.{name}"
         if not isinstance(spec, Mapping):
             raise ValueError(f"{field} must be a mapping")
         unknown_spec = set(spec) - _ALLOWED_CLOCK_ROUTING_TYPE_KEYS
@@ -605,39 +577,38 @@ def _postsyn_netlists(context: ResolvedContext) -> tuple[str, ...]:
     at that block's own synthesized netlist so the handoff includes it
     directly instead of every instance being re-elaborated and re-optimized.
     """
-    values = _cadence_flowtool_overrides(context).get("postsyn_netlists", [])
+    values = _design_setup(context).get("postsyn_netlists", [])
     if not isinstance(values, list) or not all(isinstance(value, str) and value for value in values):
-        raise ValueError("backend.cadence-flowtool.postsyn_netlists must be a list of paths")
+        raise ValueError("postsyn_netlists must be a list of paths")
     return tuple(values)
 
 
 def _inject_snippets(context: ResolvedContext) -> tuple[tuple[str, str, tuple[str, ...]], ...]:
-    """Validate backend.cadence-flowtool.inject.<step>.<pre|post> -> [snippets].
+    """Validate this design's setup.yaml inject.<step>.<pre|post> ->
+    [snippets].
 
     Each snippet is either a file path (sourced) or inline Tcl (eval'd) --
     see presentation.tcl's wolf_inject. Returns a flat, ordered sequence of
     (step, phase, snippets) ready to become `wolf_inject(step,phase)` array
     entries in flow-config.tcl.
     """
-    inject = _cadence_flowtool_overrides(context).get("inject", {})
+    inject = _design_setup(context).get("inject", {})
     if not isinstance(inject, Mapping):
-        raise ValueError("backend.cadence-flowtool.inject must be a mapping")
+        raise ValueError("inject must be a mapping")
     result = []
     for step, phases in sorted(inject.items()):
         if not isinstance(step, str) or not step:
-            raise ValueError("backend.cadence-flowtool.inject keys must be step names")
+            raise ValueError("inject keys must be step names")
         if not isinstance(phases, Mapping):
-            raise ValueError(f"backend.cadence-flowtool.inject.{step} must be a mapping")
+            raise ValueError(f"inject.{step} must be a mapping")
         unknown = set(phases) - _ALLOWED_INJECT_PHASES
         if unknown:
-            raise ValueError(f"backend.cadence-flowtool.inject.{step} must only set pre/post")
+            raise ValueError(f"inject.{step} must only set pre/post")
         for phase, snippets in sorted(phases.items()):
             if not isinstance(snippets, list) or not all(
                 isinstance(snippet, str) and snippet for snippet in snippets
             ):
-                raise ValueError(
-                    f"backend.cadence-flowtool.inject.{step}.{phase} must be a list of strings"
-                )
+                raise ValueError(f"inject.{step}.{phase} must be a list of strings")
             if snippets:
                 result.append((step, phase, tuple(snippets)))
     return tuple(result)

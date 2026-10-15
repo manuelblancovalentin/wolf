@@ -65,6 +65,30 @@ def scaffold_project_tree(project_root: Path, design_name: str) -> list[Path]:
     return created
 
 
+def link_environment_file(
+    project_root: Path, design_name: str, environment_name: str, source: Path,
+) -> Path:
+    """Place a symlink to `source` (an environment's own wolf.yaml) at
+    inputs/env/<design_name>/wolf.<environment_name>.yaml -- so the
+    configuration that produced a given project is readable right there
+    on disk without needing to know WOLF's own ~/.wolf/envs/ state
+    directory path. A symlink, not a copy: there is exactly one real
+    file, so it can never silently go stale relative to wherever an edit
+    actually landed. Falls back to a plain copy only where symlinking
+    itself isn't possible (e.g. a filesystem that disallows it); either
+    way this recreates the link fresh every call, never hand-edited.
+    Returns the destination path; the caller decides what (if anything)
+    to tell the user when the fallback copy path was taken."""
+    destination = project_root / "inputs" / "env" / design_name / f"wolf.{environment_name}.yaml"
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.unlink(missing_ok=True)
+    try:
+        destination.symlink_to(source.resolve())
+    except OSError:
+        destination.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+    return destination
+
+
 def _design_candidates_in_category(category_dir: Path, category: str) -> dict[str, Path]:
     """Every design name this one category directory suggests, mapped to
     the matched path. A subdirectory named after the design is the usual

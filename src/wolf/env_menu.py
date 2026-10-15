@@ -40,6 +40,9 @@ from textual.widgets.tree import TreeNode
 _RTL_SUFFIXES = (".v", ".sv", ".vhd", ".vhdl")
 
 from wolf.backend import backend_names
+from wolf.backend.cadence_genus_setup import (
+    design_setup_path, load_design_setup, write_design_setup,
+)
 from wolf.cell_browser import (
     analysis_view_names_for_technology, cells_for_technology, routing_layers_for_technology,
 )
@@ -53,7 +56,8 @@ from wolf.package.registry import PackageRegistry
 from wolf.package.store import PackageStore
 from wolf.paths import builtin_flow_root, environments_dir
 from wolf.project_tree import (
-    PER_DESIGN_INPUT_CATEGORIES, ProjectTreeScan, scaffold_project_tree, scan_design, scan_project_tree,
+    PER_DESIGN_INPUT_CATEGORIES, ProjectTreeScan, link_environment_file, scaffold_project_tree,
+    scan_design, scan_project_tree,
 )
 
 
@@ -1598,6 +1602,7 @@ class EnvWizardApp(App[None]):
         self.ground_nets: list[str] = []
         self.threads: Optional[int] = None
         self.backend_overrides: dict = {}
+        self.design_setup: dict = {}
         self.env_vars: dict = {}
 
         manifest = self._path / ENVIRONMENT_FILENAME
@@ -1634,6 +1639,10 @@ class EnvWizardApp(App[None]):
             self.ground_nets = list(profile.ground_nets)
             self.threads = profile.threads
             self.backend_overrides = dict(profile.backend_overrides)
+            if self.project_root and self.design_name:
+                self.design_setup = load_design_setup(
+                    design_setup_path(Path(self.project_root), self.design_name)
+                )
             self.env_vars = dict(profile.env_vars)
         self.sub_title = self._name
 
@@ -1899,7 +1908,7 @@ class EnvWizardApp(App[None]):
         )
 
     def _override_get(self, *path: str, default=None):
-        node = self.backend_overrides.get("cadence-flowtool", {})
+        node = self.design_setup
         for key in path:
             if not isinstance(node, dict) or key not in node:
                 return default
@@ -1907,16 +1916,17 @@ class EnvWizardApp(App[None]):
         return node
 
     def _override_set(self, *path: str, value) -> None:
-        """Immutably write `value` at backend.cadence-flowtool.<path> --
+        """Immutably write `value` at <path> inside this design's own
+        setup.<design_name>.yaml content (self.design_setup) --
         rebuilds every dict level touched rather than mutating in place,
-        since self.backend_overrides is a shallow copy of the loaded
-        profile's own dict and must not alias it. Clearing the last
-        value under a nested key (e.g. the only entry in cts.*) prunes
-        that now-empty parent too, rather than leaving a bare `cts: {}`
-        sitting in wolf.yaml."""
-        cadence_flowtool = dict(self.backend_overrides.get("cadence-flowtool", {}))
-        chain = [cadence_flowtool]
-        node = cadence_flowtool
+        since self.design_setup is a shallow copy of the loaded file's
+        own dict and must not alias it. Clearing the last value under a
+        nested key (e.g. the only entry in active_views.*) prunes that
+        now-empty parent too, rather than leaving a bare `active_views:
+        {}` sitting in the file."""
+        design_setup = dict(self.design_setup)
+        chain = [design_setup]
+        node = design_setup
         for key in path[:-1]:
             node[key] = dict(node.get(key, {}))
             node = node[key]
@@ -1928,7 +1938,7 @@ class EnvWizardApp(App[None]):
                     chain[depth - 1].pop(path[depth - 1], None)
         else:
             node[path[-1]] = value
-        self.backend_overrides = {**self.backend_overrides, "cadence-flowtool": cadence_flowtool}
+        self.design_setup = design_setup
 
     async def _edit_cell_pattern_list(
         self, title: str, path: tuple[str, ...], technology, max_items: Optional[int] = None,
@@ -2002,27 +2012,27 @@ class EnvWizardApp(App[None]):
             choice = await self.push_screen_wait(_PickScreen(
                 f"CTS / tie-off / routing cells{unresolved}",
                 [
-                    (f"CTS buffer cells (default) [{count('cts', 'buffer_cells')}]", "buffer_cells"),
-                    (f"CTS buffer cells (top) [{count('cts', 'buffer_cells_top')}]", "buffer_cells_top"),
-                    (f"CTS buffer cells (leaf) [{count('cts', 'buffer_cells_leaf')}]", "buffer_cells_leaf"),
-                    (f"CTS inverter cells (default) [{count('cts', 'inverter_cells')}]", "inverter_cells"),
-                    (f"CTS inverter cells (top) [{count('cts', 'inverter_cells_top')}]", "inverter_cells_top"),
-                    (f"CTS inverter cells (leaf) [{count('cts', 'inverter_cells_leaf')}]", "inverter_cells_leaf"),
-                    (f"CTS clock-gating cells [{count('cts', 'clock_gating_cells')}]", "clock_gating_cells"),
-                    (f"Tie-off cells [{count('tieoffs', 'cells')}]", "tieoffs"),
+                    (f"CTS buffer cells (default) [{count('cts_buffer_cells')}]", "buffer_cells"),
+                    (f"CTS buffer cells (top) [{count('cts_buffer_cells_top')}]", "buffer_cells_top"),
+                    (f"CTS buffer cells (leaf) [{count('cts_buffer_cells_leaf')}]", "buffer_cells_leaf"),
+                    (f"CTS inverter cells (default) [{count('cts_inverter_cells')}]", "inverter_cells"),
+                    (f"CTS inverter cells (top) [{count('cts_inverter_cells_top')}]", "inverter_cells_top"),
+                    (f"CTS inverter cells (leaf) [{count('cts_inverter_cells_leaf')}]", "inverter_cells_leaf"),
+                    (f"CTS clock-gating cells [{count('cts_clock_gating_cells')}]", "clock_gating_cells"),
+                    (f"Tie-off cells [{count('add_tieoffs_cells')}]", "tieoffs"),
                     (f"Active views -- setup [{count('active_views', 'setup')}]", "active_setup"),
                     (f"Active views -- hold [{count('active_views', 'hold')}]", "active_hold"),
                     (f"Clock routing trunk top layer "
-                     f"[{self._override_get('clock_routing', 'types', 'trunk', 'top_preferred_layer') or '-'}]",
+                     f"[{self._override_get('clock_routing_types', 'trunk', 'top_preferred_layer') or '-'}]",
                      "trunk_top"),
                     (f"Clock routing trunk bottom layer "
-                     f"[{self._override_get('clock_routing', 'types', 'trunk', 'bottom_preferred_layer') or '-'}]",
+                     f"[{self._override_get('clock_routing_types', 'trunk', 'bottom_preferred_layer') or '-'}]",
                      "trunk_bottom"),
                     (f"Clock routing leaf top layer "
-                     f"[{self._override_get('clock_routing', 'types', 'leaf', 'top_preferred_layer') or '-'}]",
+                     f"[{self._override_get('clock_routing_types', 'leaf', 'top_preferred_layer') or '-'}]",
                      "leaf_top"),
                     (f"Clock routing leaf bottom layer "
-                     f"[{self._override_get('clock_routing', 'types', 'leaf', 'bottom_preferred_layer') or '-'}]",
+                     f"[{self._override_get('clock_routing_types', 'leaf', 'bottom_preferred_layer') or '-'}]",
                      "leaf_bottom"),
                 ],
             ))
@@ -2030,29 +2040,29 @@ class EnvWizardApp(App[None]):
                 return
             if choice == "buffer_cells":
                 await self._edit_cell_pattern_list(
-                    "CTS buffer cells (default)", ("cts", "buffer_cells"), technology)
+                    "CTS buffer cells (default)", ("cts_buffer_cells",), technology)
             elif choice == "buffer_cells_top":
                 await self._edit_cell_pattern_list(
-                    "CTS buffer cells (top nets)", ("cts", "buffer_cells_top"), technology)
+                    "CTS buffer cells (top nets)", ("cts_buffer_cells_top",), technology)
             elif choice == "buffer_cells_leaf":
                 await self._edit_cell_pattern_list(
-                    "CTS buffer cells (leaf nets)", ("cts", "buffer_cells_leaf"), technology)
+                    "CTS buffer cells (leaf nets)", ("cts_buffer_cells_leaf",), technology)
             elif choice == "inverter_cells":
                 await self._edit_cell_pattern_list(
-                    "CTS inverter cells (default)", ("cts", "inverter_cells"), technology)
+                    "CTS inverter cells (default)", ("cts_inverter_cells",), technology)
             elif choice == "inverter_cells_top":
                 await self._edit_cell_pattern_list(
-                    "CTS inverter cells (top nets)", ("cts", "inverter_cells_top"), technology)
+                    "CTS inverter cells (top nets)", ("cts_inverter_cells_top",), technology)
             elif choice == "inverter_cells_leaf":
                 await self._edit_cell_pattern_list(
-                    "CTS inverter cells (leaf nets)", ("cts", "inverter_cells_leaf"), technology)
+                    "CTS inverter cells (leaf nets)", ("cts_inverter_cells_leaf",), technology)
             elif choice == "clock_gating_cells":
                 await self._edit_cell_pattern_list(
-                    "CTS clock-gating cells", ("cts", "clock_gating_cells"), technology)
+                    "CTS clock-gating cells", ("cts_clock_gating_cells",), technology)
             elif choice == "tieoffs":
                 await self._edit_cell_pattern_list(
                     "Tie-off cells (max 2: one tie-high driver, one tie-low driver)",
-                    ("tieoffs", "cells"), technology, max_items=2,
+                    ("add_tieoffs_cells",), technology, max_items=2,
                 )
             elif choice == "active_setup":
                 await self._edit_view_name_list(
@@ -2063,19 +2073,19 @@ class EnvWizardApp(App[None]):
             elif choice == "trunk_top":
                 await self._edit_preferred_layer(
                     "Clock routing -- trunk top preferred layer",
-                    ("clock_routing", "types", "trunk", "top_preferred_layer"), layers)
+                    ("clock_routing_types", "trunk", "top_preferred_layer"), layers)
             elif choice == "trunk_bottom":
                 await self._edit_preferred_layer(
                     "Clock routing -- trunk bottom preferred layer",
-                    ("clock_routing", "types", "trunk", "bottom_preferred_layer"), layers)
+                    ("clock_routing_types", "trunk", "bottom_preferred_layer"), layers)
             elif choice == "leaf_top":
                 await self._edit_preferred_layer(
                     "Clock routing -- leaf top preferred layer",
-                    ("clock_routing", "types", "leaf", "top_preferred_layer"), layers)
+                    ("clock_routing_types", "leaf", "top_preferred_layer"), layers)
             elif choice == "leaf_bottom":
                 await self._edit_preferred_layer(
                     "Clock routing -- leaf bottom preferred layer",
-                    ("clock_routing", "types", "leaf", "bottom_preferred_layer"), layers)
+                    ("clock_routing_types", "leaf", "bottom_preferred_layer"), layers)
 
     def _edit_power_ground_nets(self) -> None:
         def handle_which(which: Optional[str]) -> None:
@@ -2252,24 +2262,31 @@ class EnvWizardApp(App[None]):
         self.constraint_files = [str(path.resolve())]
 
     def _write_reproducibility_record(self) -> None:
-        """A copy of this environment's own wolf.yaml, placed inside the
-        project tree itself (inputs/env/<design>/) -- so the
+        """A symlink to this environment's own wolf.yaml, placed inside
+        the project tree itself (inputs/env/<design>/) -- so the
         configuration that produced a given project (which RTL, which
         PDK/track/vth, which constraints) is readable right there on
         disk, in the exact spot the legacy ALU_MIPS_32b.src.yaml this was
-        modeled on lived, without needing WOLF's own ~/.wolf/envs/ state
-        directory at all (a colleague who just has the project tree, not
-        WOLF itself configured the same way, can still read it).
-        Overwritten every save, never hand-edited -- wolf.yaml itself
-        stays the one source of truth."""
+        modeled on lived, without needing to know WOLF's own
+        ~/.wolf/envs/ state directory path at all. A symlink (not a
+        copy) means there is exactly one real file -- no risk of the
+        project-tree copy silently going stale relative to the real
+        wolf.yaml an edit actually landed in. Falls back to a plain copy
+        (logged) only where symlinking itself isn't possible (e.g. a
+        filesystem that disallows it) -- recreated every save either
+        way, never hand-edited."""
         if not self.project_root or not self.design_name:
             return
         source = self._path / ENVIRONMENT_FILENAME
         if not source.is_file():
             return
-        destination = Path(self.project_root) / "inputs" / "env" / self.design_name / f"wolf.{self._name}.yaml"
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+        destination = link_environment_file(
+            Path(self.project_root), self.design_name, self._name, source,
+        )
+        if not destination.is_symlink():
+            self.notify(
+                f"Could not symlink {destination} -- wrote a plain copy instead", severity="warning",
+            )
 
     def _save(self, *, close: bool) -> None:
         created: list[Path] = []
@@ -2362,6 +2379,10 @@ class EnvWizardApp(App[None]):
             temporary.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
             load_environment(temporary, expected_name=self._name)
             temporary.replace(target)
+            if self.project_root and self.design_name:
+                write_design_setup(
+                    design_setup_path(Path(self.project_root), self.design_name), self.design_setup,
+                )
         except Exception as error:
             self.notify(f"Could not save environment: {error}", severity="error")
             return

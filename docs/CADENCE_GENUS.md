@@ -127,8 +127,9 @@ one in later means resolving the value in `wolf.environment`/
 are intentionally left as extension points (banner + `wolf_inject_for_step`
 only, same precedent as the reference flow's own `block_start`) rather
 than WOLF fabricating Conformal LEC/CLP dofile syntax or a testbench/
-compile-script shape it has no visibility into. Fill one in via
-`backend.cadence-flowtool.inject.<step>.<pre|post>`, or fork this flow
+compile-script shape it has no visibility into. Fill one in via this
+design's own `setup.<design_name>.yaml` `inject.<step>.<pre|post>` key
+(see "Design-level setup.yaml" below), or fork this flow
 (`wolf flow init`) and write the real command directly.
 
 Still genuinely not modeled anywhere in WOLF's resolved context, and so
@@ -626,15 +627,14 @@ re-runs at the start of every implementation stage -- restored from the
 previous stage's own checkpoint each time, so this is re-applied, not a
 one-time setting) in Innovus too -- simple, but checking every corner
 through every place/CTS/route iteration on a design with several corners
-is far heavier than most implementation stages need.
-`backend.cadence-flowtool.active_views` narrows it:
+is far heavier than most implementation stages need. This design's own
+`setup.<design_name>.yaml` (see "Design-level setup.yaml" below)
+narrows it:
 
 ```yaml
-backend:
-  cadence-flowtool:
-    active_views:
-      setup: [wcl]
-      hold: [bc]
+active_views:
+  setup: [wcl]
+  hold: [bc]
 ```
 
 Either key can be omitted or left an empty list, meaning "every declared
@@ -966,29 +966,60 @@ the same row labels was just duplication. A report can land mid-stage
 columns genuinely can fill in before its own Status does; each column
 stays `-` on its own until that one report exists.
 
+## Design-level setup.yaml
+
+Every knob in this section (CTS cell selection, tie-offs, clock routing,
+active analysis views, Genus `set_db` overrides, post-synthesis netlists,
+injected Tcl) is a **design-level** tuning choice, not an environment-level
+one -- it lives in its own file, not `wolf.yaml`:
+
+```
+<project.root>/inputs/env/<design_name>/setup.<design_name>.yaml
+```
+
+This file is the one place to hand-edit these for quick changes (it is
+plain, native-ish-key YAML -- no `wolf_` prefix, no nesting under
+`backend.cadence-flowtool`), and it is also what `wolf env set`/`wolf env
+unset`/`wolf env menu` write to for exactly these keys -- `wolf.yaml`
+keeps only genuinely environment-level fields (`workspace.root`,
+`design.name`, `technology.*`, `flow.backend`, `constraints.*`,
+`backend.cadence-flowtool.flowtool` for an institution's own Flowtool
+template override). `wolf env set`/`unset` route automatically based on
+the key's first segment -- a design-level key never needs
+`backend.cadence-flowtool.` typed in front of it any more.
+
+Alongside it, in the same `inputs/env/<design_name>/` directory,
+`wolf.<environment_name>.yaml` is a **symlink** to that environment's own
+`wolf.yaml` (kept fresh by `wolf env set`/`unset`/`auto-setup`/`menu`) --
+so the environment-level configuration that produced a given project is
+also readable right there, without needing to know WOLF's own
+`~/.wolf/envs/` state directory path.
+
+At `wolf run`, `prepare_genus_inputs` merges this file's content into the
+real, rendered `setup.yaml` Flowtool actually reads (alongside the
+always-injected catalog data -- see "The Flowtool project descriptor" and
+"Multi-corner (MMMC) technology packages" above) -- so every value below
+is reachable from a project's own injected Tcl via `get_flow_config`, not
+only from WOLF's own bundled flow steps.
+
 ## Genus attribute overrides
 
 Some Genus attributes are tool policy rather than package metadata or
 canonical WOLF semantics, and cannot be inferred from a resolved design
 (for example `hdl_max_memory_address_range`, which caps generic memory
-inference during elaboration). These are supplied explicitly through the
-`backend.cadence-flowtool` escape hatch in `wolf.yaml`:
+inference during elaboration). These are supplied explicitly in this
+design's own `setup.<design_name>.yaml`:
 
 ```yaml
-backend:
-  cadence-flowtool:
-    genus:
-      set_db:
-        hdl_max_memory_address_range: 65536
+genus_set_db:
+  hdl_max_memory_address_range: 65536
 ```
 
 When present, `prepare_genus_inputs` writes `overrides.tcl`; the
 `elaborate` step sources it before HDL is read or the design is elaborated,
 so overrides take effect before Genus touches the design. Override values
 must be scalars (string, number, or boolean); the resolved key/value pairs
-are also recorded in `genus-inputs.yaml` and frozen run provenance. Unknown
-keys under `backend.cadence-flowtool` or `backend.cadence-flowtool.genus`
-are rejected rather than silently ignored.
+are also recorded in `genus-inputs.yaml` and frozen run provenance.
 
 ## CTS cell selection, timing targets, tie-offs, and clock routing
 
@@ -997,24 +1028,20 @@ add_clock_route_types use their own library-wide defaults, unchanged)
 when left unset, and are generic across any technology package -- WOLF
 never hard-codes a cell or layer name; a project supplies its own.
 
-**`backend.cadence-flowtool.cts`** -- CCOpt buffer/inverter/clock-gating
-cell selection and timing targets, applied by a shared `set_cts_config`
-step at the start of both `prects` (before `add_clock_spec`) and `cts`
-(before `CMD_check_design_cts`), since each is a separate Innovus
-invocation restored from a checkpoint and attribute persistence across
-that restore is not documented (see "Settings across implementation
-stages" below):
+**`cts_*`** -- CCOpt buffer/inverter/clock-gating cell selection and
+timing targets, applied by a shared `set_cts_config` step at the start of
+both `prects` (before `add_clock_spec`) and `cts` (before
+`CMD_check_design_cts`), since each is a separate Innovus invocation
+restored from a checkpoint and attribute persistence across that restore
+is not documented (see "Settings across implementation stages" below):
 
 ```yaml
-backend:
-  cadence-flowtool:
-    cts:
-      buffer_cells: ["BUFX*"]           # name or pattern list
-      inverter_cells: ["INVX*"]
-      clock_gating_cells: ["CKGX*"]
-      target_skew: 0.05                 # ns, optional
-      target_max_transition_time: 0.2   # ns, optional
-      max_fanout: 16                    # optional
+cts_buffer_cells: ["BUFX*"]           # name or pattern list
+cts_inverter_cells: ["INVX*"]
+cts_clock_gating_cells: ["CKGX*"]
+cts_target_skew: 0.05                 # ns, optional
+cts_target_max_transition_time: 0.2   # ns, optional
+cts_max_fanout: 16                    # optional
 ```
 
 Cell lists map directly onto Innovus's own `cts_buffer_cells`/
@@ -1025,19 +1052,16 @@ attributes (`is_buffer`, ...) to offer this, and does not (no confirmed
 20.15 reference for those attributes was found; guessing them risked the
 same class of error `genus_turn_on_analysis_views`'s `.active` bug was).
 
-**`backend.cadence-flowtool.tieoffs`** -- resolves `add_tieoffs_cells`
-(at most two: one tie-high driver, one tie-low driver, man 20.15) and its
-companion attributes, applied inside the existing `add_tieoffs` step
-right before its own `[get_db add_tieoffs_cells] ne ""` guard:
+**`add_tieoffs_*`** -- resolves `add_tieoffs_cells` (at most two: one
+tie-high driver, one tie-low driver, man 20.15) and its companion
+attributes, applied inside the existing `add_tieoffs` step right before
+its own `[get_db add_tieoffs_cells] ne ""` guard:
 
 ```yaml
-backend:
-  cadence-flowtool:
-    tieoffs:
-      cells: ["TIEHIX1", "TIELOX1"]
-      honor_dont_use: true   # optional
-      max_fanout: 10         # optional
-      max_distance: 20.0     # optional, microns
+add_tieoffs_cells: ["TIEHIX1", "TIELOX1"]
+add_tieoffs_honor_dont_use: true   # optional
+add_tieoffs_max_fanout: 10         # optional
+add_tieoffs_max_distance: 20.0     # optional, microns
 ```
 
 Left unset, `add_tieoffs` stays a no-op, same as before this existed --
@@ -1055,21 +1079,16 @@ instances -- `add_tieoffs` is what actually inserts the driver cells for
 synthesis's own literal constants, and should (and does, in the bundled
 flow order) run after the floorplan script's own global net connections.
 
-**`backend.cadence-flowtool.clock_routing`** -- a non-default routing
-rule and top/trunk/leaf route types for `add_clock_route_types`
-(`CMD_set_cong_aware`'s sibling extension point in the `prects` flow,
-previously always empty):
+**`clock_routing_*`** -- a non-default routing rule and top/trunk/leaf
+route types for `add_clock_route_types` (`CMD_set_cong_aware`'s sibling
+extension point in the `prects` flow, previously always empty):
 
 ```yaml
-backend:
-  cadence-flowtool:
-    clock_routing:
-      rule:
-        width_multiplier: {"M6:M5": 2.0}
-        spacing_multiplier: {"M6:M5": 2.0}
-      types:
-        trunk: {route_rule: true, top_preferred_layer: M6, bottom_preferred_layer: M5}
-        leaf: {route_rule: true, top_preferred_layer: M4, bottom_preferred_layer: M3}
+clock_routing_width_multiplier: {"M6:M5": 2.0}
+clock_routing_spacing_multiplier: {"M6:M5": 2.0}
+clock_routing_types:
+  trunk: {route_rule: true, top_preferred_layer: M6, bottom_preferred_layer: M5}
+  leaf: {route_rule: true, top_preferred_layer: M4, bottom_preferred_layer: M3}
 ```
 
 Maps directly onto `create_route_rule -width_multiplier/-spacing_multiplier`
@@ -1131,50 +1150,49 @@ No technology selected, or its files aren't readable, falls back to free
 text everywhere above -- the picker never blocks on something it can't
 resolve.
 
-**Where this is stored**: exactly the same `wolf.yaml` keys documented
-above (`backend.cadence-flowtool.{cts,tieoffs,clock_routing,
-active_views}`) -- the menu is a UI onto that same schema, not a parallel
-mechanism, so hand-editing and the menu round-trip through each other.
-Nothing from the library itself -- no file path, no LEF/liberty content
--- ever reaches `wolf.yaml`, the repo, or any other project file: only
-the cell/layer/view *names* you actually picked. The extracted name
-list itself is cached once per resolved technology under WOLF's own
-state directory (`~/.wolf/cache/cells/`, or wherever `WOLF_HOME`
-points), keyed by the technology's package/revision/track/vth/metal
-stack identity plus each LEF file's own mtime, so re-opening the picker
-later filters an already-scanned list instead of re-reading real files
-every time; a PDK update (a file's mtime changing) invalidates it
-automatically.
+**Where this is stored**: exactly the same `setup.<design_name>.yaml`
+keys documented above (`cts_*`, `add_tieoffs_*`, `clock_routing_*`,
+`active_views`) -- the menu is a UI onto that same schema, not a
+parallel mechanism, so hand-editing the file and the menu round-trip
+through each other. Nothing from the library itself -- no file path, no
+LEF/liberty content -- ever reaches `setup.<design_name>.yaml`, the
+repo, or any other project file: only the cell/layer/view *names* you
+actually picked. The extracted name list itself is cached once per
+resolved technology under WOLF's own state directory
+(`~/.wolf/cache/cells/`, or wherever `WOLF_HOME` points), keyed by the
+technology's package/revision/track/vth/metal stack identity plus each
+LEF file's own mtime, so re-opening the picker later filters an
+already-scanned list instead of re-reading real files every time; a PDK
+update (a file's mtime changing) invalidates it automatically.
 
 **Scriptable equivalent** (non-interactive, e.g. for an institution's
-own setup scripts): `wolf env set <name> <dotted.key> <yaml-value>`
-already supports exactly this schema, since it writes to an arbitrary
-structured path in the same `wolf.yaml`:
+own setup scripts): `wolf env set <name> <key> <yaml-value>` routes a
+design-level key straight to `setup.<design_name>.yaml`, no
+`backend.cadence-flowtool.` prefix and no pre-existing intermediate
+mapping needed (unlike an environment-level `wolf.yaml` key, this one
+writes a flat top-level key into a file WOLF creates on first use):
 
 ```bash
-wolf env set myenv backend.cadence-flowtool.cts.buffer_cells '["BUFX*"]'
-wolf env set myenv backend.cadence-flowtool.tieoffs.cells '["TIEHIX1", "TIELOX1"]'
+wolf env set myenv cts_buffer_cells '["BUFX*"]'
+wolf env set myenv add_tieoffs_cells '["TIEHIX1", "TIELOX1"]'
+wolf env unset myenv add_tieoffs_cells
 ```
 
-One real caveat, confirmed directly: `wolf env set` requires *every*
-intermediate key in the dotted path to already exist as a mapping (it
-edits a value in place, not create-or-update) -- `backend`,
-`backend.cadence-flowtool`, and `backend.cadence-flowtool.cts` must each
-already be present before `wolf env set ... backend.cadence-flowtool.cts.
-buffer_cells ...` can reach that deep. A brand-new environment with no
-`backend:` key at all needs each level seeded first, one `wolf env set`
-call per level (or the menu once) -- scripting a fresh environment from
-nothing needs that in mind.
+A nested key (e.g. `active_views.setup`) still requires each intermediate
+*segment* to resolve to a mapping once it exists, but the top-level key
+itself does not need seeding first the way a fresh `wolf.yaml`'s
+`backend.cadence-flowtool.*` once did.
 
 ### Active analysis views apply uniformly, not yet per stage
 
-`backend.cadence-flowtool.active_views` (see "Multi-corner (MMMC)
-technology packages" above) applies the same setup/hold view selection to
-every implementation stage. A project wanting a narrow view set through
-`prects`..`postcts` and every declared view again at `route`/`postroute`
-has to edit `wolf.yaml` between stages today; per-stage selection (e.g. a
-mapping keyed by stage name, falling back to the global value) is a real,
-reasonably-sized follow-up, not implemented yet.
+This design's `setup.<design_name>.yaml` `active_views` key (see
+"Multi-corner (MMMC) technology packages" above) applies the same
+setup/hold view selection to every implementation stage. A project
+wanting a narrow view set through `prects`..`postcts` and every declared
+view again at `route`/`postroute` has to edit `setup.<design_name>.yaml`
+between stages today; per-stage selection (e.g. a mapping keyed by stage
+name, falling back to the global value) is a real, reasonably-sized
+follow-up, not implemented yet.
 
 ### Settings across implementation stages
 

@@ -12,6 +12,9 @@ import tempfile
 
 import yaml
 
+from wolf.backend.cadence_genus_setup import (
+    DESIGN_SETUP_ALLOWED_KEYS, design_setup_path, set_design_setup_value,
+)
 from wolf.commands.common import resolve_environment_name
 from wolf.environment import (
     ENVIRONMENT_FILENAME, environment_manifest, load_environment, normalize_environment,
@@ -19,7 +22,9 @@ from wolf.environment import (
 )
 from wolf.legacy import LegacyCommandError, run_env
 from wolf.paths import environments_dir
-from wolf.project_tree import PER_DESIGN_INPUT_CATEGORIES, SHARED_LIB_SUBDIRS, scaffold_project_tree
+from wolf.project_tree import (
+    PER_DESIGN_INPUT_CATEGORIES, SHARED_LIB_SUBDIRS, link_environment_file, scaffold_project_tree,
+)
 from wolf import ui
 
 
@@ -131,12 +136,59 @@ def command_remove(args: argparse.Namespace) -> int:
     return 0
 
 
+def _project_root_and_design_name(manifest: Path, name: str) -> tuple[Path, str]:
+    """Resolve an environment's project.root + design name the same
+    lightweight way `wolf env auto-setup` already does (profile_semantics,
+    not a full ResolvedContext -- no package install required just to set
+    a design-level knob or refresh the inputs/env/ reproducibility link)."""
+    profile = load_environment(manifest, expected_name=name)
+    if not profile.project_root:
+        raise ValueError(
+            f"environment {name!r} has no project.root configured; "
+            "add `project: {root: /path/to/project}` to its wolf.yaml first"
+        )
+    project_root = resolve_stored_path(profile.project_root, profile.path.parent)
+    design_name = profile_semantics(profile)["design"]
+    if not design_name:
+        raise ValueError(
+            f"environment {name!r} has no resolvable design name yet; "
+            "set `design: {name: ...}` or `design: {package: rtl/...}` first"
+        )
+    return project_root, design_name
+
+
+def _design_setup_path_for_environment(manifest: Path, name: str) -> Path:
+    project_root, design_name = _project_root_and_design_name(manifest, name)
+    return design_setup_path(project_root, design_name)
+
+
+def _sync_reproducibility_link(manifest: Path, name: str) -> None:
+    """Keep inputs/env/<design>/wolf.<name>.yaml pointed at this
+    environment's own wolf.yaml after any `wolf env set`/`unset` -- same
+    link `wolf env menu`'s own save already maintains. Project root or
+    design name not (yet) resolvable just means there is nothing to link
+    yet, not a failed set/unset."""
+    try:
+        project_root, design_name = _project_root_and_design_name(manifest, name)
+    except ValueError:
+        return
+    link_environment_file(project_root, design_name, name, manifest)
+
+
 def command_set(args: argparse.Namespace) -> int:
     name = resolve_environment_name(args.name)
     path = _existing_environment(name)
     manifest = path / ENVIRONMENT_FILENAME
     if manifest.is_file():
+        key_root = args.key.split(".", 1)[0]
+        if key_root in DESIGN_SETUP_ALLOWED_KEYS:
+            setup_path = _design_setup_path_for_environment(manifest, name)
+            set_design_setup_value(setup_path, args.key, yaml.safe_load(args.value))
+            _sync_reproducibility_link(manifest, name)
+            ui.success(f"Set {args.key} in {setup_path}")
+            return 0
         _set_declarative_value(manifest, args.key, args.value, name)
+        _sync_reproducibility_link(manifest, name)
         ui.success(f"Set {args.key} in WOLF environment {name!r}")
         return 0
     if not _VARIABLE_NAME.fullmatch(args.key):
@@ -200,6 +252,69 @@ def _set_declarative_value(path: Path, key: str, raw_value: str, name: str) -> N
             temporary.unlink()
 
 
+def _unset_declarative_value(path: Path, key: str, name: str) -> None:
+    """Remove one dotted key from wolf.yaml, pruning now-empty parent
+    mappings -- the wolf.yaml-side counterpart to `_set_declarative_value`,
+    same atomic write pattern. A key, or any segment of its path, that
+    simply isn't set is a no-op, not an error (mirrors
+    cadence_genus_setup.set_design_setup_value's own unset semantics)."""
+    if key in {"schema", "name"}:
+        raise ValueError(f"wolf env unset cannot remove {key}")
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    parts = _structured_parts(key)
+    chain: list = [data]
+    node = data
+    for part in parts[:-1]:
+        if isinstance(part, int):
+            if not isinstance(node, list) or part >= len(node):
+                return
+        elif not isinstance(node, dict) or part not in node:
+            return
+        node = node[part]
+        chain.append(node)
+    final = parts[-1]
+    if isinstance(final, int):
+        if isinstance(node, list) and final < len(node):
+            del node[final]
+    elif isinstance(node, dict):
+        node.pop(final, None)
+    for index in range(len(chain) - 1, 0, -1):
+        if isinstance(chain[index], dict) and not chain[index]:
+            parent = chain[index - 1]
+            if isinstance(parent, dict):
+                parent.pop(parts[index - 1], None)
+    temporary = path.with_suffix(".yaml.tmp")
+    temporary.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+    try:
+        load_environment(temporary, expected_name=name)
+        temporary.replace(path)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+
+
+def command_unset(args: argparse.Namespace) -> int:
+    name = resolve_environment_name(args.name)
+    path = _existing_environment(name)
+    manifest = path / ENVIRONMENT_FILENAME
+    if not manifest.is_file():
+        raise ValueError(
+            "wolf env unset supports declarative-v1 environments only; "
+            "edit the legacy vars.env file directly to remove a legacy variable"
+        )
+    key_root = args.key.split(".", 1)[0]
+    if key_root in DESIGN_SETUP_ALLOWED_KEYS:
+        setup_path = _design_setup_path_for_environment(manifest, name)
+        set_design_setup_value(setup_path, args.key, None)
+        _sync_reproducibility_link(manifest, name)
+        ui.success(f"Unset {args.key} in {setup_path}")
+        return 0
+    _unset_declarative_value(manifest, args.key, name)
+    _sync_reproducibility_link(manifest, name)
+    ui.success(f"Unset {args.key} in WOLF environment {name!r}")
+    return 0
+
+
 def command_clone(args: argparse.Namespace) -> int:
     source = _existing_environment(resolve_environment_name(args.source))
     destination = _environment_path(args.destination)
@@ -260,6 +375,7 @@ def command_auto_setup(args: argparse.Namespace) -> int:
     for shared in SHARED_LIB_SUBDIRS:
         planned.append(project_root / "inputs" / "lib" / shared)
     created = set(scaffold_project_tree(project_root, design_name))
+    link_environment_file(project_root, design_name, name, manifest)
 
     for path in planned:
         relative = path.relative_to(project_root) if path != project_root else Path(".")
@@ -308,6 +424,17 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     set_parser.add_argument("value")
     set_parser.set_defaults(
         handler=command_set,
+        ui_kind="env",
+        ui_section="Environment update",
+    )
+
+    unset_parser = commands.add_parser(
+        "unset", help="remove an environment variable or design-level setup.yaml key"
+    )
+    unset_parser.add_argument("name", nargs="?", help="defaults to the active environment")
+    unset_parser.add_argument("key")
+    unset_parser.set_defaults(
+        handler=command_unset,
         ui_kind="env",
         ui_section="Environment update",
     )

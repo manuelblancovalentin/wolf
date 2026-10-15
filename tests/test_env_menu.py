@@ -9,6 +9,7 @@ import yaml
 from textual.app import App
 from textual.widgets import Input, OptionList, Static
 
+from wolf.backend.cadence_genus_setup import design_setup_path
 from wolf.env_menu import EnvWizardApp, _BrowseScreen, _scan_modules
 
 
@@ -597,10 +598,14 @@ class EnvWizardEndToEndTests(unittest.TestCase):
         document = yaml.safe_load((self.state / "envs" / "smoketest7" / "wolf.yaml").read_text(encoding="utf-8"))
         self.assertEqual(document["constraints"], {"files": [str(sdc_path.resolve())]})
 
-        # A copy of the saved wolf.yaml itself lands inside the project
-        # tree, readable without ~/.wolf/envs/ at all.
+        # A symlink to the saved wolf.yaml itself lands inside the
+        # project tree, readable without ~/.wolf/envs/ at all.
         record_path = existing_root / "inputs" / "env" / "newdesign" / "wolf.smoketest7.yaml"
         self.assertTrue(record_path.is_file())
+        self.assertTrue(record_path.is_symlink())
+        self.assertEqual(
+            record_path.resolve(), (self.state / "envs" / "smoketest7" / "wolf.yaml").resolve(),
+        )
         self.assertEqual(
             yaml.safe_load(record_path.read_text(encoding="utf-8")),
             document,
@@ -672,6 +677,10 @@ class CadenceCellBrowserTests(unittest.TestCase):
         self.variables.stop()
         self.temporary.cleanup()
 
+    def _design_setup(self) -> dict:
+        path = design_setup_path(self.root / "project", "demo")
+        return yaml.safe_load(path.read_text(encoding="utf-8")) if path.is_file() else {}
+
     def _register_pdk(self):
         manifest = {
             "schema_version": 1, "kind": "pdk", "name": "fakecells", "description": "fakecells",
@@ -739,11 +748,8 @@ class CadenceCellBrowserTests(unittest.TestCase):
                 await pilot.press("s")
                 await pilot.pause()
         asyncio.run(drive())
-        saved = yaml.safe_load((self.env_dir / "wolf.yaml").read_text(encoding="utf-8"))
-        self.assertEqual(
-            sorted(saved["backend"]["cadence-flowtool"]["cts"]["buffer_cells"]),
-            ["FAKEBUFX2", "FAKEBUFX4"],
-        )
+        setup = self._design_setup()
+        self.assertEqual(sorted(setup["cts_buffer_cells"]), ["FAKEBUFX2", "FAKEBUFX4"])
 
     def test_toggling_one_entry_by_hand_stores_just_that_one(self):
         async def drive():
@@ -765,8 +771,7 @@ class CadenceCellBrowserTests(unittest.TestCase):
                 await pilot.press("s")
                 await pilot.pause()
         asyncio.run(drive())
-        saved = yaml.safe_load((self.env_dir / "wolf.yaml").read_text(encoding="utf-8"))
-        self.assertEqual(saved["backend"]["cadence-flowtool"]["cts"]["inverter_cells"], ["FAKEINVX1"])
+        self.assertEqual(self._design_setup()["cts_inverter_cells"], ["FAKEINVX1"])
 
     def test_deselect_all_clears_the_visible_selection(self):
         async def drive():
@@ -785,8 +790,7 @@ class CadenceCellBrowserTests(unittest.TestCase):
                 await pilot.press("s")
                 await pilot.pause()
         asyncio.run(drive())
-        saved = yaml.safe_load((self.env_dir / "wolf.yaml").read_text(encoding="utf-8"))
-        self.assertNotIn("cts", saved.get("backend", {}).get("cadence-flowtool", {}))
+        self.assertNotIn("cts_clock_gating_cells", self._design_setup())
 
     def test_a_filter_matching_nothing_shows_no_matches_and_nothing_is_selectable(self):
         async def drive():
@@ -802,8 +806,7 @@ class CadenceCellBrowserTests(unittest.TestCase):
                 await pilot.pause()
         asyncio.run(drive())
         # Nothing was selected (no matches to select) -- cts never appears.
-        saved = yaml.safe_load((self.env_dir / "wolf.yaml").read_text(encoding="utf-8"))
-        self.assertNotIn("cts", saved.get("backend", {}).get("cadence-flowtool", {}))
+        self.assertNotIn("cts_buffer_cells", self._design_setup())
 
     def test_tieoff_cells_are_capped_at_two(self):
         async def drive():
@@ -832,10 +835,8 @@ class CadenceCellBrowserTests(unittest.TestCase):
                 await pilot.press("s")
                 await pilot.pause()
         asyncio.run(drive())
-        saved = yaml.safe_load((self.env_dir / "wolf.yaml").read_text(encoding="utf-8"))
         self.assertEqual(
-            sorted(saved["backend"]["cadence-flowtool"]["tieoffs"]["cells"]),
-            ["FAKETIEHIX1", "FAKETIELOX1"],
+            sorted(self._design_setup()["add_tieoffs_cells"]), ["FAKETIEHIX1", "FAKETIELOX1"],
         )
 
     def test_clock_routing_preferred_layer_is_picked_from_resolved_layers(self):
@@ -860,10 +861,8 @@ class CadenceCellBrowserTests(unittest.TestCase):
                 await pilot.press("s")
                 await pilot.pause()
         asyncio.run(drive())
-        saved = yaml.safe_load((self.env_dir / "wolf.yaml").read_text(encoding="utf-8"))
         self.assertEqual(
-            saved["backend"]["cadence-flowtool"]["clock_routing"]["types"]["trunk"]["top_preferred_layer"],
-            "FAKEM2",
+            self._design_setup()["clock_routing_types"]["trunk"]["top_preferred_layer"], "FAKEM2",
         )
 
 

@@ -13,6 +13,7 @@ from wolf.backend.cadence_genus import (
     _extract_step_bodies, _period_ns, _tcl_quote, bundled_flow_digest, flow_descendant_steps,
     flow_step_digests, prepare_genus_inputs,
 )
+from wolf.backend.cadence_genus_setup import design_setup_path, write_design_setup
 from wolf.context import (
     CatalogFileList, CatalogLibrarySet, ResolvedContext, ResolvedSource, ResolvedTechnology,
     ResolvedTimingCorner,
@@ -111,6 +112,19 @@ class GenusFixtureTestCase(unittest.TestCase):
         )
         fields.update(overrides)
         return ResolvedContext(**fields)
+
+    def _design_setup(self, data: dict, *, design_name: str = "demo", **context_overrides):
+        """Write this design's setup.<design_name>.yaml (cts/tieoffs/
+        clock_routing/active_views/genus_set_db/postsyn_netlists/inject --
+        the design-level knobs _design_setup in cadence_genus.py reads),
+        then return a context with project_root pointed at it. Replaces
+        the old backend_overrides={"cadence-flowtool": {...}} fixture
+        style now that those keys live in this file instead of
+        wolf.yaml."""
+        write_design_setup(design_setup_path(self.root, design_name), data)
+        return self._context(
+            project_root=self.root, design_name=design_name, **context_overrides,
+        )
 
 
 class GenusFlowtoolTemplateTests(GenusFixtureTestCase):
@@ -410,11 +424,8 @@ class GenusSetDbOverrideTests(GenusFixtureTestCase):
         self.assertEqual(manifest["genus_overrides"], {})
 
     def test_set_db_override_is_emitted_and_referenced(self):
-        overrides = {"genus": {"set_db": {"hdl_max_memory_address_range": 65536}}}
         inputs = prepare_genus_inputs(
-            self._context(backend_overrides={"cadence-flowtool": {
-                **self.flowtool_overrides["cadence-flowtool"], **overrides,
-            }}),
+            self._design_setup({"genus_set_db": {"hdl_max_memory_address_range": 65536}}),
             self.root / "backend" / "cadence-genus",
         )
         self.assertIsNotNone(inputs.overrides_script)
@@ -426,12 +437,9 @@ class GenusSetDbOverrideTests(GenusFixtureTestCase):
         self.assertEqual(manifest["genus_overrides"], {"hdl_max_memory_address_range": 65536})
 
     def test_string_and_boolean_overrides_are_quoted_correctly(self):
-        overrides = {"genus": {"set_db": {
-            "hdl_unconnected_value": "0", "hdl_delete_transparent_latch": False,
-        }}}
         inputs = prepare_genus_inputs(
-            self._context(backend_overrides={"cadence-flowtool": {
-                **self.flowtool_overrides["cadence-flowtool"], **overrides,
+            self._design_setup({"genus_set_db": {
+                "hdl_unconnected_value": "0", "hdl_delete_transparent_latch": False,
             }}),
             self.root / "backend" / "cadence-genus",
         )
@@ -448,21 +456,10 @@ class GenusSetDbOverrideTests(GenusFixtureTestCase):
                 self.root / "backend" / "cadence-genus",
             )
 
-    def test_unknown_genus_override_key_is_rejected(self):
-        with self.assertRaisesRegex(ValueError, "unsupported backend.cadence-flowtool.genus override"):
-            prepare_genus_inputs(
-                self._context(backend_overrides={"cadence-flowtool": {
-                    **self.flowtool_overrides["cadence-flowtool"], "genus": {"bogus": {}},
-                }}),
-                self.root / "backend" / "cadence-genus",
-            )
-
     def test_non_scalar_set_db_value_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "must be scalar"):
             prepare_genus_inputs(
-                self._context(backend_overrides={"cadence-flowtool": {
-                    **self.flowtool_overrides["cadence-flowtool"], "genus": {"set_db": {"bad": [1, 2]}},
-                }}),
+                self._design_setup({"genus_set_db": {"bad": [1, 2]}}),
                 self.root / "backend" / "cadence-genus",
             )
 
@@ -475,10 +472,7 @@ class GenusPostsynNetlistAndInjectOverrideTests(GenusFixtureTestCase):
 
     def test_postsyn_netlists_are_resolved_into_flow_config(self):
         inputs = prepare_genus_inputs(
-            self._context(backend_overrides={"cadence-flowtool": {
-                **self.flowtool_overrides["cadence-flowtool"],
-                "postsyn_netlists": ["/tiles/lut4ab.v"],
-            }}),
+            self._design_setup({"postsyn_netlists": ["/tiles/lut4ab.v"]}),
             self.root / "backend" / "cadence-genus",
         )
         flow_config = inputs.flow_config_script.read_text(encoding="utf-8")
@@ -487,9 +481,7 @@ class GenusPostsynNetlistAndInjectOverrideTests(GenusFixtureTestCase):
     def test_non_list_postsyn_netlists_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "postsyn_netlists must be a list"):
             prepare_genus_inputs(
-                self._context(backend_overrides={"cadence-flowtool": {
-                    **self.flowtool_overrides["cadence-flowtool"], "postsyn_netlists": "not-a-list",
-                }}),
+                self._design_setup({"postsyn_netlists": "not-a-list"}),
                 self.root / "backend" / "cadence-genus",
             )
 
@@ -500,10 +492,9 @@ class GenusPostsynNetlistAndInjectOverrideTests(GenusFixtureTestCase):
 
     def test_inject_snippets_are_resolved_into_flow_config(self):
         inputs = prepare_genus_inputs(
-            self._context(backend_overrides={"cadence-flowtool": {
-                **self.flowtool_overrides["cadence-flowtool"],
+            self._design_setup({
                 "inject": {"elaborate": {"post": ["/tmp/after.tcl", "puts {hi}"]}},
-            }}),
+            }),
             self.root / "backend" / "cadence-genus",
         )
         flow_config = inputs.flow_config_script.read_text(encoding="utf-8")
@@ -552,10 +543,7 @@ class GenusPostsynNetlistAndInjectOverrideTests(GenusFixtureTestCase):
     def test_inject_with_unknown_phase_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "must only set pre/post"):
             prepare_genus_inputs(
-                self._context(backend_overrides={"cadence-flowtool": {
-                    **self.flowtool_overrides["cadence-flowtool"],
-                    "inject": {"init_elaborate": {"mid": ["x"]}},
-                }}),
+                self._design_setup({"inject": {"init_elaborate": {"mid": ["x"]}}}),
                 self.root / "backend" / "cadence-genus",
             )
 
@@ -889,15 +877,12 @@ class GenusActiveViewsTests(GenusFixtureTestCase):
 
     def test_setup_and_hold_views_are_resolved_into_flow_config(self):
         inputs = prepare_genus_inputs(
-            self._context(
+            self._design_setup(
+                {"active_views": {"setup": ["worst_case"], "hold": ["typical"]}},
                 technology=ResolvedTechnology(
                     package="pdk/demo", revision="1", name="demo", root=self.root,
                     timing_corners=self._corners(),
                 ),
-                backend_overrides={"cadence-flowtool": {
-                    **self.flowtool_overrides["cadence-flowtool"],
-                    "active_views": {"setup": ["worst_case"], "hold": ["typical"]},
-                }},
             ),
             self.root / "backend" / "cadence-genus",
         )
@@ -908,26 +893,20 @@ class GenusActiveViewsTests(GenusFixtureTestCase):
     def test_a_view_name_not_declared_by_the_technology_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "names undeclared view"):
             prepare_genus_inputs(
-                self._context(
+                self._design_setup(
+                    {"active_views": {"setup": ["nope"]}},
                     technology=ResolvedTechnology(
                         package="pdk/demo", revision="1", name="demo", root=self.root,
                         timing_corners=self._corners(),
                     ),
-                    backend_overrides={"cadence-flowtool": {
-                        **self.flowtool_overrides["cadence-flowtool"],
-                        "active_views": {"setup": ["nope"]},
-                    }},
                 ),
                 self.root / "backend" / "cadence-genus",
             )
 
     def test_unsupported_active_views_key_is_rejected(self):
-        with self.assertRaisesRegex(ValueError, "unsupported backend.cadence-flowtool.active_views key"):
+        with self.assertRaisesRegex(ValueError, "unsupported active_views key"):
             prepare_genus_inputs(
-                self._context(backend_overrides={"cadence-flowtool": {
-                    **self.flowtool_overrides["cadence-flowtool"],
-                    "active_views": {"bogus": []},
-                }}),
+                self._design_setup({"active_views": {"bogus": []}}),
                 self.root / "backend" / "cadence-genus",
             )
 
@@ -1049,14 +1028,11 @@ class GenusCtsCellTests(GenusFixtureTestCase):
 
     def test_resolved_cells_and_targets_are_written_into_flow_config(self):
         inputs = prepare_genus_inputs(
-            self._context(backend_overrides={"cadence-flowtool": {
-                **self.flowtool_overrides["cadence-flowtool"],
-                "cts": {
-                    "buffer_cells": ["BUFX*"], "inverter_cells": ["INVX*"],
-                    "clock_gating_cells": ["CKGX*"], "target_skew": 0.05,
-                    "target_max_transition_time": 0.2, "max_fanout": 16,
-                },
-            }}),
+            self._design_setup({
+                "cts_buffer_cells": ["BUFX*"], "cts_inverter_cells": ["INVX*"],
+                "cts_clock_gating_cells": ["CKGX*"], "cts_target_skew": 0.05,
+                "cts_target_max_transition_time": 0.2, "cts_max_fanout": 16,
+            }),
             self.root / "backend" / "cadence-genus",
         )
         flow_config = inputs.flow_config_script.read_text(encoding="utf-8")
@@ -1069,13 +1045,10 @@ class GenusCtsCellTests(GenusFixtureTestCase):
 
     def test_top_and_leaf_cell_variants_are_written_into_flow_config(self):
         inputs = prepare_genus_inputs(
-            self._context(backend_overrides={"cadence-flowtool": {
-                **self.flowtool_overrides["cadence-flowtool"],
-                "cts": {
-                    "buffer_cells_top": ["BUFTOPX*"], "buffer_cells_leaf": ["BUFLEAFX*"],
-                    "inverter_cells_top": ["INVTOPX*"], "inverter_cells_leaf": ["INVLEAFX*"],
-                },
-            }}),
+            self._design_setup({
+                "cts_buffer_cells_top": ["BUFTOPX*"], "cts_buffer_cells_leaf": ["BUFLEAFX*"],
+                "cts_inverter_cells_top": ["INVTOPX*"], "cts_inverter_cells_leaf": ["INVLEAFX*"],
+            }),
             self.root / "backend" / "cadence-genus",
         )
         flow_config = inputs.flow_config_script.read_text(encoding="utf-8")
@@ -1085,21 +1058,16 @@ class GenusCtsCellTests(GenusFixtureTestCase):
         self.assertIn("set wolf_cts_inverter_cells_leaf {INVLEAFX*}", flow_config)
 
     def test_unsupported_cts_key_is_rejected(self):
-        with self.assertRaisesRegex(ValueError, "unsupported backend.cadence-flowtool.cts key"):
+        with self.assertRaisesRegex(ValueError, "unsupported setup.yaml key"):
             prepare_genus_inputs(
-                self._context(backend_overrides={"cadence-flowtool": {
-                    **self.flowtool_overrides["cadence-flowtool"], "cts": {"bogus": []},
-                }}),
+                self._design_setup({"bogus": []}),
                 self.root / "backend" / "cadence-genus",
             )
 
     def test_target_skew_must_be_a_number(self):
-        with self.assertRaisesRegex(ValueError, "cts.target_skew must be a number"):
+        with self.assertRaisesRegex(ValueError, "cts_target_skew must be a number"):
             prepare_genus_inputs(
-                self._context(backend_overrides={"cadence-flowtool": {
-                    **self.flowtool_overrides["cadence-flowtool"],
-                    "cts": {"target_skew": "fast"},
-                }}),
+                self._design_setup({"cts_target_skew": "fast"}),
                 self.root / "backend" / "cadence-genus",
             )
 
@@ -1149,13 +1117,10 @@ class GenusTieoffTests(GenusFixtureTestCase):
 
     def test_resolved_cells_are_written_into_flow_config(self):
         inputs = prepare_genus_inputs(
-            self._context(backend_overrides={"cadence-flowtool": {
-                **self.flowtool_overrides["cadence-flowtool"],
-                "tieoffs": {
-                    "cells": ["TIEHIX1", "TIELOX1"], "honor_dont_use": True,
-                    "max_fanout": 10, "max_distance": 20.0,
-                },
-            }}),
+            self._design_setup({
+                "add_tieoffs_cells": ["TIEHIX1", "TIELOX1"], "add_tieoffs_honor_dont_use": True,
+                "add_tieoffs_max_fanout": 10, "add_tieoffs_max_distance": 20.0,
+            }),
             self.root / "backend" / "cadence-genus",
         )
         flow_config = inputs.flow_config_script.read_text(encoding="utf-8")
@@ -1167,10 +1132,7 @@ class GenusTieoffTests(GenusFixtureTestCase):
     def test_more_than_two_cells_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "at most two cells"):
             prepare_genus_inputs(
-                self._context(backend_overrides={"cadence-flowtool": {
-                    **self.flowtool_overrides["cadence-flowtool"],
-                    "tieoffs": {"cells": ["A", "B", "C"]},
-                }}),
+                self._design_setup({"add_tieoffs_cells": ["A", "B", "C"]}),
                 self.root / "backend" / "cadence-genus",
             )
 
@@ -1198,20 +1160,16 @@ class GenusClockRoutingTests(GenusFixtureTestCase):
 
     def test_resolved_rule_and_types_are_written_into_flow_config(self):
         inputs = prepare_genus_inputs(
-            self._context(backend_overrides={"cadence-flowtool": {
-                **self.flowtool_overrides["cadence-flowtool"],
-                "clock_routing": {
-                    "rule": {
-                        "width_multiplier": {"M6:M5": 2.0}, "spacing_multiplier": {"M6:M5": 2.0},
-                    },
-                    "types": {
-                        "trunk": {"route_rule": True, "top_preferred_layer": "M6",
-                                  "bottom_preferred_layer": "M5"},
-                        "leaf": {"route_rule": True, "top_preferred_layer": "M4",
-                                 "bottom_preferred_layer": "M3"},
-                    },
+            self._design_setup({
+                "clock_routing_width_multiplier": {"M6:M5": 2.0},
+                "clock_routing_spacing_multiplier": {"M6:M5": 2.0},
+                "clock_routing_types": {
+                    "trunk": {"route_rule": True, "top_preferred_layer": "M6",
+                              "bottom_preferred_layer": "M5"},
+                    "leaf": {"route_rule": True, "top_preferred_layer": "M4",
+                             "bottom_preferred_layer": "M3"},
                 },
-            }}),
+            }),
             self.root / "backend" / "cadence-genus",
         )
         flow_config = inputs.flow_config_script.read_text(encoding="utf-8")
@@ -1226,12 +1184,9 @@ class GenusClockRoutingTests(GenusFixtureTestCase):
         )
 
     def test_unsupported_route_type_name_is_rejected(self):
-        with self.assertRaisesRegex(ValueError, "unsupported backend.cadence-flowtool.clock_routing.types key"):
+        with self.assertRaisesRegex(ValueError, "unsupported clock_routing_types key"):
             prepare_genus_inputs(
-                self._context(backend_overrides={"cadence-flowtool": {
-                    **self.flowtool_overrides["cadence-flowtool"],
-                    "clock_routing": {"types": {"bogus": {}}},
-                }}),
+                self._design_setup({"clock_routing_types": {"bogus": {}}}),
                 self.root / "backend" / "cadence-genus",
             )
 
@@ -1849,17 +1804,14 @@ class GenusTclListQuotingTests(GenusFixtureTestCase):
         elements, with no residual quote or brace characters in any
         element."""
         inputs = prepare_genus_inputs(
-            self._context(
+            self._design_setup(
+                {"add_tieoffs_cells": ["TIE[HI]"]},
                 technology=ResolvedTechnology(
                     package="pdk/demo", revision="1", name="demo", root=self.root,
                     timing_corners=self._corners(),
                 ),
                 power_nets=("VDD", "aux supply"),
                 ground_nets=("VSS",),
-                backend_overrides={"cadence-flowtool": {
-                    **self.flowtool_overrides["cadence-flowtool"],
-                    "tieoffs": {"cells": ["TIE[HI]"]},
-                }},
             ),
             self.root / "backend" / "cadence-genus",
         )
@@ -1903,15 +1855,12 @@ class GenusTclListQuotingTests(GenusFixtureTestCase):
         'analysis view' object with the name '\"wcl\"'" against the real
         design."""
         inputs = prepare_genus_inputs(
-            self._context(
+            self._design_setup(
+                {"active_views": {"setup": ["wcl"], "hold": ["bc"]}},
                 technology=ResolvedTechnology(
                     package="pdk/demo", revision="1", name="demo", root=self.root,
                     timing_corners=self._corners(),
                 ),
-                backend_overrides={"cadence-flowtool": {
-                    **self.flowtool_overrides["cadence-flowtool"],
-                    "active_views": {"setup": ["wcl"], "hold": ["bc"]},
-                }},
             ),
             self.root / "backend" / "cadence-genus",
         )

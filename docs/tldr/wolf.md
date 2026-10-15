@@ -48,6 +48,14 @@
 
 `wolf env set {{environment}} env.{{GENUS_NUM_CPUS}} {{64}}`
 
+- Set a design-level cadence-flowtool knob -- routed to that design's own setup.<design>.yaml, not wolf.yaml:
+
+`wolf env set {{environment}} add_tieoffs_cells {{'["TIEHIX1", "TIELOX1"]'}}`
+
+- Remove a key set by `wolf env set` (same routing rule, either file):
+
+`wolf env unset {{environment}} {{KEY}}`
+
 - Activate an environment, then omit its name on later commands:
 
 `wolf activate {{environment}} && wolf info && wolf run --plan`
