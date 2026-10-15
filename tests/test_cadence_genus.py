@@ -276,6 +276,52 @@ class GenusSetupYamlFragmentTests(GenusFixtureTestCase):
         self.assertEqual(document["init_physical_files"]["lef_files"]["9T"]["lvt"], [str(lef)])
         self.assertEqual(document["std_cell_GDS_files"]["9T"]["lvt"], [str(gds)])
 
+    def test_design_top_and_technology_package_facts_are_injected(self):
+        """design_top, dont_use_cells, technology_lefs, cell_lefs --
+        package/environment-resolved facts, not user-edited setup.yaml
+        content, injected the same unconditional way design_name/tracks/
+        vths already were."""
+        lef = self.root / "tech.lef"
+        lef.write_text("-- tech.lef --\n", encoding="utf-8")
+        technology = ResolvedTechnology(
+            package="pdk/demo", revision="1", name="demo", root=self.root,
+            dont_use_cells=("*_lvt",), technology_lefs=(lef,), cell_lefs=(lef,),
+        )
+        inputs = prepare_genus_inputs(
+            self._context(technology=technology), self.root / "backend" / "cadence-genus",
+        )
+        document = yaml.safe_load(inputs.setup_yaml.read_text(encoding="utf-8"))
+        self.assertEqual(document["design_top"], "top")
+        self.assertEqual(document["dont_use_cells"], ["*_lvt"])
+        self.assertEqual(document["technology_lefs"], [str(lef)])
+        self.assertEqual(document["cell_lefs"], [str(lef)])
+
+    def test_run_paths_are_injected(self):
+        inputs = prepare_genus_inputs(
+            self._context(), self.root / "backend" / "cadence-genus",
+        )
+        document = yaml.safe_load(inputs.setup_yaml.read_text(encoding="utf-8"))
+        self.assertEqual(document["run_directory"], str(inputs.manifest.parent))
+        self.assertEqual(document["sources_script"], str(inputs.source_script))
+        self.assertIn("reports_dir", document)
+        self.assertIn("outputs_dir", document)
+        self.assertIn("handoff_dir", document)
+        self.assertIn("constraints_file", document)
+
+    def test_design_setup_content_is_merged_in_and_wins_over_the_catalog(self):
+        """This design's own setup.<design_name>.yaml (cts/tieoffs/
+        active_views/...) lands in the same rendered setup.yaml a
+        project's injected Tcl reads via get_flow_config -- and, were a
+        key ever to collide with a catalog/run-path key, the design
+        setup's own value wins (applied last)."""
+        inputs = prepare_genus_inputs(
+            self._design_setup({"add_tieoffs_cells": ["TIEHIX1", "TIELOX1"]}),
+            self.root / "backend" / "cadence-genus",
+        )
+        document = yaml.safe_load(inputs.setup_yaml.read_text(encoding="utf-8"))
+        self.assertEqual(document["add_tieoffs_cells"], ["TIEHIX1", "TIELOX1"])
+        self.assertEqual(document["design_name"], "demo")
+
     def test_flat_legacy_tokens_are_substituted(self):
         fragment = self._fragment(
             "pdk_dir: ${PDK_DIR}\nmetal_stack: ${METAL_STACK}\ntracks: ${TRACKS}\nvths: ${VTHS}\n"

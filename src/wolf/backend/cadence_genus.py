@@ -780,7 +780,9 @@ def _catalog_document(context: ResolvedContext) -> dict:
     confirmed get_flow_config access pattern yet, so they're deliberately
     not injected here.
     """
-    document: dict[str, Any] = {"design_name": context.design_name}
+    document: dict[str, Any] = {
+        "design_name": context.design_name, "design_top": context.design_top,
+    }
     if context.power_nets:
         document["power_nets"] = list(context.power_nets)
     if context.ground_nets:
@@ -788,6 +790,12 @@ def _catalog_document(context: ResolvedContext) -> dict:
     technology = context.technology
     if technology is None:
         return document
+    if technology.dont_use_cells:
+        document["dont_use_cells"] = list(technology.dont_use_cells)
+    if technology.technology_lefs:
+        document["technology_lefs"] = [str(path) for path in technology.technology_lefs]
+    if technology.cell_lefs:
+        document["cell_lefs"] = [str(path) for path in technology.cell_lefs]
     selected_tracks = technology.selected_tracks or ((technology.track,) if technology.track else ())
     selected_vths = technology.selected_vths or ((technology.vth,) if technology.vth else ())
     if selected_tracks:
@@ -819,6 +827,7 @@ def _catalog_document(context: ResolvedContext) -> dict:
 
 def _render_setup_yaml(
     setup_template: Path, context: ResolvedContext, tokens: Mapping[str, str],
+    run_paths: Optional[Mapping[str, str]] = None,
 ) -> str:
     """Render one run's Flowtool setup.yaml: concatenate the institution's
     primary template with the PDK's own setup_yaml_fragment (if declared --
@@ -826,12 +835,26 @@ def _render_setup_yaml(
     every ${TOKEN} WOLF can resolve (see _setup_yaml_tokens), falling back
     to technology.generic for anything else a fragment references -- an
     institution-specific directory root with no general WOLF model, say
-    -- then inject design_name/tracks/vths/metal_stack and the PDK's full
-    track/vth/corner catalog (see _catalog_document) as fixed top-level
-    keys, always, regardless of whether the template text itself
-    references them. Any ${TOKEN} still unresolved after both
-    substitution passes is a real error: a run's actual setup.yaml should
-    never be written with a literal placeholder still sitting in it.
+    -- then inject, as fixed top-level keys always present regardless of
+    whether the template text itself references them:
+
+      1. design_name/design_top/tracks/vths/metal_stack/dont_use_cells/
+         technology_lefs/cell_lefs/power_nets/ground_nets and the PDK's
+         full track/vth/corner catalog (see _catalog_document) -- package-
+         and environment-resolved facts, never user-edited here;
+      2. `run_paths` -- this run's own generated file/directory paths
+         (run_directory, reports_dir, outputs_dir, sources_script, ...),
+         passed in by the caller since they are prepare_genus_inputs'
+         own local run-specific values, not derivable from `context`
+         alone;
+      3. this design's own setup.<design_name>.yaml content (see
+         _design_setup) -- the one layer a user actually hand-edits,
+         applied last so it would win on the (today nonexistent) chance
+         any of its own keys collided with the two layers above.
+
+    Any ${TOKEN} still unresolved after both substitution passes is a
+    real error: a run's actual setup.yaml should never be written with a
+    literal placeholder still sitting in it.
     """
     technology = context.technology
     fragments = (technology.setup_yaml_fragment,) if technology and technology.setup_yaml_fragment else ()
@@ -857,6 +880,8 @@ def _render_setup_yaml(
     elif not isinstance(document, dict):
         raise ValueError(f"rendered setup.yaml is not a yaml mapping: {setup_template}")
     document.update(_catalog_document(context))
+    document.update(run_paths or {})
+    document.update(_design_setup(context))
     return yaml.safe_dump(document, sort_keys=False)
 
 
@@ -2259,8 +2284,22 @@ def prepare_genus_inputs(
     if setup_template is not None:
         setup_yaml = destination / f"setup.{context.design_name}.yaml"
         tokens = _setup_yaml_tokens(context, destination, scripts_directory, constraints)
+        run_paths = {
+            "run_directory": str(destination),
+            "reports_dir": str(reports_directory),
+            "outputs_dir": str(outputs_directory),
+            "handoff_dir": str(handoff_directory),
+            "sources_script": str(source_script),
+            "constraints_file": str(constraints),
+        }
+        if technology_script is not None:
+            run_paths["technology_script"] = str(technology_script)
+        if mmmc_script is not None:
+            run_paths["mmmc_script"] = str(mmmc_script)
+        if overrides_script is not None:
+            run_paths["overrides_script"] = str(overrides_script)
         setup_yaml.write_text(
-            _render_setup_yaml(setup_template, context, tokens), encoding="utf-8",
+            _render_setup_yaml(setup_template, context, tokens, run_paths), encoding="utf-8",
         )
         placeholders = {**placeholders, "WOLF_SETUP_YAML": str(setup_yaml)}
     else:

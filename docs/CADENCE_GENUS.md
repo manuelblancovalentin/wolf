@@ -213,16 +213,30 @@ in `common_flows.tcl` and friends, not a yaml step tree, so this file
 never needs anything technology-, library-, or institution-specific.
 
 Every run also gets a real `setup.<design>.yaml` written into the run
-directory, with `get_flow_config design_name`/`tracks`/`vths`/
-`metal_stack`/`library_sets`/`init_physical_files`/`std_cell_GDS_files`
-always resolvable -- injected directly by WOLF (see `_catalog_document`
-in `wolf/backend/cadence_genus.py`), not via `${TOKEN}` substitution, so
-it works the same whether or not the resolved technology actually has a
-track/vth axis. This is independent of, and always generated alongside,
-WOLF's own `mmmc.tcl`/`technology.tcl` (the plain Tcl variables the
-bundled flow's own step bodies read directly out of `flow-config.tcl`):
-the two mechanisms are complementary, not an either/or choice -- WOLF's
-own flow steps keep reading `$::wolf_*` globals (proven, unchanged), and
+directory, with `get_flow_config` access to three layers, all always
+present regardless of whether the template text itself references them:
+
+1. `design_name`/`design_top`/`tracks`/`vths`/`metal_stack`/
+   `dont_use_cells`/`technology_lefs`/`cell_lefs`/`power_nets`/
+   `ground_nets`/`library_sets`/`init_physical_files`/
+   `std_cell_GDS_files` -- package- and environment-resolved facts,
+   injected directly by WOLF (see `_catalog_document` in
+   `wolf/backend/cadence_genus.py`), not via `${TOKEN}` substitution, so
+   this works the same whether or not the resolved technology actually
+   has a track/vth axis;
+2. this run's own generated paths (`run_directory`, `reports_dir`,
+   `outputs_dir`, `handoff_dir`, `sources_script`, `constraints_file`,
+   and, when generated, `technology_script`/`mmmc_script`/
+   `overrides_script`);
+3. this design's own `setup.<design_name>.yaml` content -- see
+   "Design-level setup.yaml" below -- the one layer actually meant to
+   be hand-edited.
+
+This is independent of, and always generated alongside, WOLF's own
+`mmmc.tcl`/`technology.tcl` (the plain Tcl variables the bundled flow's
+own step bodies read directly out of `flow-config.tcl`): the two
+mechanisms are complementary, not an either/or choice -- WOLF's own flow
+steps keep reading `$::wolf_*` globals (proven, unchanged), and
 `get_flow_config` is there for a project's own extension/injected Tcl
 that wants the legacy access pattern instead, with no per-project
 configuration required to get it.
