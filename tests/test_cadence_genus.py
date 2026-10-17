@@ -20,7 +20,13 @@ from wolf.context import (
 )
 from wolf.paths import builtin_flow_root
 
+try:
+    import tomllib
+except ModuleNotFoundError:
+    import tomli as tomllib
+
 TCLSH = shutil.which("tclsh")
+_REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 class GenusPeriodNsTests(unittest.TestCase):
@@ -202,6 +208,40 @@ class GenusFixtureTestCase(unittest.TestCase):
         write_design_setup(design_setup_path(self.root, design_name), data)
         return self._context(
             project_root=self.root, design_name=design_name, **context_overrides,
+        )
+
+
+class CadenceGenusPackagingManifestTests(unittest.TestCase):
+    """Regression: setup.template.yaml existed in flows/cadence-genus/ for
+    several commits but pyproject.toml's data-files stanza never listed it,
+    so a regular (non-editable) install silently shipped a flow package
+    missing it -- builtin_flow_root's "share/wolf/flows" candidate then had
+    no setup.template.yaml, _flowtool_templates resolved setup_template to
+    None, and prepare_genus_inputs wrote no setup.yaml at all for that
+    install, with flow.yaml's own design_yaml left blank: every
+    get_flow_config lookup had nothing to read, regardless of anything
+    else being correct. Caught by a real `wolf run` against an installed
+    (not editable-source) WOLF; every dev-mode test here resolves
+    builtin_flow_root's *source* candidate instead (see paths.py), so none
+    of them exercised the installed-package file list.
+    """
+
+    def test_every_real_flow_file_is_listed_in_the_install_manifest(self):
+        pyproject = tomllib.loads(
+            (_REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+        )
+        manifest_entries = pyproject["tool"]["setuptools"]["data-files"][
+            "share/wolf/flows/cadence-genus"
+        ]
+        manifest_names = {Path(entry).name for entry in manifest_entries}
+        real_names = {
+            path.name for path in (_REPO_ROOT / "flows" / "cadence-genus").iterdir()
+            if path.is_file()
+        }
+        self.assertEqual(
+            real_names, manifest_names,
+            "flows/cadence-genus/ and pyproject.toml's "
+            "share/wolf/flows/cadence-genus data-files entry have drifted apart",
         )
 
 
