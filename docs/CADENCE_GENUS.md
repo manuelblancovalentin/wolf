@@ -44,8 +44,10 @@ provides its own `flow.tcl`).
 `flow-config.tcl` is Flowtool's own last `user_flow_steps` entry (see
 `flow.template.yaml`), sourced after every `create_flow`/`create_flow_step`
 above it has already registered -- the natural point for "run this once
-setup finishes, before control passes to the user". Its tail prints a
-content-hash identity banner automatically: a short hash for the whole
+setup finishes, before control passes to the user". It carries nothing but
+that identity banner now (every resolved value the bundled flow's own step
+bodies read comes from `setup.yaml` via `get_flow_config` instead -- see
+"The Flowtool project descriptor" below): a short hash for the whole
 bundled flow plus one per real `create_flow_step`, so two runs' logs can
 tell exactly which step's Tcl changed, not just that something did
 (`wolf.backend.cadence_genus.flow_step_digests`). The same banner also
@@ -113,14 +115,15 @@ that restores a checkpoint rather than inheriting a live session.
 `apply_clock_derate`, `preserve_blocks`, `preserve_instances`,
 `read_power_intent`, `max_routing_layer`, and `commit_power_intent` are
 real, always-present, always-run steps -- not commented out, not left
-undefined -- but each is guarded on a `wolf_*` value
-(`wolf_clock_derate_early`/`_late`, `wolf_preserve_blocks`,
-`wolf_preserve_instances`, `wolf_power_intent_file`,
-`wolf_max_routing_layers`) that `flow-config.tcl` always emits empty today,
-since no PDK/environment/design field resolves one yet. A guarded step
-quietly skips (prints which value is missing) rather than erroring; wiring
-one in later means resolving the value in `wolf.environment`/
-`wolf.backend.cadence_genus`, not editing `synthesis.tcl`.
+undefined -- but each is guarded on a `get_flow_config -quiet` lookup
+(`clock_derate_early`/`_late`, `preserve_blocks`, `preserve_instances`,
+`power_intent_file`, `max_routing_layers`) that never resolves to
+anything today, since no PDK/environment/design field supplies one yet
+-- `-quiet` means the lookup simply returns `""`/empty rather than
+erroring. A guarded step quietly skips (prints which value is missing)
+rather than erroring; wiring one in later means resolving the value in
+`wolf.environment`/`wolf.backend.cadence_genus` (so it's injected into
+`setup.yaml`), not editing `synthesis.tcl`.
 
 `genus_to_lec`, `genus_to_clp`, `build_sim_testbench`, and
 `build_xsim_files` are real, always-invokable steps too, but their bodies
@@ -232,14 +235,14 @@ present regardless of whether the template text itself references them:
    "Design-level setup.yaml" below -- the one layer actually meant to
    be hand-edited.
 
-This is independent of, and always generated alongside, WOLF's own
-`mmmc.tcl`/`technology.tcl` (the plain Tcl variables the bundled flow's
-own step bodies read directly out of `flow-config.tcl`): the two
-mechanisms are complementary, not an either/or choice -- WOLF's own flow
-steps keep reading `$::wolf_*` globals (proven, unchanged), and
-`get_flow_config` is there for a project's own extension/injected Tcl
-that wants the legacy access pattern instead, with no per-project
-configuration required to get it.
+`get_flow_config` is the *only* access pattern now -- every bundled flow
+step body reads every resolved value this way, including which of
+`mmmc.tcl`/`technology.tcl` (still their own separate generated Tcl
+files, real `create_library_set`/`set_db library` commands, not plain
+data) to `source`: that choice is itself `get_flow_config -quiet
+technology_script`/`mmmc_script`, same as everything else. A project's
+own extension/injected Tcl gets exactly the same access, with no
+per-project configuration required to get it.
 
 A project with its own legacy institution `setup.yaml` (or wanting an
 institution's existing Flowtool project descriptors instead of WOLF's
@@ -332,11 +335,10 @@ so it's rendered differently, in three steps:
    `qrc_techfiles` have no confirmed `get_flow_config` access pattern
    yet, so nothing is injected for them.
 
-WOLF's own `mmmc.tcl`/`technology.tcl` generation (plain Tcl variables
-read out of `flow-config.tcl`) still happens regardless of whether
-`setup_template` is overridden -- it is what WOLF's own bundled flow
-steps actually execute against, and `get_flow_config` is for a project's
-own extension/injected Tcl, not a replacement for it.
+WOLF's own `mmmc.tcl`/`technology.tcl` generation still happens
+regardless of whether `setup_template` is overridden -- they are what
+WOLF's own bundled flow steps actually `source` (via `get_flow_config
+-quiet mmmc_script`/`technology_script`, same as everything else).
 
 ## scripts.\<N\>/scripts.latest
 
@@ -358,10 +360,12 @@ never force a new snapshot, and an unchanged flow reuses its existing
 and the rendered `flow.<design>.yaml` and `setup.<design>.yaml`) is
 written directly into the run directory, fresh on every call.
 
-`flow-config.tcl` holds the plain `set` statements the flow's step bodies
-read (design name/top, thread count, dont-use cell list, physical view
-paths, reports/outputs directories); see `synthesis.tcl`'s own header
-comment for the exact list.
+`flow-config.tcl` holds nothing but the bundled-flow identity banner now
+(see "Flow identity, printed automatically once setup finishes" above) --
+every resolved value the flow's step bodies read (design name/top,
+thread count, dont-use cell list, physical view paths, reports/outputs
+directories, ...) comes from `setup.<design>.yaml` via `get_flow_config`
+instead; see `synthesis.tcl`'s own header comment for the exact key list.
 
 For Genus Tcl, VHDL sources use `read_hdl -vhdl`. Both `verilog` and
 `systemverilog` package classifications deliberately use Genus's `read_hdl
@@ -659,7 +663,7 @@ Innovus as a confusing `set_analysis_view` error. This applies uniformly
 to every implementation stage (`floorplan` through `postroute`); picking
 a different set per stage (e.g. narrow through `postcts`, every corner
 again at `route`/`postroute`) is not yet selectable without hand-editing
-the generated `flow-config.tcl`.
+`setup.<design_name>.yaml` between stages.
 
 ## Extra constraints (`constraints.files`/`constraints.lines`)
 

@@ -18,9 +18,10 @@ create_flow_step -name add_clock_tree -owner wolf {
     wolf_step "add_clock_tree: implementing clock trees, propagated-clock optimization"
     wolf_inject_for_step add_clock_tree pre
 
-    ccopt_design -report_dir $::wolf_reports_dir -report_prefix cts.
+    set wolf_reports_dir [get_flow_config reports_dir]
+    ccopt_design -report_dir $wolf_reports_dir -report_prefix cts.
 
-    set add_clock_tree_timing_file [file join $::wolf_reports_dir timing.cts.rpt]
+    set add_clock_tree_timing_file [file join $wolf_reports_dir timing.cts.rpt]
     report_timing_summary -checks {setup drv} > $add_clock_tree_timing_file
     wolf_file $add_clock_tree_timing_file
 
@@ -30,7 +31,7 @@ create_flow_step -name add_clock_tree -owner wolf {
     # own man page).
     set wolf_clock_tree_names [get_db clock_trees .name]
     wolf_info "clock trees after add_clock_tree: $wolf_clock_tree_names"
-    set add_clock_tree_structure_file [file join $::wolf_reports_dir clock_trees.cts.rpt]
+    set add_clock_tree_structure_file [file join $wolf_reports_dir clock_trees.cts.rpt]
     report_clock_trees -out_file $add_clock_tree_structure_file
     wolf_file $add_clock_tree_structure_file
 
@@ -53,18 +54,22 @@ create_flow_step -name add_tieoffs -owner wolf {
     # for the literal 1'b0/1'b1 connections Genus left as constants; the
     # two are complementary; add_tieoffs should run after the floorplan
     # script's own global net connections, which it already does here.
-    if {[llength $::wolf_tieoff_cells]} {
-        set_db add_tieoffs_cells $::wolf_tieoff_cells
-        wolf_info "add_tieoffs_cells: $::wolf_tieoff_cells"
+    set wolf_tieoff_cells [get_flow_config -quiet add_tieoffs_cells]
+    if {[llength $wolf_tieoff_cells]} {
+        set_db add_tieoffs_cells $wolf_tieoff_cells
+        wolf_info "add_tieoffs_cells: $wolf_tieoff_cells"
     }
-    if {$::wolf_tieoff_honor_dont_use ne ""} {
-        set_db add_tieoffs_honor_dont_use $::wolf_tieoff_honor_dont_use
+    set wolf_tieoff_honor_dont_use [get_flow_config -quiet add_tieoffs_honor_dont_use]
+    if {$wolf_tieoff_honor_dont_use ne ""} {
+        set_db add_tieoffs_honor_dont_use $wolf_tieoff_honor_dont_use
     }
-    if {$::wolf_tieoff_max_fanout ne ""} {
-        set_db add_tieoffs_max_fanout $::wolf_tieoff_max_fanout
+    set wolf_tieoff_max_fanout [get_flow_config -quiet add_tieoffs_max_fanout]
+    if {$wolf_tieoff_max_fanout ne ""} {
+        set_db add_tieoffs_max_fanout $wolf_tieoff_max_fanout
     }
-    if {$::wolf_tieoff_max_distance ne ""} {
-        set_db add_tieoffs_max_distance $::wolf_tieoff_max_distance
+    set wolf_tieoff_max_distance [get_flow_config -quiet add_tieoffs_max_distance]
+    if {$wolf_tieoff_max_distance ne ""} {
+        set_db add_tieoffs_max_distance $wolf_tieoff_max_distance
     }
     #- insert dedicated tieoff models, if any are configured
     if {[get_db add_tieoffs_cells] ne ""} {
@@ -75,11 +80,11 @@ create_flow_step -name add_tieoffs -owner wolf {
             incr wolf_tie_count [llength [get_db insts -if {.base_cell.name == $wolf_tie_cell}]]
         }
         wolf_info "add_tieoffs: $wolf_tie_count tie cell instance(s) added ([get_db add_tieoffs_cells])"
-        set add_tieoffs_check_file [file join $::wolf_reports_dir tieoffs.cts.rpt]
+        set add_tieoffs_check_file [file join [get_flow_config reports_dir] tieoffs.cts.rpt]
         check_tieoffs -out_file $add_tieoffs_check_file
         wolf_file $add_tieoffs_check_file
     } else {
-        wolf_error "add_tieoffs: no tie-high/tie-low cells configured (backend.cadence-flowtool.tieoffs.cells) -- literal 1'b0/1'b1 connections from synthesis will have no tie-cell driver, a likely LVS/DRC problem"
+        wolf_error "add_tieoffs: no tie-high/tie-low cells configured (add_tieoffs_cells in setup.yaml) -- literal 1'b0/1'b1 connections from synthesis will have no tie-cell driver, a likely LVS/DRC problem"
     }
     wolf_inject_for_step add_tieoffs post
 }
@@ -88,9 +93,10 @@ create_flow_step -name run_opt_postcts_hold -owner wolf {
     wolf_step "run_opt_postcts_hold: post-CTS hold optimization"
     wolf_inject_for_step run_opt_postcts_hold pre
 
-    opt_design -post_cts -hold -report_dir $::wolf_reports_dir -report_prefix postcts.
+    set wolf_reports_dir [get_flow_config reports_dir]
+    opt_design -post_cts -hold -report_dir $wolf_reports_dir -report_prefix postcts.
 
-    set run_opt_postcts_hold_timing_file [file join $::wolf_reports_dir timing.postcts_hold.rpt]
+    set run_opt_postcts_hold_timing_file [file join $wolf_reports_dir timing.postcts_hold.rpt]
     report_timing_summary -checks {hold drv} > $run_opt_postcts_hold_timing_file
     wolf_file $run_opt_postcts_hold_timing_file
 

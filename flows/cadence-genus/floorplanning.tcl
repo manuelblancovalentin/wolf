@@ -33,10 +33,10 @@
 # presentation.tcl's header for how to fork it.
 
 create_flow_step -name init_implementation -owner wolf -write_db {
-    wolf_step "init_implementation: loading $::wolf_design_name from Genus handoff"
+    wolf_step "init_implementation: loading [get_flow_config design_name] from Genus handoff"
     wolf_inject_for_step init_implementation pre
 
-    source [file join $::wolf_handoff_dir $::wolf_design_name.invs_init.tcl]
+    source [file join [get_flow_config handoff_dir] [get_flow_config design_name].invs_init.tcl]
 
     wolf_inject_for_step init_implementation post
     puts [wolf_sep]
@@ -51,13 +51,14 @@ create_flow_step -name init_innovus -owner wolf {
     wolf_inject_for_step init_innovus pre
     # Same resolved thread count synthesis.tcl's own init_genus already
     # applies to Genus (resources.threads/GENUS_NUM_CPUS, via
-    # $::wolf_max_cpus_per_server) -- Innovus has no equivalent set_db;
-    # set_multi_cpu_usage is its own real multithreading control, and
-    # this step re-runs at the start of every implementation stage since
-    # each one is a separate Innovus invocation.
-    if {$::wolf_max_cpus_per_server ne ""} {
-        set_multi_cpu_usage -local_cpu $::wolf_max_cpus_per_server
-        wolf_info "set_multi_cpu_usage: using $::wolf_max_cpus_per_server CPU(s) (resources.threads)"
+    # get_flow_config max_cpus_per_server) -- Innovus has no equivalent
+    # set_db; set_multi_cpu_usage is its own real multithreading control,
+    # and this step re-runs at the start of every implementation stage
+    # since each one is a separate Innovus invocation.
+    set wolf_max_cpus_per_server [get_flow_config -quiet max_cpus_per_server]
+    if {$wolf_max_cpus_per_server ne ""} {
+        set_multi_cpu_usage -local_cpu $wolf_max_cpus_per_server
+        wolf_info "set_multi_cpu_usage: using $wolf_max_cpus_per_server CPU(s) (resources.threads)"
     } else {
         wolf_info "set_multi_cpu_usage: not set (resources.threads not configured) -- using Innovus's own default"
     }
@@ -76,7 +77,7 @@ create_flow_step -name init_innovus -owner wolf {
     # reasoning as the thread count and set_cts_config above/below.
     set wolf_analysis_view_names [get_db analysis_views .name]
     if {[llength $wolf_analysis_view_names] > 1} {
-        # backend.cadence-flowtool.active_views.{setup,hold} narrows which
+        # this design's setup.yaml active_views.{setup,hold} narrows which
         # of the handoff's declared views actually matter for this
         # implementation stage (e.g. one slow/fast corner through
         # place/CTS, every corner again at route/signoff) -- default
@@ -86,8 +87,10 @@ create_flow_step -name init_innovus -owner wolf {
         # exactly the place a later per-stage override would plug in).
         set wolf_setup_views $wolf_analysis_view_names
         set wolf_hold_views  $wolf_analysis_view_names
-        if {[llength $::wolf_active_setup_views]} { set wolf_setup_views $::wolf_active_setup_views }
-        if {[llength $::wolf_active_hold_views]}  { set wolf_hold_views  $::wolf_active_hold_views }
+        set wolf_active_setup_views [get_flow_config -quiet active_views setup]
+        set wolf_active_hold_views [get_flow_config -quiet active_views hold]
+        if {[llength $wolf_active_setup_views]} { set wolf_setup_views $wolf_active_setup_views }
+        if {[llength $wolf_active_hold_views]}  { set wolf_hold_views  $wolf_active_hold_views }
         set_analysis_view -setup $wolf_setup_views -hold $wolf_hold_views
         wolf_info "active analysis views -- setup: $wolf_setup_views, hold: $wolf_hold_views"
     }
@@ -139,11 +142,12 @@ create_flow_step -name load_floorplan -owner wolf {
     wolf_step "load_floorplan"
     wolf_inject_for_step load_floorplan pre
 
-    if {$::wolf_floorplan_def ne ""} {
-        read_def $::wolf_floorplan_def
+    set wolf_floorplan_def [get_flow_config -quiet floorplan_def]
+    if {$wolf_floorplan_def ne ""} {
+        read_def $wolf_floorplan_def
     } else {
         wolf_info "No floorplan DEF configured (constraints.floorplan_def) -- \
-            inject floorplan creation Tcl via backend.cadence-flowtool.inject.create_fplan instead."
+            inject floorplan creation Tcl via this design's setup.yaml inject.create_fplan instead."
     }
 
     wolf_inject_for_step load_floorplan post
@@ -163,7 +167,8 @@ create_flow_step -name export_floorplan_def -owner wolf {
     # at that copy -- load_floorplan's own read_def picks it up from
     # there automatically; WOLF does not promote run outputs into project
     # inputs on its own.
-    set wolf_fp_def_out [file join $::wolf_outputs_dir "$::wolf_design_name.floorplan.def"]
+    set wolf_fp_def_out \
+        [file join [get_flow_config outputs_dir] "[get_flow_config design_name].floorplan.def"]
     write_def $wolf_fp_def_out
     wolf_file $wolf_fp_def_out
     wolf_inject_for_step export_floorplan_def post
@@ -199,40 +204,45 @@ create_flow_step -name add_clock_spec -owner wolf {
 create_flow_step -name add_clock_route_types -owner wolf {
     wolf_step "add_clock_route_types"
     wolf_inject_for_step add_clock_route_types pre
-    # backend.cadence-flowtool.clock_routing: an optional non-default rule
-    # (create_route_rule -width_multiplier/-spacing_multiplier, confirmed
-    # real, man 20.15) and top/trunk/leaf route types (create_route_type
-    # -route_rule/-top_preferred_layer/-bottom_preferred_layer) for
-    # cts_route_type_top/trunk/leaf below. Layer names are validated
-    # against the loaded technology's own layers (get_db layers .name) --
-    # not guessed -- and this step fails clearly, before CTS runs, if a
-    # configured layer does not exist. Left unset (today's default): this
-    # step is a no-op, same as before this existed.
+    # this design's setup.yaml clock_routing_width_multiplier/
+    # clock_routing_spacing_multiplier/clock_routing_types: an optional
+    # non-default rule (create_route_rule -width_multiplier/
+    # -spacing_multiplier, confirmed real, man 20.15) and top/trunk/leaf
+    # route types (create_route_type -route_rule/-top_preferred_layer/
+    # -bottom_preferred_layer) for cts_route_type_top/trunk/leaf below.
+    # Layer names are validated against the loaded technology's own
+    # layers (get_db layers .name) -- not guessed -- and this step fails
+    # clearly, before CTS runs, if a configured layer does not exist.
+    # Left unset (today's default): this step is a no-op, same as before
+    # this existed.
+    set wolf_clock_routing_width_mult [get_flow_config -quiet clock_routing_width_multiplier]
+    set wolf_clock_routing_spacing_mult [get_flow_config -quiet clock_routing_spacing_multiplier]
+    set wolf_clock_routing_types [get_flow_config -quiet clock_routing_types]
     set wolf_route_rule_name ""
-    if {[llength $::wolf_clock_routing_width_mult] || [llength $::wolf_clock_routing_spacing_mult]} {
+    if {[llength $wolf_clock_routing_width_mult] || [llength $wolf_clock_routing_spacing_mult]} {
         set wolf_configured_layers {}
-        foreach {wolf_layer_range wolf_mult} [concat $::wolf_clock_routing_width_mult $::wolf_clock_routing_spacing_mult] {
+        foreach {wolf_layer_range wolf_mult} [concat $wolf_clock_routing_width_mult $wolf_clock_routing_spacing_mult] {
             foreach wolf_layer [split $wolf_layer_range ":"] { lappend wolf_configured_layers $wolf_layer }
         }
         set wolf_known_layers [get_db layers .name]
         foreach wolf_layer $wolf_configured_layers {
             if {[lsearch -exact $wolf_known_layers $wolf_layer] < 0} {
-                wolf_error "add_clock_route_types: layer '$wolf_layer' (from backend.cadence-flowtool.clock_routing.rule) does not exist in the loaded technology -- known layers: $wolf_known_layers"
+                wolf_error "add_clock_route_types: layer '$wolf_layer' (from clock_routing_width_multiplier/clock_routing_spacing_multiplier) does not exist in the loaded technology -- known layers: $wolf_known_layers"
                 return -code error "add_clock_route_types: unknown layer '$wolf_layer'"
             }
         }
         set wolf_route_rule_name wolf_cts_rule
         set wolf_rule_args [list -name $wolf_route_rule_name]
-        if {[llength $::wolf_clock_routing_width_mult]} {
-            lappend wolf_rule_args -width_multiplier $::wolf_clock_routing_width_mult
+        if {[llength $wolf_clock_routing_width_mult]} {
+            lappend wolf_rule_args -width_multiplier $wolf_clock_routing_width_mult
         }
-        if {[llength $::wolf_clock_routing_spacing_mult]} {
-            lappend wolf_rule_args -spacing_multiplier $::wolf_clock_routing_spacing_mult
+        if {[llength $wolf_clock_routing_spacing_mult]} {
+            lappend wolf_rule_args -spacing_multiplier $wolf_clock_routing_spacing_mult
         }
         eval create_route_rule $wolf_rule_args
-        wolf_info "create_route_rule $wolf_route_rule_name: width_multiplier=$::wolf_clock_routing_width_mult spacing_multiplier=$::wolf_clock_routing_spacing_mult"
+        wolf_info "create_route_rule $wolf_route_rule_name: width_multiplier=$wolf_clock_routing_width_mult spacing_multiplier=$wolf_clock_routing_spacing_mult"
     }
-    foreach {wolf_type_name wolf_type_spec} $::wolf_clock_routing_types {
+    foreach {wolf_type_name wolf_type_spec} $wolf_clock_routing_types {
         set wolf_use_rule [dict get $wolf_type_spec use_rule]
         set wolf_top [dict get $wolf_type_spec top_preferred_layer]
         set wolf_bottom [dict get $wolf_type_spec bottom_preferred_layer]
@@ -251,8 +261,8 @@ create_flow_step -name add_clock_route_types -owner wolf {
         set_db cts_route_type_$wolf_type_name $wolf_type_name_full
         wolf_info "create_route_type $wolf_type_name_full -> cts_route_type_$wolf_type_name (route_rule=$wolf_use_rule top=$wolf_top bottom=$wolf_bottom)"
     }
-    if {[dict size $::wolf_clock_routing_types] == 0 && $wolf_route_rule_name eq ""} {
-        wolf_info "add_clock_route_types: no backend.cadence-flowtool.clock_routing configured -- using CTS's own default route types"
+    if {[dict size $wolf_clock_routing_types] == 0 && $wolf_route_rule_name eq ""} {
+        wolf_info "add_clock_route_types: no clock_routing_* overrides configured in setup.yaml -- using CTS's own default route types"
     }
     wolf_inject_for_step add_clock_route_types post
     puts [wolf_sep]
@@ -269,9 +279,10 @@ create_flow_step -name run_place_opt -owner wolf {
     wolf_step "run_place_opt: global placement and ideal-clock setup optimization"
     wolf_inject_for_step run_place_opt pre
 
-    place_opt_design -report_dir $::wolf_reports_dir -report_prefix placed.
+    set wolf_reports_dir [get_flow_config reports_dir]
+    place_opt_design -report_dir $wolf_reports_dir -report_prefix placed.
 
-    set run_place_opt_area_file [file join $::wolf_reports_dir area.placed.rpt]
+    set run_place_opt_area_file [file join $wolf_reports_dir area.placed.rpt]
     report_area -min_count 1000 -out_file $run_place_opt_area_file
     wolf_file $run_place_opt_area_file
 

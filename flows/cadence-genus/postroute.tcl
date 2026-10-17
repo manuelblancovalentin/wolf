@@ -16,26 +16,27 @@ create_flow_step -name run_opt_postroute -owner wolf {
     wolf_step "run_opt_postroute: post-route setup/hold optimization"
     wolf_inject_for_step run_opt_postroute pre
 
-    opt_design -post_route -setup -hold -report_dir $::wolf_reports_dir -report_prefix postroute.
+    set wolf_reports_dir [get_flow_config reports_dir]
+    opt_design -post_route -setup -hold -report_dir $wolf_reports_dir -report_prefix postroute.
 
     check_design -unresolved
-    set run_opt_postroute_area_file [file join $::wolf_reports_dir area.postroute.rpt]
+    set run_opt_postroute_area_file [file join $wolf_reports_dir area.postroute.rpt]
     report_area -min_count 1000 -out_file $run_opt_postroute_area_file
     wolf_file $run_opt_postroute_area_file
 
-    set run_opt_postroute_setup_file [file join $::wolf_reports_dir timing.postroute_setup.rpt]
+    set run_opt_postroute_setup_file [file join $wolf_reports_dir timing.postroute_setup.rpt]
     report_timing_summary -checks {setup drv} > $run_opt_postroute_setup_file
     wolf_file $run_opt_postroute_setup_file
 
-    set run_opt_postroute_hold_file [file join $::wolf_reports_dir timing.postroute_hold.rpt]
+    set run_opt_postroute_hold_file [file join $wolf_reports_dir timing.postroute_hold.rpt]
     report_timing_summary -checks {hold drv} > $run_opt_postroute_hold_file
     wolf_file $run_opt_postroute_hold_file
 
-    set run_opt_postroute_power_file [file join $::wolf_reports_dir power.postroute.rpt]
+    set run_opt_postroute_power_file [file join $wolf_reports_dir power.postroute.rpt]
     report_power -no_wrap -out_file $run_opt_postroute_power_file
     wolf_file $run_opt_postroute_power_file
 
-    set run_opt_postroute_drc_file [file join $::wolf_reports_dir route.drc.postroute.rpt]
+    set run_opt_postroute_drc_file [file join $wolf_reports_dir route.drc.postroute.rpt]
     check_drc -out_file $run_opt_postroute_drc_file
     wolf_file $run_opt_postroute_drc_file
 

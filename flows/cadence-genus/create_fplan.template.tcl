@@ -10,9 +10,11 @@
 # Use it by copying this file into your own project
 # (inputs/scripts/<design>/create_fplan.tcl, see `wolf env auto-setup`),
 # editing the knobs and section 2 for your design, then wiring it in:
-#   backend.cadence-flowtool.inject.create_fplan.pre: [<your copy>]
-# in the environment's wolf.yaml. Safe to re-source while iterating: step 0
-# removes whatever a previous run of this script left behind first.
+#   inject.create_fplan.pre: [<your copy>]
+# in this design's own setup.<design_name>.yaml
+# (<project.root>/inputs/env/<design_name>/). Safe to re-source while
+# iterating: step 0 removes whatever a previous run of this script left
+# behind first.
 #
 # Adapted from a real pad-less TSMC65 floorplan (ESP_ASIC_TOP, 8-metal
 # stack) -- die/core sizing, PG net creation, and the M1-rail-plus-stripe
@@ -197,7 +199,8 @@ foreach net $PG_NETS {
 # inputs/floorplans/<design>/ -- the directory `wolf env auto-setup` already scaffolds, resolved
 # relative to this script's own location ([info script]) rather than hardcoded, so the same script
 # works no matter where the project checks it out.
-if {[info exists ::wolf_design_name]} { set fp_design $::wolf_design_name } else { set fp_design "design" }
+set fp_design [get_flow_config -quiet design_name]
+if {$fp_design eq ""} { set fp_design "design" }
 set fp_dir [file normalize [file join [file dirname [info script]] .. .. floorplans $fp_design]]
 file mkdir $fp_dir
 fp_try "write_floorplan $fp_dir" {

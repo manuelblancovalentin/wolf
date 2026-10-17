@@ -223,9 +223,9 @@ def _tcl_list_word(value: str) -> str:
     actually needs it (whitespace or Tcl-special characters) -- a plain
     bareword like `typical` or `M6:M5` is written as-is.
 
-    This matters because the *outer* `{...}` added by `_tcl_list`/
-    `_tcl_dict_literal` is itself only ever a single level of Tcl
-    quoting: whatever parses that outer brace (`set`, or the Tcl command
+    This matters because the *outer* `{...}` added by `_tcl_list` is
+    itself only ever a single level of Tcl quoting: whatever parses
+    that outer brace (`set`, or the Tcl command
     the list literal is embedded directly into, e.g. `-library_sets
     {...}`) strips it once and stores/passes the *inner* text as-is.
     Brace-quoting every element unconditionally -- the previous
@@ -272,42 +272,6 @@ def _tcl_list(values: tuple[str, ...]) -> str:
     bug) instead of a clean `wcl`.
     """
     return "{" + " ".join(_tcl_list_word(value) for value in values) + "}"
-
-
-def _tcl_bool(value: bool) -> str:
-    return "true" if value else "false"
-
-
-def _tcl_dict_literal(pairs: tuple[tuple[str, Any], ...]) -> str:
-    """A flat Tcl dict literal {key1 value1 key2 value2 ...}, each
-    key/value quoted only when necessary (see `_tcl_list_word` -- same
-    bug, same fix). Not named _tcl_dict -- that name is already the
-    (unrelated) parser for reading a Tcl dict literal back into Python,
-    below."""
-    words = []
-    for key, value in pairs:
-        words.append(_tcl_list_word(str(key)))
-        words.append(_tcl_list_word(str(value)))
-    return "{" + " ".join(words) + "}"
-
-
-def _tcl_brace_list(values: tuple[str, ...]) -> str:
-    """Brace-quote each element instead of double-quoting it.
-
-    Used only for injected Tcl snippets, which may themselves be arbitrary
-    Tcl (not just plain strings like paths) -- brace quoting suppresses all
-    substitution, so an inline snippet containing $vars or [commands] is
-    preserved literally until wolf_inject's own `uplevel` evaluates it.
-    Unlike _tcl_list, this does NOT backslash-escape internal braces: Tcl's
-    list parser only strips the outermost brace pair of a `{...}` element,
-    so a snippet's own balanced braces (an `if {...} {...}`, a `puts
-    {...}`) survive as real Tcl grouping syntax when later evaluated --
-    backslash-escaping them would instead leave literal backslash-brace
-    characters in the evaluated text, breaking that grouping. This requires
-    each snippet's own braces to already be balanced, true for realistic
-    injected Tcl and for plain file paths (no braces at all).
-    """
-    return "{" + " ".join("{" + value + "}" for value in values) + "}"
 
 
 def _cadence_flowtool_overrides(context: ResolvedContext) -> Mapping[str, Any]:
@@ -588,9 +552,12 @@ def _inject_snippets(context: ResolvedContext) -> tuple[tuple[str, str, tuple[st
     [snippets].
 
     Each snippet is either a file path (sourced) or inline Tcl (eval'd) --
-    see presentation.tcl's wolf_inject. Returns a flat, ordered sequence of
-    (step, phase, snippets) ready to become `wolf_inject(step,phase)` array
-    entries in flow-config.tcl.
+    see presentation.tcl's wolf_inject, read via
+    `get_flow_config -quiet inject $step $phase` in
+    wolf_inject_for_step. Returns a flat, ordered sequence of (step,
+    phase, snippets) -- validation only now (the real values reach Tcl
+    through setup.yaml's own merged design-setup content, see
+    _render_setup_yaml), same as the other _*_overrides functions.
     """
     inject = _design_setup(context).get("inject", {})
     if not isinstance(inject, Mapping):
@@ -624,11 +591,10 @@ def _flowtool_templates(context: ResolvedContext, flow_root: Path) -> tuple[Opti
     cadence-flowtool run gets a real setup.yaml with get_flow_config access
     to design_name/tracks/vths/metal_stack/the PDK catalog by default, no
     per-project configuration required (see _catalog_document). This is
-    independent of WOLF's own flow-config.tcl plain Tcl variables, which
-    the bundled flow's own step bodies still read directly; get_flow_config
-    is for a project's own extension/injected Tcl that wants the legacy
-    access pattern instead. A project can still override either or both
-    via backend.cadence-flowtool.flowtool.{setup_template,flow_template}
+    the *only* access pattern now: the bundled flow's own step bodies read
+    every resolved value through get_flow_config too, not a separate
+    flow-config.tcl plain-Tcl-variable layer. A project can still override
+    either or both via backend.cadence-flowtool.flowtool.{setup_template,flow_template}
     -- e.g. to supply an institution's existing Flowtool project
     descriptors -- the same escape hatch used for set_db overrides; a
     custom flow package with no setup.template.yaml of its own and no
@@ -751,23 +717,25 @@ def _catalog_document(context: ResolvedContext) -> dict:
     present regardless of what the template text itself declares, and
     never a "${TOKEN} is undefined" error for a flat/no-technology run:
 
-      get_flow_config design_name
+      get_flow_config design_name / design_top
       get_flow_config tracks / get_flow_config vths / get_flow_config metal_stack
       get_flow_config power_nets / get_flow_config ground_nets
+      get_flow_config floorplan_def / get_flow_config max_cpus_per_server
+      get_flow_config dont_use_cells / technology_lefs / cell_lefs
       get_flow_config library_sets $corner library_files $track $vth
       get_flow_config init_physical_files lef_files $track $vth
       get_flow_config std_cell_GDS_files $track $vth
 
-    design_name is always set; power_nets/ground_nets (constraints.
-    power_nets/ground_nets) are set only when declared -- same $::wolf_*
-    globals WOLF's own run_init_design applies as Genus's
-    init_power_nets/init_ground_nets before init_design, so a design with
-    no power intent file still gets real VDD/VSS nets through the
-    Genus->Innovus handoff instead of Innovus needing a manual
-    create_net workaround. tracks/vths/metal_stack are set only when
-    the resolved technology actually has them (a flat, non-tracked
-    package has no track/vth axis at all). The library_sets/
-    init_physical_files/std_cell_GDS_files catalog keys and nesting are
+    design_name/design_top are always set; everything else here is set
+    only when declared/resolved -- the same values run_init_design
+    (synthesis.tcl) applies as Genus's init_power_nets/init_ground_nets
+    before init_design, so a design with no power intent file still gets
+    real VDD/VSS nets through the Genus->Innovus handoff instead of
+    Innovus needing a manual create_net workaround. tracks/vths/
+    metal_stack are set only when the resolved technology actually has
+    them (a flat, non-tracked package has no track/vth axis at all). The
+    library_sets/init_physical_files/std_cell_GDS_files catalog keys and
+    nesting are
     fixed, confirmed against a real legacy synthesis.tcl's own
     get_flow_config calls -- not WOLF's invention; they cover the PDK's
     full track/vth/corner catalog (see wolf.environment's
@@ -787,6 +755,11 @@ def _catalog_document(context: ResolvedContext) -> dict:
         document["power_nets"] = list(context.power_nets)
     if context.ground_nets:
         document["ground_nets"] = list(context.ground_nets)
+    if context.floorplan_def:
+        document["floorplan_def"] = str(context.floorplan_def)
+    threads = _effective_genus_threads(context)
+    if threads is not None:
+        document["max_cpus_per_server"] = threads
     technology = context.technology
     if technology is None:
         return document
@@ -1998,14 +1971,14 @@ def prepare_genus_inputs(
     source_script = destination / "sources.tcl"
     flow_root = _flow_root(context)
     setup_template, flow_template = _flowtool_templates(context, flow_root)
-    # setup.yaml (get_flow_config access to design_name/tracks/vths/
-    # metal_stack/the PDK catalog -- see _render_setup_yaml) and WOLF's own
-    # mmmc.tcl/technology.tcl (plain Tcl variables the bundled flow's own
-    # step bodies read out of flow-config.tcl) are complementary, not
-    # mutually exclusive: the bundled flow always gets both by default now,
-    # so a project's own injected/legacy Tcl can rely on get_flow_config
-    # without WOLF's own flow steps needing to change how they read the
-    # same resolved values.
+    # Every resolved, run-specific value the bundled flow's own step
+    # bodies read comes from setup.yaml via get_flow_config -- a single
+    # access pattern, not two parallel ones. mmmc.tcl/technology.tcl are
+    # still their own separate generated Tcl scripts (real
+    # create_library_set/set_db library commands, not plain data), but
+    # which one (if either) to source is itself a get_flow_config lookup
+    # (technology_script/mmmc_script, see run_paths below) like
+    # everything else.
     has_corners = bool(context.technology and context.technology.timing_corners)
     technology_script = (
         destination / "technology.tcl" if (context.technology and not has_corners) else None
@@ -2013,10 +1986,15 @@ def prepare_genus_inputs(
     mmmc_script = destination / "mmmc.tcl" if has_corners else None
     genus_overrides = _genus_set_db_overrides(context)
     overrides_script = destination / "overrides.tcl" if genus_overrides else None
-    active_setup_views, active_hold_views = _active_views_overrides(context)
-    cts = _cts_overrides(context)
-    tieoffs = _tieoff_overrides(context)
-    clock_routing = _clock_routing_overrides(context)
+    # Only ever consumed as validation now (max two tieoff cells, numeric
+    # target types, a view name actually declared by the technology, ...)
+    # -- their real values reach Tcl through setup.yaml's own merged
+    # design-setup content (_design_setup, see _render_setup_yaml), not a
+    # separately-formatted flow-config.tcl rendering of them.
+    _active_views_overrides(context)
+    _cts_overrides(context)
+    _tieoff_overrides(context)
+    _clock_routing_overrides(context)
     flow_config_script = destination / "flow-config.tcl"
     manifest = destination / "genus-inputs.yaml"
     constraints = destination / "constraints.sdc"
@@ -2118,11 +2096,12 @@ def prepare_genus_inputs(
 
     effective_threads = _effective_genus_threads(context)
     dont_use_cells = context.technology.dont_use_cells if context.technology else ()
-    technology_lefs = context.technology.technology_lefs if context.technology else ()
-    cell_lefs = context.technology.cell_lefs if context.technology else ()
     handoff_directory = destination / "handoff"
-    postsyn_netlists = _postsyn_netlists(context)
-    inject_snippets = _inject_snippets(context)
+    # Validation only (a real path/non-empty-string list, pre/post are the
+    # only phases, ...) -- see the _active_views_overrides/_cts_overrides/
+    # etc. comment above for why the actual values aren't used here.
+    _postsyn_netlists(context)
+    _inject_snippets(context)
 
     # The flow *scripts* -- the real step definitions -- get a deduplicated,
     # numbered snapshot. Their dedup digest covers only these files, so
@@ -2135,15 +2114,6 @@ def prepare_genus_inputs(
         )
     })
 
-    # Resolved, run-specific *values* only -- every step this run performs
-    # is defined in scripts_directory/{common_flows,common_steps,synthesis}.tcl
-    # (see synthesis.tcl's header for what each name below configures),
-    # never here. A project can point flow.package at its own `wolf flow
-    # init` clone of flow_root instead of the bundled default.
-    inject_lines = "".join(
-        f"set wolf_inject({step},{phase}) {_tcl_brace_list(snippets)}\n"
-        for step, phase, snippets in inject_snippets
-    )
     # flow-config.tcl is the *last* file Flowtool sources during setup
     # (flow.template.yaml's user_flow_steps, after every create_flow/
     # create_flow_step above has already registered) -- the natural place
@@ -2187,79 +2157,13 @@ def prepare_genus_inputs(
     # step runs as part of a manually-typed `run_flow` at an
     # interactive prompt.
     (destination / "wolf.step-status").write_text("", encoding="utf-8")
-    flow_config_script.write_text(
-        "# Generated by WOLF; resolved values consumed by synthesis.tcl/common_steps.tcl.\n"
-        f"set wolf_run_directory {_tcl_quote(str(destination))}\n"
-        f"set wolf_design_name {_tcl_quote(context.design_name)}\n"
-        f"set wolf_design_top {_tcl_quote(context.design_top)}\n"
-        f"set wolf_reports_dir {_tcl_quote(str(reports_directory))}\n"
-        f"set wolf_outputs_dir {_tcl_quote(str(outputs_directory))}\n"
-        f"set wolf_handoff_dir {_tcl_quote(str(handoff_directory))}\n"
-        f"set wolf_postsyn_netlists {_tcl_list(postsyn_netlists)}\n"
-        f"set wolf_max_cpus_per_server "
-        f"{effective_threads if effective_threads is not None else '\"\"'}\n"
-        f"set wolf_technology_script "
-        f"{_tcl_quote(str(technology_script)) if technology_script else '\"\"'}\n"
-        f"set wolf_mmmc_script "
-        f"{_tcl_quote(str(mmmc_script)) if mmmc_script else '\"\"'}\n"
-        f"set wolf_overrides_script "
-        f"{_tcl_quote(str(overrides_script)) if overrides_script else '\"\"'}\n"
-        f"set wolf_sources_script {_tcl_quote(str(source_script))}\n"
-        f"set wolf_constraints_file {_tcl_quote(str(constraints))}\n"
-        f"set wolf_dont_use_cells {_tcl_list(dont_use_cells)}\n"
-        f"set wolf_technology_lefs {_tcl_list(tuple(str(path) for path in technology_lefs))}\n"
-        f"set wolf_cell_lefs {_tcl_list(tuple(str(path) for path in cell_lefs))}\n"
-        f"set wolf_floorplan_def "
-        f"{_tcl_quote(str(context.floorplan_def)) if context.floorplan_def else '\"\"'}\n"
-        f"set wolf_active_setup_views {_tcl_list(active_setup_views)}\n"
-        f"set wolf_active_hold_views {_tcl_list(active_hold_views)}\n"
-        f"set wolf_power_nets {_tcl_list(context.power_nets)}\n"
-        f"set wolf_ground_nets {_tcl_list(context.ground_nets)}\n"
-        f"set wolf_cts_buffer_cells {_tcl_list(cts.buffer_cells)}\n"
-        f"set wolf_cts_buffer_cells_top {_tcl_list(cts.buffer_cells_top)}\n"
-        f"set wolf_cts_buffer_cells_leaf {_tcl_list(cts.buffer_cells_leaf)}\n"
-        f"set wolf_cts_inverter_cells {_tcl_list(cts.inverter_cells)}\n"
-        f"set wolf_cts_inverter_cells_top {_tcl_list(cts.inverter_cells_top)}\n"
-        f"set wolf_cts_inverter_cells_leaf {_tcl_list(cts.inverter_cells_leaf)}\n"
-        f"set wolf_cts_clock_gating_cells {_tcl_list(cts.clock_gating_cells)}\n"
-        f"set wolf_cts_target_skew "
-        f"{cts.target_skew if cts.target_skew is not None else '\"\"'}\n"
-        f"set wolf_cts_target_max_transition_time "
-        f"{cts.target_max_transition_time if cts.target_max_transition_time is not None else '\"\"'}\n"
-        f"set wolf_cts_max_fanout {cts.max_fanout if cts.max_fanout is not None else '\"\"'}\n"
-        f"set wolf_tieoff_cells {_tcl_list(tieoffs.cells)}\n"
-        f"set wolf_tieoff_honor_dont_use "
-        f"{_tcl_bool(tieoffs.honor_dont_use) if tieoffs.honor_dont_use is not None else '\"\"'}\n"
-        f"set wolf_tieoff_max_fanout {tieoffs.max_fanout if tieoffs.max_fanout is not None else '\"\"'}\n"
-        f"set wolf_tieoff_max_distance "
-        f"{tieoffs.max_distance if tieoffs.max_distance is not None else '\"\"'}\n"
-        f"set wolf_clock_routing_width_mult {_tcl_dict_literal(clock_routing.width_multiplier)}\n"
-        f"set wolf_clock_routing_spacing_mult {_tcl_dict_literal(clock_routing.spacing_multiplier)}\n"
-        f"set wolf_clock_routing_types "
-        + "{" + " ".join(
-            f"{_tcl_list_word(name)} "
-            + _tcl_dict_literal((
-                ("use_rule", _tcl_bool(spec.use_rule)),
-                ("top_preferred_layer", spec.top_preferred_layer or ""),
-                ("bottom_preferred_layer", spec.bottom_preferred_layer or ""),
-            ))
-            for name, spec in clock_routing.types
-        ) + "}\n"
-        # Not resolved from any PDK/environment field yet -- always empty,
-        # so the guarded steps in synthesis.tcl that read these quietly
-        # skip rather than running on a fabricated value. See
-        # synthesis.tcl's own header for what each one would feed.
-        f"set wolf_clock_derate_early \"\"\n"
-        f"set wolf_clock_derate_late \"\"\n"
-        f"set wolf_preserve_blocks {{}}\n"
-        f"set wolf_preserve_instances {{}}\n"
-        f"set wolf_power_intent_file \"\"\n"
-        f"set wolf_max_routing_layers \"\"\n"
-        f"array set wolf_inject {{}}\n"
-        f"{inject_lines}"
-        f"{setup_report_tail}",
-        encoding="utf-8",
-    )
+    # Every resolved, run-specific value the bundled flow's own step
+    # bodies read comes from setup.yaml via get_flow_config now (see
+    # _render_setup_yaml/_catalog_document/_design_setup) -- flow-config.tcl
+    # itself carries nothing but this run's bundled-flow identity banner,
+    # printed once Flowtool setup finishes (see the comment above for why
+    # it lives here and not a real report_flow call).
+    flow_config_script.write_text(setup_report_tail.lstrip("\n"), encoding="utf-8")
 
     # Render the Flowtool project descriptor(s). WOLF's own bundled
     # flow_template only ever uses WOLF_SCRIPTS_DIR/WOLF_FLOW_CONFIG_SCRIPT

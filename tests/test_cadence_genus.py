@@ -10,8 +10,8 @@ import yaml
 
 from wolf.backend.cadence_genus import (
     FLOW_GENUS_SYN_GENERIC, FLOW_GENUS_SYN_MAP, FLOW_GENUS_SYN_OPT,
-    _extract_step_bodies, _period_ns, _tcl_quote, bundled_flow_digest, flow_descendant_steps,
-    flow_step_digests, prepare_genus_inputs,
+    _extract_step_bodies, _period_ns, _tcl_quote, bundled_flow_digest,
+    flow_descendant_steps, flow_step_digests, prepare_genus_inputs,
 )
 from wolf.backend.cadence_genus_setup import design_setup_path, write_design_setup
 from wolf.context import (
@@ -83,6 +83,75 @@ def _flowtool_overrides(root: Path) -> dict:
     return {"cadence-flowtool": {"flowtool": {
         "setup_template": str(setup_template), "flow_template": str(flow_template),
     }}}
+
+
+def _tcl_string_literal(value: str) -> str:
+    """A double-quoted Tcl string literal for `value`, every Tcl-special
+    character backslash-escaped -- evaluated by Tcl's own parser at
+    runtime, so (unlike cadence_genus._tcl_list_word) this handles
+    arbitrary content, including literal braces (a real inject snippet
+    like "puts {hi}")."""
+    escaped = (
+        value.replace("\\", "\\\\").replace('"', '\\"')
+        .replace("[", "\\[").replace("$", "\\$")
+    )
+    return f'"{escaped}"'
+
+
+def _tcl_flow_config_value(value) -> str:
+    """A Tcl *expression* (command substitution, not a static literal)
+    that constructs `value` (the same shapes a real rendered setup.yaml
+    document holds: str/int/float/bool/list/dict/None) via Tcl's own
+    `list`/`dict create` commands -- correct for arbitrary string
+    content, including literal braces, since Tcl itself builds the
+    value rather than this code pre-rendering brace-quoted text."""
+    if value is None:
+        return "[list]"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return str(value)
+    if isinstance(value, str):
+        return _tcl_string_literal(value)
+    if isinstance(value, list):
+        return "[list " + " ".join(_tcl_flow_config_value(item) for item in value) + "]"
+    if isinstance(value, dict):
+        words = []
+        for key, item in value.items():
+            words.append(_tcl_string_literal(str(key)))
+            words.append(_tcl_flow_config_value(item))
+        return "[dict create " + " ".join(words) + "]"
+    raise TypeError(f"unsupported flow config value type: {type(value)!r}")
+
+
+def _get_flow_config_stub(document: dict) -> str:
+    """A real, working `get_flow_config` Tcl proc backed by `document`
+    (the same shape a real rendered setup.yaml carries) -- mirrors
+    get_flow_config's own confirmed real contract (man 20.15): a
+    sequence of keys walked through nested dicts, `-quiet` suppressing
+    the error for any key in the sequence that doesn't exist (returning
+    "" instead) rather than raising "Flow setup value does not exist"."""
+    return (
+        f"set ::wolf_test_flow_config {_tcl_flow_config_value(document)}\n"
+        "proc get_flow_config {args} {\n"
+        "    global wolf_test_flow_config\n"
+        "    set quiet 0\n"
+        "    set keys {}\n"
+        "    foreach a $args {\n"
+        '        if {$a eq "-quiet"} { set quiet 1 } else { lappend keys $a }\n'
+        "    }\n"
+        "    set node $wolf_test_flow_config\n"
+        "    foreach k $keys {\n"
+        "        if {[dict exists $node $k]} {\n"
+        "            set node [dict get $node $k]\n"
+        "        } else {\n"
+        "            if {$quiet} { return \"\" }\n"
+        '            error "Flow setup value does not exist: $keys"\n'
+        "        }\n"
+        "    }\n"
+        "    return $node\n"
+        "}\n"
+    )
 
 
 class GenusFixtureTestCase(unittest.TestCase):
@@ -464,8 +533,8 @@ class GenusSetDbOverrideTests(GenusFixtureTestCase):
     def test_no_overrides_produces_no_overrides_script(self):
         inputs = prepare_genus_inputs(self._context(), self.root / "backend" / "cadence-genus")
         self.assertIsNone(inputs.overrides_script)
-        flow_config = inputs.flow_config_script.read_text(encoding="utf-8")
-        self.assertIn('set wolf_overrides_script ""', flow_config)
+        document = yaml.safe_load(inputs.setup_yaml.read_text(encoding="utf-8"))
+        self.assertNotIn("overrides_script", document)
         manifest = yaml.safe_load(inputs.manifest.read_text(encoding="utf-8"))
         self.assertEqual(manifest["genus_overrides"], {})
 
@@ -477,8 +546,8 @@ class GenusSetDbOverrideTests(GenusFixtureTestCase):
         self.assertIsNotNone(inputs.overrides_script)
         overrides_text = inputs.overrides_script.read_text(encoding="utf-8")
         self.assertIn("set_db hdl_max_memory_address_range 65536", overrides_text)
-        flow_config = inputs.flow_config_script.read_text(encoding="utf-8")
-        self.assertIn(str(inputs.overrides_script), flow_config)
+        document = yaml.safe_load(inputs.setup_yaml.read_text(encoding="utf-8"))
+        self.assertEqual(document["overrides_script"], str(inputs.overrides_script))
         manifest = yaml.safe_load(inputs.manifest.read_text(encoding="utf-8"))
         self.assertEqual(manifest["genus_overrides"], {"hdl_max_memory_address_range": 65536})
 
@@ -513,16 +582,16 @@ class GenusSetDbOverrideTests(GenusFixtureTestCase):
 class GenusPostsynNetlistAndInjectOverrideTests(GenusFixtureTestCase):
     def test_no_postsyn_netlists_leaves_empty_config(self):
         inputs = prepare_genus_inputs(self._context(), self.root / "backend" / "cadence-genus")
-        flow_config = inputs.flow_config_script.read_text(encoding="utf-8")
-        self.assertIn("set wolf_postsyn_netlists {}", flow_config)
+        document = yaml.safe_load(inputs.setup_yaml.read_text(encoding="utf-8"))
+        self.assertNotIn("postsyn_netlists", document)
 
     def test_postsyn_netlists_are_resolved_into_flow_config(self):
         inputs = prepare_genus_inputs(
             self._design_setup({"postsyn_netlists": ["/tiles/lut4ab.v"]}),
             self.root / "backend" / "cadence-genus",
         )
-        flow_config = inputs.flow_config_script.read_text(encoding="utf-8")
-        self.assertIn("set wolf_postsyn_netlists {/tiles/lut4ab.v}", flow_config)
+        document = yaml.safe_load(inputs.setup_yaml.read_text(encoding="utf-8"))
+        self.assertEqual(document["postsyn_netlists"], ["/tiles/lut4ab.v"])
 
     def test_non_list_postsyn_netlists_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "postsyn_netlists must be a list"):
@@ -531,10 +600,10 @@ class GenusPostsynNetlistAndInjectOverrideTests(GenusFixtureTestCase):
                 self.root / "backend" / "cadence-genus",
             )
 
-    def test_no_inject_leaves_no_wolf_inject_entries(self):
+    def test_no_inject_leaves_no_inject_key(self):
         inputs = prepare_genus_inputs(self._context(), self.root / "backend" / "cadence-genus")
-        flow_config = inputs.flow_config_script.read_text(encoding="utf-8")
-        self.assertNotIn("set wolf_inject(", flow_config)
+        document = yaml.safe_load(inputs.setup_yaml.read_text(encoding="utf-8"))
+        self.assertNotIn("inject", document)
 
     def test_inject_snippets_are_resolved_into_flow_config(self):
         inputs = prepare_genus_inputs(
@@ -543,48 +612,31 @@ class GenusPostsynNetlistAndInjectOverrideTests(GenusFixtureTestCase):
             }),
             self.root / "backend" / "cadence-genus",
         )
-        flow_config = inputs.flow_config_script.read_text(encoding="utf-8")
-        self.assertIn("set wolf_inject(elaborate,post)", flow_config)
-        self.assertIn("/tmp/after.tcl", flow_config)
-        # The raw file brace-escapes "puts {hi}" to keep it one safe list
-        # element (see _tcl_brace_list) -- round-trip through real tclsh to
-        # prove it decodes back to the exact original strings, not just
-        # check the (deliberately escaped) file text.
+        document = yaml.safe_load(inputs.setup_yaml.read_text(encoding="utf-8"))
+        self.assertEqual(
+            document["inject"], {"elaborate": {"post": ["/tmp/after.tcl", "puts {hi}"]}},
+        )
+        # Round-trip through presentation.tcl's own wolf_inject_for_step,
+        # backed by a get_flow_config stub seeded from this exact setup.yaml
+        # content -- proves the snippet strings (including one containing
+        # literal braces, "puts {hi}") survive both get_flow_config's own
+        # lookup and wolf_inject's eval, not just the YAML round-trip above.
         if TCLSH:
-            # flow-config.tcl's own tail now calls wolf_step/wolf_sep/
-            # wolf_info automatically once setup finishes (see
-            # prepare_genus_inputs) -- real presentation.tcl commands
-            # this narrow round-trip isn't exercising; stub them out so
-            # this stays a focused test of wolf_inject's own brace
-            # round-trip, not the setup-report banner.
-            stub_preamble = (
-                "proc wolf_sep {} { return {} }\n"
-                "proc wolf_step {args} {}\n"
-                "proc wolf_info {args} {}\n"
-            )
+            presentation = builtin_flow_root("cadence-genus") / "presentation.tcl"
+            marker = self.root / "after.tcl"
+            marker.write_text('puts "FILE_SNIPPET_RAN"\n', encoding="utf-8")
             script = (
-                stub_preamble + flow_config
-                + 'foreach s $wolf_inject(elaborate,post) { puts "ELEMENT:$s" }\n'
+                _get_flow_config_stub({"inject": {"elaborate": {"post": [str(marker), "puts {hi}"]}}})
+                + 'proc create_flow_step {args} {}\n'
+                + f'source {{{presentation}}}\n'
+                + 'wolf_inject_for_step elaborate post\n'
             )
             path = self.root / "roundtrip.tcl"
             path.write_text(script, encoding="utf-8")
             result = subprocess.run([TCLSH, str(path)], capture_output=True, text=True, check=False)
             self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
-            self.assertIn("ELEMENT:/tmp/after.tcl", result.stdout)
-            self.assertIn("ELEMENT:puts {hi}", result.stdout)
-            # And prove the snippet's own braces survive as real Tcl
-            # grouping (not literal backslash-brace text) once evaluated --
-            # the actual way wolf_inject consumes it.
-            eval_script = (
-                stub_preamble + flow_config + 'uplevel #0 [lindex $wolf_inject(elaborate,post) 1]\n'
-            )
-            eval_path = self.root / "roundtrip_eval.tcl"
-            eval_path.write_text(eval_script, encoding="utf-8")
-            eval_result = subprocess.run(
-                [TCLSH, str(eval_path)], capture_output=True, text=True, check=False,
-            )
-            self.assertEqual(eval_result.returncode, 0, msg=eval_result.stdout + eval_result.stderr)
-            self.assertEqual(eval_result.stdout.strip(), "hi")
+            self.assertIn("FILE_SNIPPET_RAN", result.stdout)
+            self.assertIn("hi", result.stdout)
 
     def test_inject_with_unknown_phase_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "must only set pre/post"):
@@ -604,8 +656,8 @@ class GenusStepStatusFileTests(GenusFixtureTestCase):
     def test_wolf_run_directory_is_set_to_the_run_directory(self):
         destination = self.root / "backend" / "cadence-genus"
         inputs = prepare_genus_inputs(self._context(), destination)
-        flow_config = inputs.flow_config_script.read_text(encoding="utf-8")
-        self.assertIn(f"set wolf_run_directory {_tcl_quote(str(destination.resolve()))}", flow_config)
+        document = yaml.safe_load(inputs.setup_yaml.read_text(encoding="utf-8"))
+        self.assertEqual(document["run_directory"], str(destination.resolve()))
 
     def test_wolf_step_status_is_created_empty(self):
         destination = self.root / "backend" / "cadence-genus"
@@ -626,8 +678,8 @@ class GenusStepStatusFileTests(GenusFixtureTestCase):
 class GenusThreadsTests(GenusFixtureTestCase):
     def test_no_thread_source_leaves_empty_config(self):
         inputs = prepare_genus_inputs(self._context(), self.root / "backend" / "cadence-genus")
-        flow_config = inputs.flow_config_script.read_text(encoding="utf-8")
-        self.assertIn('set wolf_max_cpus_per_server ""', flow_config)
+        document = yaml.safe_load(inputs.setup_yaml.read_text(encoding="utf-8"))
+        self.assertNotIn("max_cpus_per_server", document)
         manifest = yaml.safe_load(inputs.manifest.read_text(encoding="utf-8"))
         self.assertIsNone(manifest["max_cpus_per_server"])
 
@@ -635,8 +687,8 @@ class GenusThreadsTests(GenusFixtureTestCase):
         inputs = prepare_genus_inputs(
             self._context(threads=32), self.root / "backend" / "cadence-genus"
         )
-        flow_config = inputs.flow_config_script.read_text(encoding="utf-8")
-        self.assertIn("set wolf_max_cpus_per_server 32", flow_config)
+        document = yaml.safe_load(inputs.setup_yaml.read_text(encoding="utf-8"))
+        self.assertEqual(document["max_cpus_per_server"], 32)
         manifest = yaml.safe_load(inputs.manifest.read_text(encoding="utf-8"))
         self.assertEqual(manifest["max_cpus_per_server"], 32)
 
@@ -644,16 +696,16 @@ class GenusThreadsTests(GenusFixtureTestCase):
         inputs = prepare_genus_inputs(
             self._context(env_vars={"GENUS_NUM_CPUS": "64"}), self.root / "backend" / "cadence-genus"
         )
-        flow_config = inputs.flow_config_script.read_text(encoding="utf-8")
-        self.assertIn("set wolf_max_cpus_per_server 64", flow_config)
+        document = yaml.safe_load(inputs.setup_yaml.read_text(encoding="utf-8"))
+        self.assertEqual(document["max_cpus_per_server"], 64)
 
     def test_canonical_threads_win_over_genus_num_cpus_env_var(self):
         inputs = prepare_genus_inputs(
             self._context(threads=32, env_vars={"GENUS_NUM_CPUS": "64"}),
             self.root / "backend" / "cadence-genus",
         )
-        flow_config = inputs.flow_config_script.read_text(encoding="utf-8")
-        self.assertIn("set wolf_max_cpus_per_server 32", flow_config)
+        document = yaml.safe_load(inputs.setup_yaml.read_text(encoding="utf-8"))
+        self.assertEqual(document["max_cpus_per_server"], 32)
 
     def test_non_integer_genus_num_cpus_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "env.GENUS_NUM_CPUS must be an integer"):
@@ -669,16 +721,17 @@ class GenusThreadsTests(GenusFixtureTestCase):
         silently, on a design large enough for that to matter. init_innovus
         re-runs at the start of every implementation stage (a separate
         Innovus invocation each time), so it must re-apply the same
-        $::wolf_max_cpus_per_server flow-config.tcl already resolves for
-        Genus, via Innovus's own set_multi_cpu_usage (it has no equivalent
+        max_cpus_per_server get_flow_config already resolves for Genus,
+        via Innovus's own set_multi_cpu_usage (it has no equivalent
         set_db attribute)."""
         step = builtin_flow_root("cadence-genus") / "floorplanning.tcl"
         text = step.read_text(encoding="utf-8")
         bodies = _extract_step_bodies(text)
         self.assertIn("init_innovus", bodies)
         body = bodies["init_innovus"]
-        self.assertIn("set_multi_cpu_usage -local_cpu $::wolf_max_cpus_per_server", body)
-        self.assertIn('if {$::wolf_max_cpus_per_server ne ""}', body)
+        self.assertIn("get_flow_config -quiet max_cpus_per_server", body)
+        self.assertIn("set_multi_cpu_usage -local_cpu $wolf_max_cpus_per_server", body)
+        self.assertIn('if {$wolf_max_cpus_per_server ne ""}', body)
 
 
 class GenusSynthesisFlowTests(GenusFixtureTestCase):
@@ -790,8 +843,8 @@ class GenusSynthesisFlowTests(GenusFixtureTestCase):
                           technology=self._technology(dont_use_cells=("*_lvt", "AOI*"))),
             self.root / "backend" / "cadence-genus",
         )
-        flow_config = inputs.flow_config_script.read_text(encoding="utf-8")
-        self.assertIn("set wolf_dont_use_cells {*_lvt AOI*}", flow_config)
+        document = yaml.safe_load(inputs.setup_yaml.read_text(encoding="utf-8"))
+        self.assertEqual(document["dont_use_cells"], ["*_lvt", "AOI*"])
         manifest = yaml.safe_load(inputs.manifest.read_text(encoding="utf-8"))
         self.assertEqual(manifest["dont_use_cells"], ["*_lvt", "AOI*"])
 
@@ -799,8 +852,8 @@ class GenusSynthesisFlowTests(GenusFixtureTestCase):
         inputs = prepare_genus_inputs(
             self._context(flow_name=FLOW_GENUS_SYN_GENERIC), self.root / "backend" / "cadence-genus"
         )
-        flow_config = inputs.flow_config_script.read_text(encoding="utf-8")
-        self.assertIn("set wolf_dont_use_cells {}", flow_config)
+        document = yaml.safe_load(inputs.setup_yaml.read_text(encoding="utf-8"))
+        self.assertNotIn("dont_use_cells", document)
 
     def test_floorplan_def_without_physical_views_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "floorplan_def requires"):
@@ -818,9 +871,9 @@ class GenusSynthesisFlowTests(GenusFixtureTestCase):
             self._context(floorplan_def=deff, technology=self._technology(technology_lefs=(lef,))),
             self.root / "backend" / "cadence-genus",
         )
-        flow_config = inputs.flow_config_script.read_text(encoding="utf-8")
-        self.assertIn(str(deff), flow_config)
-        self.assertIn(str(lef), flow_config)
+        document = yaml.safe_load(inputs.setup_yaml.read_text(encoding="utf-8"))
+        self.assertEqual(document["floorplan_def"], str(deff))
+        self.assertEqual(document["technology_lefs"], [str(lef)])
         manifest = yaml.safe_load(inputs.manifest.read_text(encoding="utf-8"))
         self.assertEqual(manifest["floorplan_def"], str(deff))
 
@@ -852,8 +905,9 @@ class GenusMultiCornerMmmcTests(GenusFixtureTestCase):
         )
         self.assertIsNone(inputs.mmmc_script)
         self.assertIsNotNone(inputs.technology_script)
-        flow_config = inputs.flow_config_script.read_text(encoding="utf-8")
-        self.assertIn('set wolf_mmmc_script ""', flow_config)
+        document = yaml.safe_load(inputs.setup_yaml.read_text(encoding="utf-8"))
+        self.assertNotIn("mmmc_script", document)
+        self.assertEqual(document["technology_script"], str(inputs.technology_script))
 
     def test_multiple_corners_emit_mmmc_instead_of_plain_library(self):
         technology = ResolvedTechnology(
@@ -882,9 +936,9 @@ class GenusMultiCornerMmmcTests(GenusFixtureTestCase):
         self.assertIn(
             "set_analysis_view -setup {typical worst_case} -hold {typical worst_case}", mmmc_text,
         )
-        flow_config = inputs.flow_config_script.read_text(encoding="utf-8")
-        self.assertIn(str(inputs.mmmc_script), flow_config)
-        self.assertIn('set wolf_technology_script ""', flow_config)
+        document = yaml.safe_load(inputs.setup_yaml.read_text(encoding="utf-8"))
+        self.assertEqual(document["mmmc_script"], str(inputs.mmmc_script))
+        self.assertNotIn("technology_script", document)
         manifest = yaml.safe_load(inputs.manifest.read_text(encoding="utf-8"))
         corner_names = {entry["name"] for entry in manifest["technology"]["timing_corners"]}
         self.assertEqual(corner_names, {"typical", "worst_case"})
@@ -917,9 +971,8 @@ class GenusActiveViewsTests(GenusFixtureTestCase):
             )),
             self.root / "backend" / "cadence-genus",
         )
-        flow_config = inputs.flow_config_script.read_text(encoding="utf-8")
-        self.assertIn("set wolf_active_setup_views {}", flow_config)
-        self.assertIn("set wolf_active_hold_views {}", flow_config)
+        document = yaml.safe_load(inputs.setup_yaml.read_text(encoding="utf-8"))
+        self.assertNotIn("active_views", document)
 
     def test_setup_and_hold_views_are_resolved_into_flow_config(self):
         inputs = prepare_genus_inputs(
@@ -932,9 +985,8 @@ class GenusActiveViewsTests(GenusFixtureTestCase):
             ),
             self.root / "backend" / "cadence-genus",
         )
-        flow_config = inputs.flow_config_script.read_text(encoding="utf-8")
-        self.assertIn("set wolf_active_setup_views {worst_case}", flow_config)
-        self.assertIn("set wolf_active_hold_views {typical}", flow_config)
+        document = yaml.safe_load(inputs.setup_yaml.read_text(encoding="utf-8"))
+        self.assertEqual(document["active_views"], {"setup": ["worst_case"], "hold": ["typical"]})
 
     def test_a_view_name_not_declared_by_the_technology_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "names undeclared view"):
@@ -969,8 +1021,10 @@ class GenusActiveViewsTests(GenusFixtureTestCase):
         bodies = _extract_step_bodies(step.read_text(encoding="utf-8"))
         body = bodies["init_innovus"]
         self.assertIn("set_analysis_view -setup $wolf_setup_views -hold $wolf_hold_views", body)
-        self.assertIn("if {[llength $::wolf_active_setup_views]}", body)
-        self.assertIn("if {[llength $::wolf_active_hold_views]}", body)
+        self.assertIn("get_flow_config -quiet active_views setup", body)
+        self.assertIn("get_flow_config -quiet active_views hold", body)
+        self.assertIn("if {[llength $wolf_active_setup_views]}", body)
+        self.assertIn("if {[llength $wolf_active_hold_views]}", body)
         # genus_turn_on_analysis_views itself is kept as a named,
         # injectable extension point (so any existing wolf_inject hook
         # for it still fires), but the real work no longer lives there.
@@ -990,18 +1044,18 @@ class GenusPowerGroundNetsTests(GenusFixtureTestCase):
 
     def test_default_is_no_nets(self):
         inputs = prepare_genus_inputs(self._context(), self.root / "backend" / "cadence-genus")
-        flow_config = inputs.flow_config_script.read_text(encoding="utf-8")
-        self.assertIn("set wolf_power_nets {}", flow_config)
-        self.assertIn("set wolf_ground_nets {}", flow_config)
+        document = yaml.safe_load(inputs.setup_yaml.read_text(encoding="utf-8"))
+        self.assertNotIn("power_nets", document)
+        self.assertNotIn("ground_nets", document)
 
     def test_resolved_nets_are_written_into_flow_config(self):
         inputs = prepare_genus_inputs(
             self._context(power_nets=("VDD", "VDD1"), ground_nets=("VSS",)),
             self.root / "backend" / "cadence-genus",
         )
-        flow_config = inputs.flow_config_script.read_text(encoding="utf-8")
-        self.assertIn("set wolf_power_nets {VDD VDD1}", flow_config)
-        self.assertIn("set wolf_ground_nets {VSS}", flow_config)
+        document = yaml.safe_load(inputs.setup_yaml.read_text(encoding="utf-8"))
+        self.assertEqual(document["power_nets"], ["VDD", "VDD1"])
+        self.assertEqual(document["ground_nets"], ["VSS"])
 
     def test_get_flow_config_exposes_power_and_ground_nets(self):
         inputs = prepare_genus_inputs(
@@ -1022,8 +1076,10 @@ class GenusPowerGroundNetsTests(GenusFixtureTestCase):
         step = builtin_flow_root("cadence-genus") / "synthesis.tcl"
         bodies = _extract_step_bodies(step.read_text(encoding="utf-8"))
         body = bodies["run_init_design"]
-        self.assertIn("set_db init_power_nets $::wolf_power_nets", body)
-        self.assertIn("set_db init_ground_nets $::wolf_ground_nets", body)
+        self.assertIn("get_flow_config -quiet power_nets", body)
+        self.assertIn("get_flow_config -quiet ground_nets", body)
+        self.assertIn("set_db init_power_nets $wolf_power_nets", body)
+        self.assertIn("set_db init_ground_nets $wolf_ground_nets", body)
         # The real init_design call is the LAST occurrence of the word in
         # the step body -- an earlier one is inside a comment explaining
         # why init_design runs at all.
@@ -1049,10 +1105,9 @@ class GenusFloorplanDefExportTests(GenusFixtureTestCase):
         step = builtin_flow_root("cadence-genus") / "floorplanning.tcl"
         bodies = _extract_step_bodies(step.read_text(encoding="utf-8"))
         body = bodies["export_floorplan_def"]
-        self.assertIn(
-            'set wolf_fp_def_out [file join $::wolf_outputs_dir "$::wolf_design_name.floorplan.def"]',
-            body,
-        )
+        self.assertIn("set wolf_fp_def_out", body)
+        self.assertIn("[get_flow_config outputs_dir]", body)
+        self.assertIn("[get_flow_config design_name].floorplan.def", body)
         self.assertIn("write_def $wolf_fp_def_out", body)
 
 
@@ -1065,12 +1120,12 @@ class GenusCtsCellTests(GenusFixtureTestCase):
 
     def test_default_is_empty(self):
         inputs = prepare_genus_inputs(self._context(), self.root / "backend" / "cadence-genus")
-        flow_config = inputs.flow_config_script.read_text(encoding="utf-8")
-        self.assertIn("set wolf_cts_buffer_cells {}", flow_config)
-        self.assertIn("set wolf_cts_inverter_cells {}", flow_config)
-        self.assertIn("set wolf_cts_clock_gating_cells {}", flow_config)
-        self.assertIn('set wolf_cts_target_skew ""', flow_config)
-        self.assertIn('set wolf_cts_max_fanout ""', flow_config)
+        document = yaml.safe_load(inputs.setup_yaml.read_text(encoding="utf-8"))
+        for key in (
+            "cts_buffer_cells", "cts_inverter_cells", "cts_clock_gating_cells",
+            "cts_target_skew", "cts_max_fanout",
+        ):
+            self.assertNotIn(key, document)
 
     def test_resolved_cells_and_targets_are_written_into_flow_config(self):
         inputs = prepare_genus_inputs(
@@ -1081,13 +1136,13 @@ class GenusCtsCellTests(GenusFixtureTestCase):
             }),
             self.root / "backend" / "cadence-genus",
         )
-        flow_config = inputs.flow_config_script.read_text(encoding="utf-8")
-        self.assertIn("set wolf_cts_buffer_cells {BUFX*}", flow_config)
-        self.assertIn("set wolf_cts_inverter_cells {INVX*}", flow_config)
-        self.assertIn("set wolf_cts_clock_gating_cells {CKGX*}", flow_config)
-        self.assertIn("set wolf_cts_target_skew 0.05", flow_config)
-        self.assertIn("set wolf_cts_target_max_transition_time 0.2", flow_config)
-        self.assertIn("set wolf_cts_max_fanout 16", flow_config)
+        document = yaml.safe_load(inputs.setup_yaml.read_text(encoding="utf-8"))
+        self.assertEqual(document["cts_buffer_cells"], ["BUFX*"])
+        self.assertEqual(document["cts_inverter_cells"], ["INVX*"])
+        self.assertEqual(document["cts_clock_gating_cells"], ["CKGX*"])
+        self.assertEqual(document["cts_target_skew"], 0.05)
+        self.assertEqual(document["cts_target_max_transition_time"], 0.2)
+        self.assertEqual(document["cts_max_fanout"], 16)
 
     def test_top_and_leaf_cell_variants_are_written_into_flow_config(self):
         inputs = prepare_genus_inputs(
@@ -1097,11 +1152,11 @@ class GenusCtsCellTests(GenusFixtureTestCase):
             }),
             self.root / "backend" / "cadence-genus",
         )
-        flow_config = inputs.flow_config_script.read_text(encoding="utf-8")
-        self.assertIn("set wolf_cts_buffer_cells_top {BUFTOPX*}", flow_config)
-        self.assertIn("set wolf_cts_buffer_cells_leaf {BUFLEAFX*}", flow_config)
-        self.assertIn("set wolf_cts_inverter_cells_top {INVTOPX*}", flow_config)
-        self.assertIn("set wolf_cts_inverter_cells_leaf {INVLEAFX*}", flow_config)
+        document = yaml.safe_load(inputs.setup_yaml.read_text(encoding="utf-8"))
+        self.assertEqual(document["cts_buffer_cells_top"], ["BUFTOPX*"])
+        self.assertEqual(document["cts_buffer_cells_leaf"], ["BUFLEAFX*"])
+        self.assertEqual(document["cts_inverter_cells_top"], ["INVTOPX*"])
+        self.assertEqual(document["cts_inverter_cells_leaf"], ["INVLEAFX*"])
 
     def test_unsupported_cts_key_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "unsupported setup.yaml key"):
@@ -1129,25 +1184,25 @@ class GenusCtsCellTests(GenusFixtureTestCase):
         step = builtin_flow_root("cadence-genus") / "common_steps.tcl"
         body = _extract_step_bodies(step.read_text(encoding="utf-8"))["set_cts_config"]
         # Cell-list attributes (including the top/leaf variants) are
-        # applied via one generic foreach {attr var} loop, not one `if`
+        # applied via one generic foreach loop over the real set_db
+        # attribute names (which, unlike the old wolf_cts_* globals,
+        # are now identical to the get_flow_config keys), not one `if`
         # block per attribute -- assert the loop actually lists each one.
-        for attribute, variable in (
-            ("cts_buffer_cells", "wolf_cts_buffer_cells"),
-            ("cts_buffer_cells_top", "wolf_cts_buffer_cells_top"),
-            ("cts_buffer_cells_leaf", "wolf_cts_buffer_cells_leaf"),
-            ("cts_inverter_cells", "wolf_cts_inverter_cells"),
-            ("cts_inverter_cells_top", "wolf_cts_inverter_cells_top"),
-            ("cts_inverter_cells_leaf", "wolf_cts_inverter_cells_leaf"),
-            ("cts_clock_gating_cells", "wolf_cts_clock_gating_cells"),
+        for attribute in (
+            "cts_buffer_cells", "cts_buffer_cells_top", "cts_buffer_cells_leaf",
+            "cts_inverter_cells", "cts_inverter_cells_top", "cts_inverter_cells_leaf",
+            "cts_clock_gating_cells",
         ):
-            self.assertIn(f"{attribute} {variable}", body)
+            self.assertIn(attribute, body)
+        self.assertIn("get_flow_config -quiet $wolf_cts_attr", body)
         self.assertIn("set_db $wolf_cts_attr $wolf_cts_value", body)
         for attribute, variable in (
             ("cts_target_skew", "wolf_cts_target_skew"),
             ("cts_target_max_transition_time", "wolf_cts_target_max_transition_time"),
             ("cts_max_fanout", "wolf_cts_max_fanout"),
         ):
-            self.assertIn(f"set_db {attribute} $::{variable}", body)
+            self.assertIn(f"get_flow_config -quiet {attribute}", body)
+            self.assertIn(f"set_db {attribute} ${variable}", body)
 
 
 class GenusTieoffTests(GenusFixtureTestCase):
@@ -1157,9 +1212,9 @@ class GenusTieoffTests(GenusFixtureTestCase):
 
     def test_default_is_empty(self):
         inputs = prepare_genus_inputs(self._context(), self.root / "backend" / "cadence-genus")
-        flow_config = inputs.flow_config_script.read_text(encoding="utf-8")
-        self.assertIn("set wolf_tieoff_cells {}", flow_config)
-        self.assertIn('set wolf_tieoff_honor_dont_use ""', flow_config)
+        document = yaml.safe_load(inputs.setup_yaml.read_text(encoding="utf-8"))
+        self.assertNotIn("add_tieoffs_cells", document)
+        self.assertNotIn("add_tieoffs_honor_dont_use", document)
 
     def test_resolved_cells_are_written_into_flow_config(self):
         inputs = prepare_genus_inputs(
@@ -1169,11 +1224,11 @@ class GenusTieoffTests(GenusFixtureTestCase):
             }),
             self.root / "backend" / "cadence-genus",
         )
-        flow_config = inputs.flow_config_script.read_text(encoding="utf-8")
-        self.assertIn("set wolf_tieoff_cells {TIEHIX1 TIELOX1}", flow_config)
-        self.assertIn("set wolf_tieoff_honor_dont_use true", flow_config)
-        self.assertIn("set wolf_tieoff_max_fanout 10", flow_config)
-        self.assertIn("set wolf_tieoff_max_distance 20.0", flow_config)
+        document = yaml.safe_load(inputs.setup_yaml.read_text(encoding="utf-8"))
+        self.assertEqual(document["add_tieoffs_cells"], ["TIEHIX1", "TIELOX1"])
+        self.assertEqual(document["add_tieoffs_honor_dont_use"], True)
+        self.assertEqual(document["add_tieoffs_max_fanout"], 10)
+        self.assertEqual(document["add_tieoffs_max_distance"], 20.0)
 
     def test_more_than_two_cells_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "at most two cells"):
@@ -1185,7 +1240,8 @@ class GenusTieoffTests(GenusFixtureTestCase):
     def test_add_tieoffs_step_resolves_and_reports(self):
         step = builtin_flow_root("cadence-genus") / "cts.tcl"
         body = _extract_step_bodies(step.read_text(encoding="utf-8"))["add_tieoffs"]
-        self.assertIn("set_db add_tieoffs_cells $::wolf_tieoff_cells", body)
+        self.assertIn("get_flow_config -quiet add_tieoffs_cells", body)
+        self.assertIn("set_db add_tieoffs_cells $wolf_tieoff_cells", body)
         self.assertIn("get_db insts -if {.base_cell.name == $wolf_tie_cell}", body)
         self.assertIn("check_tieoffs", body)
         self.assertIn("wolf_error", body)
@@ -1199,10 +1255,10 @@ class GenusClockRoutingTests(GenusFixtureTestCase):
 
     def test_default_is_empty(self):
         inputs = prepare_genus_inputs(self._context(), self.root / "backend" / "cadence-genus")
-        flow_config = inputs.flow_config_script.read_text(encoding="utf-8")
-        self.assertIn("set wolf_clock_routing_width_mult {}", flow_config)
-        self.assertIn("set wolf_clock_routing_spacing_mult {}", flow_config)
-        self.assertIn("set wolf_clock_routing_types {}", flow_config)
+        document = yaml.safe_load(inputs.setup_yaml.read_text(encoding="utf-8"))
+        self.assertNotIn("clock_routing_width_multiplier", document)
+        self.assertNotIn("clock_routing_spacing_multiplier", document)
+        self.assertNotIn("clock_routing_types", document)
 
     def test_resolved_rule_and_types_are_written_into_flow_config(self):
         inputs = prepare_genus_inputs(
@@ -1218,16 +1274,15 @@ class GenusClockRoutingTests(GenusFixtureTestCase):
             }),
             self.root / "backend" / "cadence-genus",
         )
-        flow_config = inputs.flow_config_script.read_text(encoding="utf-8")
-        self.assertIn("set wolf_clock_routing_width_mult {M6:M5 2.0}", flow_config)
-        self.assertIn(
-            "trunk {use_rule true top_preferred_layer M6 bottom_preferred_layer M5}",
-            flow_config,
-        )
-        self.assertIn(
-            "leaf {use_rule true top_preferred_layer M4 bottom_preferred_layer M3}",
-            flow_config,
-        )
+        document = yaml.safe_load(inputs.setup_yaml.read_text(encoding="utf-8"))
+        self.assertEqual(document["clock_routing_width_multiplier"], {"M6:M5": 2.0})
+        self.assertEqual(document["clock_routing_spacing_multiplier"], {"M6:M5": 2.0})
+        self.assertEqual(document["clock_routing_types"], {
+            "trunk": {"route_rule": True, "top_preferred_layer": "M6",
+                      "bottom_preferred_layer": "M5"},
+            "leaf": {"route_rule": True, "top_preferred_layer": "M4",
+                     "bottom_preferred_layer": "M3"},
+        })
 
     def test_unsupported_route_type_name_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "unsupported clock_routing_types key"):
@@ -1376,8 +1431,8 @@ class WolfStepStatusWrapperTests(unittest.TestCase):
         script = self.root / "script.tcl"
         script.write_text(
             self._NATIVE_STUB
+            + _get_flow_config_stub({"run_directory": str(self.run_directory)})
             + f'source {{{presentation}}}\n'
-            f'set wolf_run_directory {{{self.run_directory}}}\n'
             + extra_tcl,
             encoding="utf-8",
         )
@@ -1434,6 +1489,7 @@ class WolfStepStatusWrapperTests(unittest.TestCase):
         script = self.root / "script.tcl"
         script.write_text(
             self._NATIVE_STUB
+            + _get_flow_config_stub({})
             + f'source {{{presentation}}}\n'
             "create_flow_step -name ok_step -owner wolf {\n"
             "    set ::ran 1\n"
@@ -1546,11 +1602,11 @@ proc wolf_test_run_flow {name} {
 }
 """
 
-    def _run_flow_tcl(self, flow_config_text: str, *, run: str = "synthesis") -> str:
+    def _run_flow_tcl(self, document: dict, *, run: str = "synthesis", extra: str = "") -> str:
         root = builtin_flow_root("cadence-genus")
         stub = self.root / "stub_run.tcl"
         stub.write_text(
-            self._STUB_COMMANDS + flow_config_text
+            self._STUB_COMMANDS + _get_flow_config_stub(document) + extra
             + f'source {{{root / "presentation.tcl"}}}\n'
             + f'source {{{root / "common_flows.tcl"}}}\n'
             + f'source {{{root / "common_steps.tcl"}}}\n'
@@ -1563,36 +1619,23 @@ proc wolf_test_run_flow {name} {
         self.assertNotIn("UNKNOWN STEP OR FLOW", result.stdout)
         return result.stdout
 
-    def _base_config(self, **extra) -> str:
-        values = {
-            "wolf_design_name": "demo", "wolf_design_top": "top",
-            "wolf_reports_dir": str(self.root / "reports"), "wolf_outputs_dir": str(self.root / "outputs"),
-            "wolf_handoff_dir": str(self.root / "handoff"),
-            "wolf_max_cpus_per_server": '""', "wolf_technology_script": '""',
-            "wolf_mmmc_script": '""',
-            "wolf_overrides_script": '""', "wolf_sources_script": str(self.root / "sources.tcl"),
-            "wolf_constraints_file": str(self.root / "constraints.sdc"),
-            "wolf_dont_use_cells": "{}", "wolf_technology_lefs": "{}", "wolf_cell_lefs": "{}",
-            "wolf_floorplan_def": '""', "wolf_postsyn_netlists": "{}",
-            "wolf_clock_derate_early": '""', "wolf_clock_derate_late": '""',
-            "wolf_preserve_blocks": "{}", "wolf_preserve_instances": "{}",
-            "wolf_power_intent_file": '""', "wolf_max_routing_layers": '""',
-            "wolf_power_nets": "{}", "wolf_ground_nets": "{}",
-        }
-        values.update(extra)
+    def _base_document(self, **overrides) -> dict:
         (self.root / "reports").mkdir(exist_ok=True)
         (self.root / "outputs").mkdir(exist_ok=True)
         (self.root / "sources.tcl").write_text("# stub\n", encoding="utf-8")
         (self.root / "constraints.sdc").write_text("# stub\n", encoding="utf-8")
-        lines = []
-        for key, value in values.items():
-            literal = value if str(value).startswith(("{", '"')) else f'"{value}"'
-            lines.append(f"set {key} {literal}")
-        lines.append("array set wolf_inject {}")
-        return "\n".join(lines) + "\n"
+        document = {
+            "design_name": "demo", "design_top": "top",
+            "reports_dir": str(self.root / "reports"), "outputs_dir": str(self.root / "outputs"),
+            "handoff_dir": str(self.root / "handoff"),
+            "sources_script": str(self.root / "sources.tcl"),
+            "constraints_file": str(self.root / "constraints.sdc"),
+        }
+        document.update(overrides)
+        return document
 
     def test_full_synthesis_flow_registers_and_runs_steps_in_order(self):
-        output = self._run_flow_tcl(self._base_config(wolf_dont_use_cells="{{*_lvt}}"))
+        output = self._run_flow_tcl(self._base_document(dont_use_cells=["*_lvt"]))
         ordered = (
             "REGISTER STEP block_start", "REGISTER STEP avoid_module_renaming",
             "REGISTER STEP read_mmmc", "REGISTER STEP apply_clock_derate",
@@ -1621,9 +1664,9 @@ proc wolf_test_run_flow {name} {
         self.assertIn(f"STUB write_hdl > {self.root / 'outputs'}/demo.opt.v", output)
 
     def test_single_stage_flows_also_resolve_and_run(self):
-        self._run_flow_tcl(self._base_config(), run="syn_generic")
-        self._run_flow_tcl(self._base_config(), run="syn_map")
-        self._run_flow_tcl(self._base_config(), run="syn_opt")
+        self._run_flow_tcl(self._base_document(), run="syn_generic")
+        self._run_flow_tcl(self._base_document(), run="syn_map")
+        self._run_flow_tcl(self._base_document(), run="syn_opt")
 
     def test_mmmc_script_is_read_and_skips_the_plain_read_sdc(self):
         """A real mmmc.tcl (as prepare_genus_inputs would generate for a
@@ -1641,7 +1684,7 @@ proc wolf_test_run_flow {name} {
             encoding="utf-8",
         )
         output = self._run_flow_tcl(
-            self._base_config(wolf_mmmc_script=str(mmmc)), run="syn_generic",
+            self._base_document(mmmc_script=str(mmmc)), run="syn_generic",
         )
         self.assertIn(f"STUB read_mmmc {mmmc}", output)
         self.assertIn("STUB create_library_set -name typical", output)
@@ -1657,7 +1700,7 @@ proc wolf_test_run_flow {name} {
 
     def test_physical_views_add_read_physical_and_init_design(self):
         lef = self.root / "tech.lef"
-        output = self._run_flow_tcl(self._base_config(wolf_technology_lefs=f'{{"{lef}"}}'), run="syn_generic")
+        output = self._run_flow_tcl(self._base_document(technology_lefs=[str(lef)]), run="syn_generic")
         physical_index = output.index("STUB read_physical")
         elaborate_index = output.index("STUB elaborate top")
         init_index = output.index("STUB init_design")
@@ -1668,7 +1711,7 @@ proc wolf_test_run_flow {name} {
         """read_physical and run_init_design are always real, registered
         steps now (each its own banner) -- what must not happen without
         any LEF configured is the real STUB call underneath either one."""
-        output = self._run_flow_tcl(self._base_config(), run="syn_generic")
+        output = self._run_flow_tcl(self._base_document(), run="syn_generic")
         self.assertNotIn("STUB read_physical", output)
         self.assertNotIn("STUB init_design", output)
         self.assertIn("read_physical: no LEF resolved for this technology, skipping", output)
@@ -1676,7 +1719,7 @@ proc wolf_test_run_flow {name} {
 
     def test_postsyn_netlists_are_read_before_handoff(self):
         output = self._run_flow_tcl(
-            self._base_config(wolf_postsyn_netlists='{"/tiles/lut4ab.v"}'), run="syn_opt",
+            self._base_document(postsyn_netlists=["/tiles/lut4ab.v"]), run="syn_opt",
         )
         self.assertIn("STUB read_hdl -sv -library work /tiles/lut4ab.v", output)
         read_index = output.index("STUB read_hdl -sv -library work /tiles/lut4ab.v")
@@ -1687,10 +1730,8 @@ proc wolf_test_run_flow {name} {
         marker = self.root / "injected-marker"
         snippet = self.root / "snippet.tcl"
         snippet.write_text(f'puts "INJECTED"\nclose [open {{{marker}}} w]\n', encoding="utf-8")
-        config = self._base_config() + (
-            f'set wolf_inject(elaborate,post) {{{{{snippet}}}}}\n'
-        )
-        output = self._run_flow_tcl(config, run="syn_generic")
+        document = self._base_document(inject={"elaborate": {"post": [str(snippet)]}})
+        output = self._run_flow_tcl(document, run="syn_generic")
         self.assertIn("INJECTED", output)
         self.assertTrue(marker.is_file())
         elaborate_index = output.index("STUB elaborate top")
@@ -1820,14 +1861,20 @@ class FlowIdentityTests(unittest.TestCase):
 
 class GenusTclListQuotingTests(GenusFixtureTestCase):
     """Regression coverage for the real production bug where every
-    `$::wolf_*` list variable in flow-config.tcl (and mmmc.tcl's list-typed
-    arguments) was written with an extra, un-stripped layer of quoting
-    baked into its stored Tcl value -- invisible to a list-reparsing
-    consumer (foreach/llength/lindex/concat), but corrupting a plain
-    word-substitution consumer like `set_analysis_view -setup
-    $wolf_setup_views`. See `_tcl_list_word`'s own docstring in
-    cadence_genus.py for the full mechanism and the two distinct bugs it
-    covers (double-quoting, then an intermediate double-bracing)."""
+    `$::wolf_*` list variable in the old flow-config.tcl (and mmmc.tcl's
+    list-typed arguments) was written with an extra, un-stripped layer of
+    quoting baked into its stored Tcl value -- invisible to a
+    list-reparsing consumer (foreach/llength/lindex/concat), but
+    corrupting a plain word-substitution consumer like `set_analysis_view
+    -setup $wolf_setup_views`. That whole flow-config.tcl rendering layer
+    is gone now (every value reaches Tcl through get_flow_config against
+    the real rendered setup.yaml instead -- see _tcl_list's own docstring
+    in cadence_genus.py for the full original mechanism), which is
+    structurally not susceptible to this bug class any more: get_flow_config
+    returns a real Tcl value Flowtool itself constructed from the YAML, not
+    hand-rendered Tcl list-literal text. These tests prove that property
+    against the real rendered setup.yaml and the real floorplanning.tcl
+    step body, not just against the elimination of the old mechanism."""
 
     def _corners(self):
         wcl_lib = self.root / "wcl.lib"
@@ -1841,14 +1888,15 @@ class GenusTclListQuotingTests(GenusFixtureTestCase):
 
     @unittest.skipUnless(TCLSH, "tclsh is not installed")
     def test_every_list_variable_round_trips_clean_through_real_tclsh(self):
-        """Render flow-config.tcl for a realistic mix of list-valued
-        settings -- an empty list (wolf_dont_use_cells, left unconfigured),
-        a multi-element list with a space in one element (synthetic net
+        """Render the real setup.yaml for a realistic mix of list-valued
+        settings -- an empty list (dont_use_cells, left unconfigured), a
+        multi-element list with a space in one element (synthetic net
         names, not real ones), and a single element containing Tcl-special
-        bracket characters (a synthetic tieoff cell name) -- then source it
-        in real tclsh and assert llength/lindex see exactly the intended
-        elements, with no residual quote or brace characters in any
-        element."""
+        bracket characters (a synthetic tieoff cell name) -- feed it
+        through the real get_flow_config stub (backed by Tcl's own
+        list/dict constructors, see _get_flow_config_stub) and assert
+        llength/lindex see exactly the intended elements, with no residual
+        quote or brace characters in any element."""
         inputs = prepare_genus_inputs(
             self._design_setup(
                 {"add_tieoffs_cells": ["TIE[HI]"]},
@@ -1861,45 +1909,44 @@ class GenusTclListQuotingTests(GenusFixtureTestCase):
             ),
             self.root / "backend" / "cadence-genus",
         )
-        flow_config = inputs.flow_config_script.read_text(encoding="utf-8")
+        document = yaml.safe_load(inputs.setup_yaml.read_text(encoding="utf-8"))
         probe = self.root / "probe.tcl"
         probe.write_text(
-            'proc wolf_sep {} { return {} }\n'
-            'proc wolf_step {args} {}\n'
-            'proc wolf_info {msg} {}\n'
-            'proc wolf_error {msg} {}\n'
-            + flow_config
-            + "foreach v {wolf_dont_use_cells wolf_power_nets wolf_ground_nets "
-            "wolf_tieoff_cells} {\n"
-            '    puts "$v llength=[llength [set ::$v]]"\n'
-            "    foreach e [set ::$v] { puts \"$v elem=|$e|\" }\n"
+            _get_flow_config_stub(document)
+            + "foreach v {dont_use_cells power_nets ground_nets add_tieoffs_cells} {\n"
+            '    set value [get_flow_config -quiet $v]\n'
+            '    puts "$v llength=[llength $value]"\n'
+            '    foreach e $value { puts "$v elem=|$e|" }\n'
             "}\n",
             encoding="utf-8",
         )
         result = subprocess.run([TCLSH, str(probe)], capture_output=True, text=True, check=False)
         self.assertEqual(result.returncode, 0, msg=result.stderr)
         output = result.stdout
-        self.assertIn("wolf_dont_use_cells llength=0", output)
-        self.assertIn("wolf_power_nets llength=2", output)
-        self.assertIn("wolf_power_nets elem=|VDD|", output)
-        self.assertIn("wolf_power_nets elem=|aux supply|", output)
-        self.assertIn("wolf_ground_nets llength=1", output)
-        self.assertIn("wolf_ground_nets elem=|VSS|", output)
-        self.assertIn("wolf_tieoff_cells llength=1", output)
-        self.assertIn("wolf_tieoff_cells elem=|TIE[HI]|", output)
+        self.assertIn("dont_use_cells llength=0", output)
+        self.assertIn("power_nets llength=2", output)
+        self.assertIn("power_nets elem=|VDD|", output)
+        self.assertIn("power_nets elem=|aux supply|", output)
+        self.assertIn("ground_nets llength=1", output)
+        self.assertIn("ground_nets elem=|VSS|", output)
+        self.assertIn("add_tieoffs_cells llength=1", output)
+        self.assertIn("add_tieoffs_cells elem=|TIE[HI]|", output)
 
     @unittest.skipUnless(TCLSH, "tclsh is not installed")
     def test_active_views_reach_set_analysis_view_clean_in_init_innovus(self):
         """The exact real failure reported from production: a two-corner
         technology (named wcl/bc here, matching the real report) with
-        backend.cadence-flowtool.active_views narrowed to one view each for
-        setup/hold, run through floorplanning.tcl's real init_innovus step
-        body (not a stand-in) via a stub Innovus. Before the fix,
+        this design's own setup.yaml active_views narrowed to one view
+        each for setup/hold, run through floorplanning.tcl's real
+        init_innovus step body (not a stand-in) via a stub Innovus backed
+        by the real rendered setup.yaml. Before the original fix,
         set_analysis_view received the quoted/braced literal `"wcl"` (or,
-        after the intermediate fix attempt, `{wcl}`) instead of a clean
+        after an intermediate fix attempt, `{wcl}`) instead of a clean
         `wcl` -- which is exactly why Innovus reported "Can not find
         'analysis view' object with the name '\"wcl\"'" against the real
-        design."""
+        design. get_flow_config structurally cannot reproduce that bug
+        (it returns a real Tcl value, not rendered list-literal text),
+        but this keeps the exact real scenario pinned."""
         inputs = prepare_genus_inputs(
             self._design_setup(
                 {"active_views": {"setup": ["wcl"], "hold": ["bc"]}},
@@ -1910,15 +1957,11 @@ class GenusTclListQuotingTests(GenusFixtureTestCase):
             ),
             self.root / "backend" / "cadence-genus",
         )
-        flow_config = inputs.flow_config_script.read_text(encoding="utf-8")
+        document = yaml.safe_load(inputs.setup_yaml.read_text(encoding="utf-8"))
         floorplanning = builtin_flow_root("cadence-genus") / "floorplanning.tcl"
         stub = self.root / "innovus_stub.tcl"
         stub.write_text(
-            'proc wolf_sep {} { return {} }\n'
-            'proc wolf_step {args} {}\n'
-            'proc wolf_info {msg} {}\n'
-            'proc wolf_error {msg} {}\n'
-            + flow_config
+            _get_flow_config_stub(document)
             + 'proc get_db {args} {\n'
             '    if {[lindex $args 0] eq "analysis_views"} { return {wcl bc} }\n'
             '    return {}\n'

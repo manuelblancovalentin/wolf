@@ -79,14 +79,14 @@ proc wolf_inject {snippets} {
     }
 }
 
-# Reads backend.cadence-flowtool.inject.<step>.<pre|post>, generated into
-# flow-config.tcl as `set wolf_inject(<step>,<pre|post>) {...}` entries --
-# only for steps that actually have something configured, so this is a
-# no-op everywhere else.
+# Reads this design's own setup.yaml inject.<step>.<pre|post> -- only for
+# steps that actually have something configured there, so this is a
+# no-op everywhere else. -quiet: inject itself, or the one step/phase
+# pair being asked for, commonly doesn't exist at all.
 proc wolf_inject_for_step {step phase} {
-    global wolf_inject
-    if {[info exists wolf_inject($step,$phase)]} {
-        wolf_inject $wolf_inject($step,$phase)
+    set wolf_inject_snippets [get_flow_config -quiet inject $step $phase]
+    if {[llength $wolf_inject_snippets]} {
+        wolf_inject $wolf_inject_snippets
     }
 }
 
@@ -102,10 +102,10 @@ proc wolf_inject_for_step {step phase} {
 # create_flow_step's own redefinition below), so it stays accurate
 # regardless of how control reaches a step.
 #
-# wolf_run_directory is set by flow-config.tcl (flow.template.yaml's
-# last user_flow_steps entry); a step that somehow runs before that --
-# shouldn't happen in the bundled flow -- degrades to writing nothing
-# rather than guessing a path. A write failure for any other reason
+# run_directory comes from this run's own setup.yaml (get_flow_config);
+# a step that somehow runs before setup.yaml exists -- shouldn't happen
+# in the bundled flow -- degrades to writing nothing rather than
+# guessing a path. A write failure for any other reason
 # (disk full, permissions, ...) is reported but never allowed to break
 # the real flow -- this is bookkeeping, not synthesis.
 # Attempts to reconstruct the real canonical dotted path (the same
@@ -146,8 +146,8 @@ proc wolf_step_canonical_path {} {
 }
 
 proc wolf_write_step_status {step_name status} {
-    global wolf_run_directory
-    if {![info exists wolf_run_directory] || $wolf_run_directory eq ""} {
+    set wolf_run_directory [get_flow_config -quiet run_directory]
+    if {$wolf_run_directory eq ""} {
         return
     }
     if {[catch {

@@ -60,7 +60,7 @@ create_flow_step -name genus_to_innovus -owner wolf {
     wolf_inject_for_step genus_to_innovus pre
 
     #- Apply change_name rules so the netlist is Verilog/Innovus-legal
-    set genus_to_innovus_change_names_log [file join $::wolf_reports_dir design.change_names.rpt]
+    set genus_to_innovus_change_names_log [file join [get_flow_config reports_dir] design.change_names.rpt]
     update_names \
         [get_db current_design] \
         -force \
@@ -77,21 +77,23 @@ create_flow_step -name genus_to_innovus -owner wolf {
     #  synthesized repeated tile) -- see hierarchical-synthesis notes in
     #  common_flows.tcl. Read before the handoff write so the combined
     #  netlist references them by name rather than re-expanding them.
-    foreach netlist $::wolf_postsyn_netlists {
+    foreach netlist [get_flow_config -quiet postsyn_netlists] {
         wolf_info "Reading pre-synthesized netlist $netlist"
         read_hdl -sv -library work $netlist
     }
 
-    file mkdir $::wolf_handoff_dir
+    set wolf_handoff_dir [get_flow_config handoff_dir]
+    set wolf_design_name [get_flow_config design_name]
+    file mkdir $wolf_handoff_dir
     write_design \
         -innovus \
         -gzip_files \
-        -basename [file join $::wolf_handoff_dir $::wolf_design_name]
-    wolf_file "$::wolf_handoff_dir/$::wolf_design_name.{v,sdc,invs_init.tcl}.gz"
+        -basename [file join $wolf_handoff_dir $wolf_design_name]
+    wolf_file "$wolf_handoff_dir/$wolf_design_name.{v,sdc,invs_init.tcl}.gz"
 
     wolf_inject_for_step genus_to_innovus post
     puts [wolf_sep]
-    wolf_info "Handoff written to $::wolf_handoff_dir"
+    wolf_info "Handoff written to $wolf_handoff_dir"
 } -write_db
 
 # Conformal LEC dofile handoff. Left as a real extension point rather than
@@ -185,39 +187,38 @@ create_flow_step -name set_cts_config -owner wolf {
     # top-net-only or leaf-net-only cells; there is no _trunk variant for
     # either (trunk nets use the plain attribute). clock_gating_cells has
     # no top/leaf variant at all.
-    foreach {wolf_cts_attr wolf_cts_var} {
-        cts_buffer_cells wolf_cts_buffer_cells
-        cts_buffer_cells_top wolf_cts_buffer_cells_top
-        cts_buffer_cells_leaf wolf_cts_buffer_cells_leaf
-        cts_inverter_cells wolf_cts_inverter_cells
-        cts_inverter_cells_top wolf_cts_inverter_cells_top
-        cts_inverter_cells_leaf wolf_cts_inverter_cells_leaf
-        cts_clock_gating_cells wolf_cts_clock_gating_cells
+    foreach wolf_cts_attr {
+        cts_buffer_cells cts_buffer_cells_top cts_buffer_cells_leaf
+        cts_inverter_cells cts_inverter_cells_top cts_inverter_cells_leaf
+        cts_clock_gating_cells
     } {
-        set wolf_cts_value [set ::$wolf_cts_var]
+        set wolf_cts_value [get_flow_config -quiet $wolf_cts_attr]
         if {[llength $wolf_cts_value]} {
             set_db $wolf_cts_attr $wolf_cts_value
             wolf_info "$wolf_cts_attr: $wolf_cts_value"
             set wolf_cts_applied 1
         }
     }
-    if {$::wolf_cts_target_skew ne ""} {
-        set_db cts_target_skew $::wolf_cts_target_skew
-        wolf_info "cts_target_skew: $::wolf_cts_target_skew"
+    set wolf_cts_target_skew [get_flow_config -quiet cts_target_skew]
+    set wolf_cts_target_max_transition_time [get_flow_config -quiet cts_target_max_transition_time]
+    set wolf_cts_max_fanout [get_flow_config -quiet cts_max_fanout]
+    if {$wolf_cts_target_skew ne ""} {
+        set_db cts_target_skew $wolf_cts_target_skew
+        wolf_info "cts_target_skew: $wolf_cts_target_skew"
         set wolf_cts_applied 1
     }
-    if {$::wolf_cts_target_max_transition_time ne ""} {
-        set_db cts_target_max_transition_time $::wolf_cts_target_max_transition_time
-        wolf_info "cts_target_max_transition_time: $::wolf_cts_target_max_transition_time"
+    if {$wolf_cts_target_max_transition_time ne ""} {
+        set_db cts_target_max_transition_time $wolf_cts_target_max_transition_time
+        wolf_info "cts_target_max_transition_time: $wolf_cts_target_max_transition_time"
         set wolf_cts_applied 1
     }
-    if {$::wolf_cts_max_fanout ne ""} {
-        set_db cts_max_fanout $::wolf_cts_max_fanout
-        wolf_info "cts_max_fanout: $::wolf_cts_max_fanout"
+    if {$wolf_cts_max_fanout ne ""} {
+        set_db cts_max_fanout $wolf_cts_max_fanout
+        wolf_info "cts_max_fanout: $wolf_cts_max_fanout"
         set wolf_cts_applied 1
     }
     if {!$wolf_cts_applied} {
-        wolf_info "set_cts_config: no backend.cadence-flowtool.cts overrides configured -- CCOpt uses its own library-wide defaults"
+        wolf_info "set_cts_config: no cts_* overrides configured in setup.yaml -- CCOpt uses its own library-wide defaults"
     }
     wolf_inject_for_step set_cts_config post
 }
@@ -233,7 +234,7 @@ create_flow_step -name commit_power_intent -owner wolf {
     wolf_step "commit_power_intent"
     wolf_inject_for_step commit_power_intent pre
 
-    if {$::wolf_power_intent_file ne ""} {
+    if {[get_flow_config -quiet power_intent_file] ne ""} {
         commit_power_intent
     } else {
         wolf_info "commit_power_intent: no power intent was read, skipping"
@@ -245,7 +246,7 @@ create_flow_step -name commit_power_intent -owner wolf {
 
 create_flow_step -name report_area_innovus -owner wolf {
     wolf_inject_for_step report_area_innovus pre
-    set report_area_innovus_file [file join $::wolf_reports_dir "area.[get_db flow_report_name].rpt"]
+    set report_area_innovus_file [file join [get_flow_config reports_dir] "area.[get_db flow_report_name].rpt"]
     report_area -min_count 1000 > $report_area_innovus_file
     wolf_file $report_area_innovus_file
     wolf_inject_for_step report_area_innovus post
@@ -253,7 +254,7 @@ create_flow_step -name report_area_innovus -owner wolf {
 
 create_flow_step -name report_power_innovus -owner wolf {
     wolf_inject_for_step report_power_innovus pre
-    set report_power_innovus_file [file join $::wolf_reports_dir "power.[get_db flow_report_name].rpt"]
+    set report_power_innovus_file [file join [get_flow_config reports_dir] "power.[get_db flow_report_name].rpt"]
     report_power -no_wrap > $report_power_innovus_file
     wolf_file $report_power_innovus_file
     wolf_inject_for_step report_power_innovus post
@@ -261,7 +262,7 @@ create_flow_step -name report_power_innovus -owner wolf {
 
 create_flow_step -name report_late_paths -owner wolf {
     wolf_inject_for_step report_late_paths pre
-    set report_late_paths_file [file join $::wolf_reports_dir "late_paths.[get_db flow_report_name].rpt"]
+    set report_late_paths_file [file join [get_flow_config reports_dir] "late_paths.[get_db flow_report_name].rpt"]
     report_timing -nworst 5 > $report_late_paths_file
     wolf_file $report_late_paths_file
     wolf_inject_for_step report_late_paths post
@@ -269,7 +270,7 @@ create_flow_step -name report_late_paths -owner wolf {
 
 create_flow_step -name report_clock_timing -owner wolf {
     wolf_inject_for_step report_clock_timing pre
-    set report_clock_timing_file [file join $::wolf_reports_dir "clock_timing.[get_db flow_report_name].rpt"]
+    set report_clock_timing_file [file join [get_flow_config reports_dir] "clock_timing.[get_db flow_report_name].rpt"]
     report_clock_timing > $report_clock_timing_file
     wolf_file $report_clock_timing_file
     wolf_inject_for_step report_clock_timing post
@@ -277,7 +278,7 @@ create_flow_step -name report_clock_timing -owner wolf {
 
 create_flow_step -name report_route_drc -owner wolf {
     wolf_inject_for_step report_route_drc pre
-    set report_route_drc_file [file join $::wolf_reports_dir "route_drc.[get_db flow_report_name].rpt"]
+    set report_route_drc_file [file join [get_flow_config reports_dir] "route_drc.[get_db flow_report_name].rpt"]
     check_drc -out_file $report_route_drc_file
     wolf_file $report_route_drc_file
     wolf_inject_for_step report_route_drc post
@@ -285,7 +286,7 @@ create_flow_step -name report_route_drc -owner wolf {
 
 create_flow_step -name report_route_density -owner wolf {
     wolf_inject_for_step report_route_density pre
-    set report_route_density_file [file join $::wolf_reports_dir "route_density.[get_db flow_report_name].rpt"]
+    set report_route_density_file [file join [get_flow_config reports_dir] "route_density.[get_db flow_report_name].rpt"]
     report_route_density > $report_route_density_file
     wolf_file $report_route_density_file
     wolf_inject_for_step report_route_density post
@@ -302,7 +303,7 @@ create_flow_step -name report_route_density -owner wolf {
 create_flow_step -name report_early_summary_innovus -owner wolf {
     wolf_inject_for_step report_early_summary_innovus pre
     set report_early_summary_innovus_file \
-        [file join $::wolf_reports_dir "early_summary.[get_db flow_report_name].rpt"]
+        [file join [get_flow_config reports_dir] "early_summary.[get_db flow_report_name].rpt"]
     report_timing_summary -checks {hold drv} > $report_early_summary_innovus_file
     wolf_file $report_early_summary_innovus_file
     wolf_inject_for_step report_early_summary_innovus post
@@ -310,7 +311,7 @@ create_flow_step -name report_early_summary_innovus -owner wolf {
 
 create_flow_step -name report_early_paths -owner wolf {
     wolf_inject_for_step report_early_paths pre
-    set report_early_paths_file [file join $::wolf_reports_dir "early_paths.[get_db flow_report_name].rpt"]
+    set report_early_paths_file [file join [get_flow_config reports_dir] "early_paths.[get_db flow_report_name].rpt"]
     report_timing -early -nworst 5 > $report_early_paths_file
     wolf_file $report_early_paths_file
     wolf_inject_for_step report_early_paths post
@@ -319,7 +320,7 @@ create_flow_step -name report_early_paths -owner wolf {
 create_flow_step -name report_late_summary_innovus -owner wolf {
     wolf_inject_for_step report_late_summary_innovus pre
     set report_late_summary_innovus_file \
-        [file join $::wolf_reports_dir "late_summary.[get_db flow_report_name].rpt"]
+        [file join [get_flow_config reports_dir] "late_summary.[get_db flow_report_name].rpt"]
     report_timing_summary -checks {setup drv} > $report_late_summary_innovus_file
     wolf_file $report_late_summary_innovus_file
     wolf_inject_for_step report_late_summary_innovus post
