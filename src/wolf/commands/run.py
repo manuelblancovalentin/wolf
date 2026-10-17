@@ -215,6 +215,7 @@ def command_run(args: argparse.Namespace) -> int:
                 context, clean=getattr(args, "clean", False),
                 interactive=getattr(args, "interactive", False),
                 from_stage=args.from_stage, to_stage=args.to_stage,
+                force=getattr(args, "force", False),
             )
         _final_summary(context, status, 0.0, run_directory=run_directory)
         # Prints unconditionally, success or failure: run_genus has
@@ -379,6 +380,12 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         "--interactive", action="store_true",
         help="leave the underlying tool's own CLI open at a prompt instead of exiting "
              "automatically when the run finishes or fails (cadence-flowtool only)",
+    )
+    parser.add_argument(
+        "--force", action="store_true",
+        help="continue an allocated run even if its resolved provenance disagrees with this "
+             "invocation's (cadence-flowtool only); records what changed in the run's own "
+             "wolf.resolved.drift.yaml instead of silently overwriting it",
     )
     parser.add_argument("passthrough", nargs=argparse.REMAINDER)
     parser.set_defaults(handler=command_run, ui_kind="run", ui_section="Resolved run")

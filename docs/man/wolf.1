@@ -308,6 +308,18 @@ prompt instead of exiting automatically when the run finishes or fails; type
 .B exit
 there to return.
 .TP
+.B wolf run --force
+Cadence Flowtool declarative runs only. Continue an allocated run even if its
+resolved provenance disagrees with this invocation's (normally rejected as
+.IR "allocated run already has different immutable provenance" ).
+Intended for a human who has looked at the mismatch and judges it safe, not a
+default-on retry. Records exactly which top-level keys differed and their
+old/new values as an appended entry in the run's own
+.I wolf.resolved.drift.yaml
+before overwriting
+.IR wolf.resolved.yaml ,
+so the override stays visible in the run's own provenance afterward.
+.TP
 .BI "wolf run -from " stage " -to " stage
 Cadence Flowtool declarative runs only. Select the
 .IR elaborate ", " syn_generic ", " syn_map ", or " syn_opt

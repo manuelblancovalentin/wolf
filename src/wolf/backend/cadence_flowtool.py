@@ -28,10 +28,10 @@ class CadenceFlowtoolBackend(Backend):
 
     def run_genus(
         self, context: ResolvedContext, *, clean: bool = False, interactive: bool = False,
-        from_stage: Optional[str] = None, to_stage: Optional[str] = None,
+        from_stage: Optional[str] = None, to_stage: Optional[str] = None, force: bool = False,
     ):
         return run_genus(context, clean=clean, interactive=interactive,
-                          from_stage=from_stage, to_stage=to_stage)
+                          from_stage=from_stage, to_stage=to_stage, force=force)
 
     def stages(self) -> Sequence[str]:
         return STAGE_ORDER

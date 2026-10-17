@@ -7,9 +7,11 @@ no knowledge of ESP, FABulous, or any generator-specific conventions.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from decimal import Decimal
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import shutil
@@ -2323,9 +2325,110 @@ def validate_genus_or_raise(context: ResolvedContext, *, physical: bool = False)
     return next(item.detail for item in checks if item.name == "flowtool")
 
 
+# Continuing the same run with a later -from/-to is the whole point of
+# not passing --clean -- these are exactly the fields that trivially
+# differ just from picking a different stage range or re-invoking, not
+# from the run actually being a different one.
+#
+# scripts_directory is volatile too, deliberately: it names a
+# deduplicated scripts.<N> snapshot of the bundled flow Tcl
+# (_snapshot_scripts), and really does get a new number the moment that
+# Tcl's own content changes -- which legitimately happens mid-run during
+# active flow development (fixing a real bug in synthesis.tcl/
+# common_flows.tcl and continuing the same physical-design run with the
+# fix, not starting over). Flowtool checkpoint resume is Genus/Innovus
+# session state, independent of which exact snapshot loaded it, so this
+# was never really part of a run's *physical* identity the way
+# design/technology are. The real safety net already exists and stays
+# non-negotiable: flow_step_digests/bundled_flow_digest print
+# automatically (flow-config.tcl's own tail, and again on every `wolf
+# run` exit) specifically so a content difference between two
+# invocations of the same run is always visible, even though it no
+# longer blocks continuing.
+#
+# "generated" (directory + every generated_files path) is volatile for
+# the same reason as scripts_directory above -- flowtool_scripts_directory
+# inside it references that same snapshot number, and the rest
+# (genus_sources, genus_constraints, ...) are freshly (re)written every
+# single invocation by design (see prepare_genus_inputs's own docstring:
+# "written directly, fresh every call"), never part of what makes this
+# run this run.
+#
+# setup_yaml specifically: confirmed real, a run allocated while
+# flows/cadence-genus/setup.template.yaml was missing from the install (a
+# packaging bug, now fixed -- see pyproject.toml's data-files entry)
+# froze setup_yaml as null, since prepare_genus_inputs had no template to
+# render a setup.yaml from at all. Continuing that same run after
+# reinstalling correctly produces a real setup_yaml path -- a WOLF-side
+# fix becoming effective mid-run, not a design identity change, so it
+# must not block continuing, the same reasoning as
+# technology.cell_lefs/technology.rc_files below.
+_RUN_MANIFEST_VOLATILE_KEYS = (
+    "from_stage", "to_stage", "synthesis_stages", "outputs", "execution",
+    "scripts_directory", "generated", "setup_yaml",
+)
+
+# technology.cell_lefs/technology.rc_files specifically (not all of
+# "technology" -- a genuine mid-run PDK package/revision/track/vth swap
+# must still raise): confirmed real, a tracked technology package's
+# cell_lefs/rc_files were always hardcoded empty before a WOLF bug fix,
+# regardless of what the package manifest actually declared, so an
+# already-allocated run from before that fix landed would otherwise be
+# stuck forever, unable to continue into floorplan with the very fix
+# meant to unblock it.
+_RUN_MANIFEST_VOLATILE_PATHS = ("technology.cell_lefs", "technology.rc_files")
+
+_RUN_MANIFEST_DRIFT_LOG = "wolf.resolved.drift.yaml"
+
+
+def _force_freeze_run_manifest(
+    source: Path, run_directory: Path, *,
+    generated_directory: Path, generated_files: Mapping[str, str],
+) -> Path:
+    """`run_genus`'s `force=True` path: a real mismatch
+    `_RUN_MANIFEST_VOLATILE_KEYS`/`_RUN_MANIFEST_VOLATILE_PATHS` doesn't
+    already tolerate, overridden on purpose. Records exactly which
+    top-level keys disagreed (and their old/new values) as one more
+    entry appended to this run's own `wolf.resolved.drift.yaml` -- an
+    append-only audit trail, not a silent overwrite -- before replacing
+    `wolf.resolved.yaml` outright (every key, nothing left volatile).
+    """
+    from wolf.provenance import RUN_MANIFEST_FILENAME, freeze_run_manifest
+
+    run_directory = run_directory.expanduser().resolve()
+    existing_path = run_directory / RUN_MANIFEST_FILENAME
+    existing = (
+        yaml.safe_load(existing_path.read_text(encoding="utf-8"))
+        if existing_path.is_file() else {}
+    )
+    fresh = yaml.safe_load(source.read_text(encoding="utf-8"))
+    changed_keys = sorted(
+        key for key in set(existing) | set(fresh) if existing.get(key) != fresh.get(key)
+    )
+    drift_log = run_directory / _RUN_MANIFEST_DRIFT_LOG
+    entries = (
+        (yaml.safe_load(drift_log.read_text(encoding="utf-8")) or [])
+        if drift_log.is_file() else []
+    )
+    entries.append({
+        "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "changed_keys": {
+            key: {"old": existing.get(key), "new": fresh.get(key)} for key in changed_keys
+        },
+    })
+    drift_log.write_text(yaml.safe_dump(entries, sort_keys=False), encoding="utf-8")
+    if existing_path.is_file():
+        os.chmod(existing_path, 0o644)
+        existing_path.unlink()
+    return freeze_run_manifest(
+        source, run_directory,
+        generated_directory=generated_directory, generated_files=generated_files,
+    )
+
+
 def run_genus(
     context: ResolvedContext, *, clean: bool = False, interactive: bool = False,
-    from_stage: Optional[str] = None, to_stage: Optional[str] = None,
+    from_stage: Optional[str] = None, to_stage: Optional[str] = None, force: bool = False,
 ) -> tuple[int, Path]:
     """Allocate, prepare, freeze provenance, and execute one Flowtool run --
     for any stage in STAGE_ORDER, Genus (syn_generic/syn_map/syn_opt) or
@@ -2344,6 +2447,17 @@ def run_genus(
     this is exactly how `-from syn_opt` (Genus) and a later `-from
     floorplan` (Innovus) share one run directory and one provenance
     record.
+
+    `force` is the explicit escape hatch for a real identity mismatch
+    `_RUN_MANIFEST_VOLATILE_KEYS`/`_RUN_MANIFEST_VOLATILE_PATHS` doesn't
+    already cover -- intended for a human who has looked at the mismatch
+    and judges it safe to continue anyway (not a default-on retry). It
+    does not silently discard the disagreement: `_force_freeze_run_manifest`
+    overwrites the manifest but first appends an entry to this run's
+    `wolf.resolved.drift.yaml`, recording exactly which top-level keys
+    differed and their old/new values, so a forced continuation is still
+    visible in the run's own provenance record afterward, not just in
+    whoever's terminal happened to be open when `--force` was typed.
     """
     resolved_from_stage, resolved_to_stage = _resolve_stage_range(context, from_stage, to_stage)
     flowtool = validate_genus_or_raise(
@@ -2402,64 +2516,33 @@ def run_genus(
     resolved_source = inputs.directory / "resolved.yaml"
     resolved_source.write_text(yaml.safe_dump(resolved, sort_keys=False), encoding="utf-8")
     from wolf.provenance import freeze_run_manifest
-    freeze_run_manifest(
-        resolved_source, run_directory,
-        # Continuing the same run with a later -from/-to is the whole
-        # point of not passing --clean (see this function's own
-        # docstring) -- these are exactly the fields that trivially
-        # differ just from picking a different stage range or
-        # re-invoking, not from the run actually being a different one.
-        #
-        # scripts_directory is volatile too, deliberately: it names a
-        # deduplicated scripts.<N> snapshot of the bundled flow Tcl
-        # (_snapshot_scripts), and really does get a new number the
-        # moment that Tcl's own content changes -- which legitimately
-        # happens mid-run during active flow development (fixing a real
-        # bug in synthesis.tcl/common_flows.tcl and continuing the same
-        # physical-design run with the fix, not starting over). Flowtool
-        # checkpoint resume is Genus/Innovus session state, independent
-        # of which exact snapshot loaded it, so this was never really
-        # part of a run's *physical* identity the way design/technology
-        # are. The real safety net already exists and stays
-        # non-negotiable: flow_step_digests/bundled_flow_digest print
-        # automatically (flow-config.tcl's own tail, and again on every
-        # `wolf run` exit) specifically so a content difference between
-        # two invocations of the same run is always visible, even though
-        # it no longer blocks continuing.
-        # "generated" (directory + every generated_files path) is
-        # volatile for the same reason as scripts_directory above --
-        # flowtool_scripts_directory inside it references that same
-        # snapshot number, and the rest (genus_sources, genus_constraints,
-        # ...) are freshly (re)written every single invocation by design
-        # (see prepare_genus_inputs's own docstring: "written directly,
-        # fresh every call"), never part of what makes this run this run.
-        volatile_keys=(
-            "from_stage", "to_stage", "synthesis_stages", "outputs", "execution",
-            "scripts_directory", "generated",
-        ),
-        # technology.cell_lefs/technology.rc_files specifically (not all
-        # of "technology" -- a genuine mid-run PDK package/revision/
-        # track/vth swap must still raise): confirmed real, a tracked
-        # technology package's cell_lefs/rc_files were always hardcoded
-        # empty before a WOLF bug fix, regardless of what the package
-        # manifest actually declared, so an already-allocated run from
-        # before that fix landed would otherwise be stuck forever,
-        # unable to continue into floorplan with the very fix meant to
-        # unblock it.
-        volatile_paths=("technology.cell_lefs", "technology.rc_files"),
-        generated_directory=inputs.directory,
-        generated_files={
-            **({"genus_technology": str(inputs.technology_script)} if inputs.technology_script else {}),
-            **({"genus_mmmc": str(inputs.mmmc_script)} if inputs.mmmc_script else {}),
-            **({"genus_overrides": str(inputs.overrides_script)} if inputs.overrides_script else {}),
-            "genus_sources": str(inputs.source_script),
-            "genus_constraints": str(inputs.directory / "constraints.sdc"),
-            "genus_flow_config": str(inputs.flow_config_script),
-            **({"flowtool_setup_yaml": str(inputs.setup_yaml)} if inputs.setup_yaml else {}),
-            "flowtool_flow_yaml": str(inputs.flow_yaml),
-            "flowtool_scripts_directory": str(inputs.scripts_directory),
-        },
-    )
+    generated_files = {
+        **({"genus_technology": str(inputs.technology_script)} if inputs.technology_script else {}),
+        **({"genus_mmmc": str(inputs.mmmc_script)} if inputs.mmmc_script else {}),
+        **({"genus_overrides": str(inputs.overrides_script)} if inputs.overrides_script else {}),
+        "genus_sources": str(inputs.source_script),
+        "genus_constraints": str(inputs.directory / "constraints.sdc"),
+        "genus_flow_config": str(inputs.flow_config_script),
+        **({"flowtool_setup_yaml": str(inputs.setup_yaml)} if inputs.setup_yaml else {}),
+        "flowtool_flow_yaml": str(inputs.flow_yaml),
+        "flowtool_scripts_directory": str(inputs.scripts_directory),
+    }
+    try:
+        freeze_run_manifest(
+            resolved_source, run_directory,
+            volatile_keys=_RUN_MANIFEST_VOLATILE_KEYS,
+            volatile_paths=_RUN_MANIFEST_VOLATILE_PATHS,
+            generated_directory=inputs.directory,
+            generated_files=generated_files,
+        )
+    except ValueError:
+        if not force:
+            raise
+        _force_freeze_run_manifest(
+            resolved_source, run_directory,
+            generated_directory=inputs.directory,
+            generated_files=generated_files,
+        )
     returncode = 0
     for command in commands:
         result = subprocess.run(command, cwd=inputs.directory, check=False)

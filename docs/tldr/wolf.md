@@ -122,6 +122,10 @@
 
 `wolf run --environment {{environment}} -from syn_map -to syn_map`
 
+- Continue an allocated run after confirming a provenance mismatch is safe:
+
+`wolf run --environment {{environment}} --force -from cts -to cts`
+
 - Load Bash integration to enable in-place activation and command completion:
 
 `source ./shell/wolf.bash && wolf activate {{environment}}`

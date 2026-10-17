@@ -47,10 +47,15 @@ class GenusFastPathEnvPassthroughTests(unittest.TestCase):
             format="declarative-v1",
             env_vars={"GENUS_NUM_CPUS": "64"},
         )
-        args = mock.Mock(plan=False, yes=True, clean=False, from_stage=None, to_stage=None)
+        args = mock.Mock(
+            plan=False, yes=True, clean=False, from_stage=None, to_stage=None, force=False,
+        )
         observed = {}
 
-        def fake_run_genus(_context, *, clean=False, interactive=False, from_stage=None, to_stage=None):
+        def fake_run_genus(
+            _context, *, clean=False, interactive=False, from_stage=None, to_stage=None,
+            force=False,
+        ):
             observed["GENUS_NUM_CPUS"] = os.environ.get("GENUS_NUM_CPUS")
             return 0, root / "work" / "demo" / "demo.tsmc65" / "demo"
 

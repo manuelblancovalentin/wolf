@@ -10,8 +10,9 @@ import yaml
 
 from wolf.backend.cadence_genus import (
     FLOW_GENUS_SYN_GENERIC, FLOW_GENUS_SYN_MAP, FLOW_GENUS_SYN_OPT,
-    _extract_step_bodies, _period_ns, _tcl_quote, bundled_flow_digest,
-    flow_descendant_steps, flow_step_digests, prepare_genus_inputs,
+    _RUN_MANIFEST_VOLATILE_KEYS, _extract_step_bodies, _force_freeze_run_manifest, _period_ns,
+    _tcl_quote, bundled_flow_digest, flow_descendant_steps, flow_step_digests,
+    prepare_genus_inputs,
 )
 from wolf.backend.cadence_genus_setup import design_setup_path, write_design_setup
 from wolf.context import (
@@ -1844,6 +1845,102 @@ class FlowMembershipTests(unittest.TestCase):
             "sub": ("a", "b"),  # "a" appears in both -- must not be duplicated
         }
         self.assertEqual(flow_descendant_steps("top", membership), ("a", "b"))
+
+
+class RunManifestVolatilityTests(unittest.TestCase):
+    """Regression: a run allocated while flows/cadence-genus/setup.template.yaml
+    was missing from the install (see pyproject.toml's data-files entry)
+    froze setup_yaml as null; continuing that same run after reinstalling
+    correctly produces a real setup_yaml path -- a WOLF-side fix taking
+    effect mid-run, not a design identity change, so run_genus's own
+    volatile_keys must tolerate it the same way technology.cell_lefs/
+    technology.rc_files are already tolerated via volatile_paths."""
+
+    def test_setup_yaml_is_volatile(self):
+        self.assertIn("setup_yaml", _RUN_MANIFEST_VOLATILE_KEYS)
+
+    def test_a_real_identity_field_is_not_volatile(self):
+        self.assertNotIn("dont_use_cells", _RUN_MANIFEST_VOLATILE_KEYS)
+        self.assertNotIn("technology", _RUN_MANIFEST_VOLATILE_KEYS)
+
+
+class ForceFreezeRunManifestTests(unittest.TestCase):
+    """run_genus's force=True escape hatch: a human-judged override for a
+    real mismatch _RUN_MANIFEST_VOLATILE_KEYS/_RUN_MANIFEST_VOLATILE_PATHS
+    doesn't already tolerate. Must not silently discard the disagreement
+    -- see _force_freeze_run_manifest's own docstring."""
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory(prefix="wolf-force-freeze-")
+        self.root = Path(self.temporary.name)
+        self.run_directory = self.root / "run"
+        self.run_directory.mkdir()
+        self.generated_directory = self.root / "generated"
+        self.generated_directory.mkdir()
+        from wolf.provenance import RUN_MANIFEST_FILENAME, freeze_run_manifest
+        self.source = self.root / "resolved.yaml"
+        self.source.write_text(yaml.safe_dump({
+            "schema": "wolf.resolved-run/v1", "design": {"name": "demo"},
+            "dont_use_cells": ["OLD_CELL"],
+        }, sort_keys=False), encoding="utf-8")
+        freeze_run_manifest(
+            self.source, self.run_directory, generated_directory=self.generated_directory,
+            generated_files={},
+        )
+        self.manifest_path = self.run_directory / RUN_MANIFEST_FILENAME
+
+    def tearDown(self):
+        self.temporary.cleanup()
+
+    def test_force_overwrites_a_real_mismatch_instead_of_raising(self):
+        self.source.write_text(yaml.safe_dump({
+            "schema": "wolf.resolved-run/v1", "design": {"name": "demo"},
+            "dont_use_cells": ["NEW_CELL"],
+        }, sort_keys=False), encoding="utf-8")
+        from wolf.provenance import freeze_run_manifest
+        with self.assertRaisesRegex(ValueError, "different immutable provenance"):
+            freeze_run_manifest(self.source, self.run_directory)
+
+        _force_freeze_run_manifest(
+            self.source, self.run_directory,
+            generated_directory=self.generated_directory, generated_files={},
+        )
+        frozen = yaml.safe_load(self.manifest_path.read_text(encoding="utf-8"))
+        self.assertEqual(frozen["dont_use_cells"], ["NEW_CELL"])
+
+    def test_force_appends_an_audit_entry_naming_what_changed(self):
+        self.source.write_text(yaml.safe_dump({
+            "schema": "wolf.resolved-run/v1", "design": {"name": "demo"},
+            "dont_use_cells": ["NEW_CELL"],
+        }, sort_keys=False), encoding="utf-8")
+        _force_freeze_run_manifest(
+            self.source, self.run_directory,
+            generated_directory=self.generated_directory, generated_files={},
+        )
+        drift_log = self.run_directory / "wolf.resolved.drift.yaml"
+        self.assertTrue(drift_log.is_file())
+        entries = yaml.safe_load(drift_log.read_text(encoding="utf-8"))
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(
+            entries[0]["changed_keys"]["dont_use_cells"],
+            {"old": ["OLD_CELL"], "new": ["NEW_CELL"]},
+        )
+        self.assertIn("timestamp", entries[0])
+
+    def test_two_forced_overrides_both_land_in_the_same_append_only_log(self):
+        for new_cell in ("NEW_CELL", "NEWER_CELL"):
+            self.source.write_text(yaml.safe_dump({
+                "schema": "wolf.resolved-run/v1", "design": {"name": "demo"},
+                "dont_use_cells": [new_cell],
+            }, sort_keys=False), encoding="utf-8")
+            _force_freeze_run_manifest(
+                self.source, self.run_directory,
+                generated_directory=self.generated_directory, generated_files={},
+            )
+        drift_log = self.run_directory / "wolf.resolved.drift.yaml"
+        entries = yaml.safe_load(drift_log.read_text(encoding="utf-8"))
+        self.assertEqual(len(entries), 2)
+        self.assertEqual(entries[1]["changed_keys"]["dont_use_cells"]["new"], ["NEWER_CELL"])
 
 
 class FlowIdentityTests(unittest.TestCase):

@@ -189,7 +189,7 @@ the run; backend Tcl generation does not depend on the caller's filesystem or
 working directory. Private technology packages can provide the same interface
 without placing proprietary collateral in the WOLF repository.
 
-The context is immutable for a run once materialized. A changed resolved composition creates a new implementation run rather than silently changing the meaning of an existing run -- except the stage range and execution details a backend explicitly marks volatile when freezing provenance (see `wolf.provenance.freeze_run_manifest`'s `volatile_keys`), since continuing the *same* run to a later stage is expected to change those without that being a new run.
+The context is immutable for a run once materialized. A changed resolved composition creates a new implementation run rather than silently changing the meaning of an existing run -- except the stage range and execution details a backend explicitly marks volatile when freezing provenance (see `wolf.provenance.freeze_run_manifest`'s `volatile_keys`), since continuing the *same* run to a later stage is expected to change those without that being a new run. `wolf run --force` (Cadence Flowtool only) is the escape hatch for a real mismatch outside what a backend's own `volatile_keys`/`volatile_paths` already covers -- a human-judged override, not a default-on retry, and not a silent one: it appends what changed to the run's own `wolf.resolved.drift.yaml` before overwriting `wolf.resolved.yaml` (see `cadence_genus._force_freeze_run_manifest`).
 
 ### Canonical and backend configuration
 
