@@ -127,18 +127,27 @@ def _tcl_flow_config_value(value) -> str:
 def _get_flow_config_stub(document: dict) -> str:
     """A real, working `get_flow_config` Tcl proc backed by `document`
     (the same shape a real rendered setup.yaml carries) -- mirrors
-    get_flow_config's own confirmed real contract (man 20.15): a
-    sequence of keys walked through nested dicts, `-quiet` suppressing
-    the error for any key in the sequence that doesn't exist (returning
-    "" instead) rather than raising "Flow setup value does not exist"."""
+    get_flow_config's own confirmed real contract (man 20.15):
+
+        get_flow_config [-help] <key ...>[-quiet]
+
+    `-quiet` is only ever recognized as the *trailing* argument, exactly
+    as documented -- not scanned for anywhere in `$args` -- so a call
+    site that puts it first (a real regression this session: every
+    `-quiet` call site originally read `get_flow_config -quiet <key>`
+    instead of `get_flow_config <key> -quiet`, silently returning ""
+    for a value that was actually present in setup.yaml, no error, no
+    warning) fails the same way the real command does instead of this
+    stub masking it by being more lenient."""
     return (
         f"set ::wolf_test_flow_config {_tcl_flow_config_value(document)}\n"
         "proc get_flow_config {args} {\n"
         "    global wolf_test_flow_config\n"
+        "    set keys $args\n"
         "    set quiet 0\n"
-        "    set keys {}\n"
-        "    foreach a $args {\n"
-        '        if {$a eq "-quiet"} { set quiet 1 } else { lappend keys $a }\n'
+        '    if {[llength $keys] > 0 && [lindex $keys end] eq "-quiet"} {\n'
+        "        set quiet 1\n"
+        "        set keys [lrange $keys 0 end-1]\n"
         "    }\n"
         "    set node $wolf_test_flow_config\n"
         "    foreach k $keys {\n"
@@ -213,6 +222,14 @@ class GenusFlowtoolTemplateTests(GenusFixtureTestCase):
         self.assertIn("flow_current: block", flow_text)
         self.assertIn(str(inputs.scripts_directory), flow_text)
         self.assertNotIn("${", flow_text)
+        # Regression, hit for real: flow.template.yaml has to set
+        # design_yaml to the real setup.yaml path, or get_flow_config has
+        # no file bound at all and every lookup fails silently (a -quiet
+        # one just returns "") regardless of anything else being
+        # correct -- this went unnoticed until a real `wolf run` because
+        # nothing here asserted design_yaml was actually set.
+        flow_document = yaml.safe_load(flow_text)
+        self.assertEqual(flow_document["design_yaml"], str(inputs.setup_yaml))
 
     def test_missing_one_template_key_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "requires .*flow_template|requires .*setup_template"):
@@ -729,7 +746,7 @@ class GenusThreadsTests(GenusFixtureTestCase):
         bodies = _extract_step_bodies(text)
         self.assertIn("init_innovus", bodies)
         body = bodies["init_innovus"]
-        self.assertIn("get_flow_config -quiet max_cpus_per_server", body)
+        self.assertIn("get_flow_config max_cpus_per_server -quiet", body)
         self.assertIn("set_multi_cpu_usage -local_cpu $wolf_max_cpus_per_server", body)
         self.assertIn('if {$wolf_max_cpus_per_server ne ""}', body)
 
@@ -1021,8 +1038,8 @@ class GenusActiveViewsTests(GenusFixtureTestCase):
         bodies = _extract_step_bodies(step.read_text(encoding="utf-8"))
         body = bodies["init_innovus"]
         self.assertIn("set_analysis_view -setup $wolf_setup_views -hold $wolf_hold_views", body)
-        self.assertIn("get_flow_config -quiet active_views setup", body)
-        self.assertIn("get_flow_config -quiet active_views hold", body)
+        self.assertIn("get_flow_config active_views setup -quiet", body)
+        self.assertIn("get_flow_config active_views hold -quiet", body)
         self.assertIn("if {[llength $wolf_active_setup_views]}", body)
         self.assertIn("if {[llength $wolf_active_hold_views]}", body)
         # genus_turn_on_analysis_views itself is kept as a named,
@@ -1076,8 +1093,8 @@ class GenusPowerGroundNetsTests(GenusFixtureTestCase):
         step = builtin_flow_root("cadence-genus") / "synthesis.tcl"
         bodies = _extract_step_bodies(step.read_text(encoding="utf-8"))
         body = bodies["run_init_design"]
-        self.assertIn("get_flow_config -quiet power_nets", body)
-        self.assertIn("get_flow_config -quiet ground_nets", body)
+        self.assertIn("get_flow_config power_nets -quiet", body)
+        self.assertIn("get_flow_config ground_nets -quiet", body)
         self.assertIn("set_db init_power_nets $wolf_power_nets", body)
         self.assertIn("set_db init_ground_nets $wolf_ground_nets", body)
         # The real init_design call is the LAST occurrence of the word in
@@ -1194,14 +1211,14 @@ class GenusCtsCellTests(GenusFixtureTestCase):
             "cts_clock_gating_cells",
         ):
             self.assertIn(attribute, body)
-        self.assertIn("get_flow_config -quiet $wolf_cts_attr", body)
+        self.assertIn("get_flow_config $wolf_cts_attr -quiet", body)
         self.assertIn("set_db $wolf_cts_attr $wolf_cts_value", body)
         for attribute, variable in (
             ("cts_target_skew", "wolf_cts_target_skew"),
             ("cts_target_max_transition_time", "wolf_cts_target_max_transition_time"),
             ("cts_max_fanout", "wolf_cts_max_fanout"),
         ):
-            self.assertIn(f"get_flow_config -quiet {attribute}", body)
+            self.assertIn(f"get_flow_config {attribute} -quiet", body)
             self.assertIn(f"set_db {attribute} ${variable}", body)
 
 
@@ -1240,7 +1257,7 @@ class GenusTieoffTests(GenusFixtureTestCase):
     def test_add_tieoffs_step_resolves_and_reports(self):
         step = builtin_flow_root("cadence-genus") / "cts.tcl"
         body = _extract_step_bodies(step.read_text(encoding="utf-8"))["add_tieoffs"]
-        self.assertIn("get_flow_config -quiet add_tieoffs_cells", body)
+        self.assertIn("get_flow_config add_tieoffs_cells -quiet", body)
         self.assertIn("set_db add_tieoffs_cells $wolf_tieoff_cells", body)
         self.assertIn("get_db insts -if {.base_cell.name == $wolf_tie_cell}", body)
         self.assertIn("check_tieoffs", body)
@@ -1914,7 +1931,7 @@ class GenusTclListQuotingTests(GenusFixtureTestCase):
         probe.write_text(
             _get_flow_config_stub(document)
             + "foreach v {dont_use_cells power_nets ground_nets add_tieoffs_cells} {\n"
-            '    set value [get_flow_config -quiet $v]\n'
+            '    set value [get_flow_config $v -quiet]\n'
             '    puts "$v llength=[llength $value]"\n'
             '    foreach e $value { puts "$v elem=|$e|" }\n'
             "}\n",

@@ -54,20 +54,20 @@ create_flow_step -name add_tieoffs -owner wolf {
     # for the literal 1'b0/1'b1 connections Genus left as constants; the
     # two are complementary; add_tieoffs should run after the floorplan
     # script's own global net connections, which it already does here.
-    set wolf_tieoff_cells [get_flow_config -quiet add_tieoffs_cells]
+    set wolf_tieoff_cells [get_flow_config add_tieoffs_cells -quiet]
     if {[llength $wolf_tieoff_cells]} {
         set_db add_tieoffs_cells $wolf_tieoff_cells
         wolf_info "add_tieoffs_cells: $wolf_tieoff_cells"
     }
-    set wolf_tieoff_honor_dont_use [get_flow_config -quiet add_tieoffs_honor_dont_use]
+    set wolf_tieoff_honor_dont_use [get_flow_config add_tieoffs_honor_dont_use -quiet]
     if {$wolf_tieoff_honor_dont_use ne ""} {
         set_db add_tieoffs_honor_dont_use $wolf_tieoff_honor_dont_use
     }
-    set wolf_tieoff_max_fanout [get_flow_config -quiet add_tieoffs_max_fanout]
+    set wolf_tieoff_max_fanout [get_flow_config add_tieoffs_max_fanout -quiet]
     if {$wolf_tieoff_max_fanout ne ""} {
         set_db add_tieoffs_max_fanout $wolf_tieoff_max_fanout
     }
-    set wolf_tieoff_max_distance [get_flow_config -quiet add_tieoffs_max_distance]
+    set wolf_tieoff_max_distance [get_flow_config add_tieoffs_max_distance -quiet]
     if {$wolf_tieoff_max_distance ne ""} {
         set_db add_tieoffs_max_distance $wolf_tieoff_max_distance
     }

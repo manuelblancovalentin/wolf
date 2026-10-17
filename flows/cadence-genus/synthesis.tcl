@@ -85,10 +85,10 @@ create_flow_step -name read_mmmc -owner wolf {
     wolf_step "read_mmmc: loading technology/corner setup"
     wolf_inject_for_step read_mmmc pre
 
-    set wolf_max_cpus_per_server [get_flow_config -quiet max_cpus_per_server]
-    set wolf_technology_script [get_flow_config -quiet technology_script]
-    set wolf_mmmc_script [get_flow_config -quiet mmmc_script]
-    set wolf_overrides_script [get_flow_config -quiet overrides_script]
+    set wolf_max_cpus_per_server [get_flow_config max_cpus_per_server -quiet]
+    set wolf_technology_script [get_flow_config technology_script -quiet]
+    set wolf_mmmc_script [get_flow_config mmmc_script -quiet]
+    set wolf_overrides_script [get_flow_config overrides_script -quiet]
     if {$wolf_max_cpus_per_server ne ""} {
         set_db max_cpus_per_server $wolf_max_cpus_per_server
         wolf_info "max_cpus_per_server: using $wolf_max_cpus_per_server CPU(s) (resources.threads/GENUS_NUM_CPUS)"
@@ -113,8 +113,8 @@ create_flow_step -name apply_clock_derate -owner wolf {
     wolf_step "apply_clock_derate"
     wolf_inject_for_step apply_clock_derate pre
 
-    set wolf_clock_derate_early [get_flow_config -quiet clock_derate_early]
-    set wolf_clock_derate_late [get_flow_config -quiet clock_derate_late]
+    set wolf_clock_derate_early [get_flow_config clock_derate_early -quiet]
+    set wolf_clock_derate_late [get_flow_config clock_derate_late -quiet]
     if {$wolf_clock_derate_early ne "" || $wolf_clock_derate_late ne ""} {
         set derate_args {}
         if {$wolf_clock_derate_early ne ""} {
@@ -136,8 +136,8 @@ create_flow_step -name read_physical -owner wolf {
     wolf_step "read_physical: loading LEF"
     wolf_inject_for_step read_physical pre
 
-    set wolf_technology_lefs [get_flow_config -quiet technology_lefs]
-    set wolf_cell_lefs [get_flow_config -quiet cell_lefs]
+    set wolf_technology_lefs [get_flow_config technology_lefs -quiet]
+    set wolf_cell_lefs [get_flow_config cell_lefs -quiet]
     set has_physical_views [expr {
         [llength $wolf_technology_lefs] > 0 || [llength $wolf_cell_lefs] > 0
     }]
@@ -175,7 +175,7 @@ create_flow_step -name elaborate -owner wolf {
     # points at this same constraints.sdc for every analysis view -- a
     # plain read_sdc here would reapply (and error re-creating) the same
     # clocks a second time.
-    if {[get_flow_config -quiet mmmc_script] eq ""} {
+    if {[get_flow_config mmmc_script -quiet] eq ""} {
         read_sdc [get_flow_config constraints_file]
     }
     check_design -unresolved
@@ -196,7 +196,7 @@ create_flow_step -name preserve_blocks -owner wolf {
     wolf_step "preserve_blocks"
     wolf_inject_for_step preserve_blocks pre
 
-    set wolf_preserve_blocks [get_flow_config -quiet preserve_blocks]
+    set wolf_preserve_blocks [get_flow_config preserve_blocks -quiet]
     if {[llength $wolf_preserve_blocks] > 0} {
         foreach pattern $wolf_preserve_blocks {
             set_db [get_db modules $pattern] .preserve true
@@ -213,7 +213,7 @@ create_flow_step -name preserve_instances -owner wolf {
     wolf_step "preserve_instances"
     wolf_inject_for_step preserve_instances pre
 
-    set wolf_preserve_instances [get_flow_config -quiet preserve_instances]
+    set wolf_preserve_instances [get_flow_config preserve_instances -quiet]
     if {[llength $wolf_preserve_instances] > 0} {
         foreach pattern $wolf_preserve_instances {
             set_db [get_db instances $pattern] .preserve true
@@ -230,7 +230,7 @@ create_flow_step -name read_power_intent -owner wolf {
     wolf_step "read_power_intent"
     wolf_inject_for_step read_power_intent pre
 
-    set wolf_power_intent_file [get_flow_config -quiet power_intent_file]
+    set wolf_power_intent_file [get_flow_config power_intent_file -quiet]
     if {$wolf_power_intent_file ne ""} {
         read_power_intent -cpf $wolf_power_intent_file
     } else {
@@ -245,9 +245,9 @@ create_flow_step -name run_init_design -owner wolf {
     wolf_step "run_init_design"
     wolf_inject_for_step run_init_design pre
 
-    set wolf_technology_lefs [get_flow_config -quiet technology_lefs]
-    set wolf_cell_lefs [get_flow_config -quiet cell_lefs]
-    set wolf_mmmc_script [get_flow_config -quiet mmmc_script]
+    set wolf_technology_lefs [get_flow_config technology_lefs -quiet]
+    set wolf_cell_lefs [get_flow_config cell_lefs -quiet]
+    set wolf_mmmc_script [get_flow_config mmmc_script -quiet]
     set has_physical_views [expr {
         [llength $wolf_technology_lefs] > 0 || [llength $wolf_cell_lefs] > 0
     }]
@@ -264,8 +264,8 @@ create_flow_step -name run_init_design -owner wolf {
         # Innovus side, and connect_global_net/route_special/add_stripes
         # all fail with "net does not exist" until something creates them
         # by hand.
-        set wolf_power_nets [get_flow_config -quiet power_nets]
-        set wolf_ground_nets [get_flow_config -quiet ground_nets]
+        set wolf_power_nets [get_flow_config power_nets -quiet]
+        set wolf_ground_nets [get_flow_config ground_nets -quiet]
         if {[llength $wolf_power_nets]} {
             set_db init_power_nets $wolf_power_nets
             wolf_info "init_power_nets: $wolf_power_nets"
@@ -287,7 +287,7 @@ create_flow_step -name read_def -owner wolf {
     wolf_step "read_def"
     wolf_inject_for_step read_def pre
 
-    set wolf_floorplan_def [get_flow_config -quiet floorplan_def]
+    set wolf_floorplan_def [get_flow_config floorplan_def -quiet]
     if {$wolf_floorplan_def ne ""} {
         read_def $wolf_floorplan_def
     } else {
@@ -306,7 +306,7 @@ create_flow_step -name read_def -owner wolf {
 create_flow_step -name init_genus -owner wolf {
     wolf_step "init_genus"
     wolf_inject_for_step init_genus pre
-    set wolf_max_cpus_per_server [get_flow_config -quiet max_cpus_per_server]
+    set wolf_max_cpus_per_server [get_flow_config max_cpus_per_server -quiet]
     if {$wolf_max_cpus_per_server ne ""} {
         set_db max_cpus_per_server $wolf_max_cpus_per_server
         wolf_info "max_cpus_per_server: using $wolf_max_cpus_per_server CPU(s) (resources.threads/GENUS_NUM_CPUS)"
@@ -318,7 +318,7 @@ create_flow_step -name init_genus -owner wolf {
 create_flow_step -name set_dont_use -owner wolf {
     wolf_step "set_dont_use"
     wolf_inject_for_step set_dont_use pre
-    foreach dont_use_cell [get_flow_config -quiet dont_use_cells] {
+    foreach dont_use_cell [get_flow_config dont_use_cells -quiet] {
         set_db [get_db base_cells $dont_use_cell] .dont_use true
     }
     wolf_inject_for_step set_dont_use post
@@ -337,7 +337,7 @@ create_flow_step -name max_routing_layer -owner wolf {
     wolf_step "max_routing_layer"
     wolf_inject_for_step max_routing_layer pre
 
-    set wolf_max_routing_layers [get_flow_config -quiet max_routing_layers]
+    set wolf_max_routing_layers [get_flow_config max_routing_layers -quiet]
     if {$wolf_max_routing_layers ne ""} {
         set_db number_of_routing_layers $wolf_max_routing_layers
     } else {
@@ -361,7 +361,7 @@ create_flow_step -name create_cost_group -owner wolf {
     # selected ("SDC command requires a constraint mode specification",
     # confirmed against a real multi-corner run) -- apply it to every
     # declared corner's constraint mode, not just whichever is implicit.
-    if {[get_flow_config -quiet mmmc_script] ne ""} {
+    if {[get_flow_config mmmc_script -quiet] ne ""} {
         set_interactive_constraint_modes [all_constraint_modes]
     }
 

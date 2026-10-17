@@ -84,7 +84,7 @@ proc wolf_inject {snippets} {
 # no-op everywhere else. -quiet: inject itself, or the one step/phase
 # pair being asked for, commonly doesn't exist at all.
 proc wolf_inject_for_step {step phase} {
-    set wolf_inject_snippets [get_flow_config -quiet inject $step $phase]
+    set wolf_inject_snippets [get_flow_config inject $step $phase -quiet]
     if {[llength $wolf_inject_snippets]} {
         wolf_inject $wolf_inject_snippets
     }
@@ -146,7 +146,7 @@ proc wolf_step_canonical_path {} {
 }
 
 proc wolf_write_step_status {step_name status} {
-    set wolf_run_directory [get_flow_config -quiet run_directory]
+    set wolf_run_directory [get_flow_config run_directory -quiet]
     if {$wolf_run_directory eq ""} {
         return
     }

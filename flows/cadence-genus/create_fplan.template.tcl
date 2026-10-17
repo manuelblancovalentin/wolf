@@ -199,7 +199,7 @@ foreach net $PG_NETS {
 # inputs/floorplans/<design>/ -- the directory `wolf env auto-setup` already scaffolds, resolved
 # relative to this script's own location ([info script]) rather than hardcoded, so the same script
 # works no matter where the project checks it out.
-set fp_design [get_flow_config -quiet design_name]
+set fp_design [get_flow_config design_name -quiet]
 if {$fp_design eq ""} { set fp_design "design" }
 set fp_dir [file normalize [file join [file dirname [info script]] .. .. floorplans $fp_design]]
 file mkdir $fp_dir

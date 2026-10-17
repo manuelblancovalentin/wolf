@@ -77,7 +77,7 @@ create_flow_step -name genus_to_innovus -owner wolf {
     #  synthesized repeated tile) -- see hierarchical-synthesis notes in
     #  common_flows.tcl. Read before the handoff write so the combined
     #  netlist references them by name rather than re-expanding them.
-    foreach netlist [get_flow_config -quiet postsyn_netlists] {
+    foreach netlist [get_flow_config postsyn_netlists -quiet] {
         wolf_info "Reading pre-synthesized netlist $netlist"
         read_hdl -sv -library work $netlist
     }
@@ -192,16 +192,16 @@ create_flow_step -name set_cts_config -owner wolf {
         cts_inverter_cells cts_inverter_cells_top cts_inverter_cells_leaf
         cts_clock_gating_cells
     } {
-        set wolf_cts_value [get_flow_config -quiet $wolf_cts_attr]
+        set wolf_cts_value [get_flow_config $wolf_cts_attr -quiet]
         if {[llength $wolf_cts_value]} {
             set_db $wolf_cts_attr $wolf_cts_value
             wolf_info "$wolf_cts_attr: $wolf_cts_value"
             set wolf_cts_applied 1
         }
     }
-    set wolf_cts_target_skew [get_flow_config -quiet cts_target_skew]
-    set wolf_cts_target_max_transition_time [get_flow_config -quiet cts_target_max_transition_time]
-    set wolf_cts_max_fanout [get_flow_config -quiet cts_max_fanout]
+    set wolf_cts_target_skew [get_flow_config cts_target_skew -quiet]
+    set wolf_cts_target_max_transition_time [get_flow_config cts_target_max_transition_time -quiet]
+    set wolf_cts_max_fanout [get_flow_config cts_max_fanout -quiet]
     if {$wolf_cts_target_skew ne ""} {
         set_db cts_target_skew $wolf_cts_target_skew
         wolf_info "cts_target_skew: $wolf_cts_target_skew"
@@ -234,7 +234,7 @@ create_flow_step -name commit_power_intent -owner wolf {
     wolf_step "commit_power_intent"
     wolf_inject_for_step commit_power_intent pre
 
-    if {[get_flow_config -quiet power_intent_file] ne ""} {
+    if {[get_flow_config power_intent_file -quiet] ne ""} {
         commit_power_intent
     } else {
         wolf_info "commit_power_intent: no power intent was read, skipping"

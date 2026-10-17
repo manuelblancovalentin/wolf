@@ -55,7 +55,7 @@ create_flow_step -name init_innovus -owner wolf {
     # set_db; set_multi_cpu_usage is its own real multithreading control,
     # and this step re-runs at the start of every implementation stage
     # since each one is a separate Innovus invocation.
-    set wolf_max_cpus_per_server [get_flow_config -quiet max_cpus_per_server]
+    set wolf_max_cpus_per_server [get_flow_config max_cpus_per_server -quiet]
     if {$wolf_max_cpus_per_server ne ""} {
         set_multi_cpu_usage -local_cpu $wolf_max_cpus_per_server
         wolf_info "set_multi_cpu_usage: using $wolf_max_cpus_per_server CPU(s) (resources.threads)"
@@ -87,8 +87,8 @@ create_flow_step -name init_innovus -owner wolf {
         # exactly the place a later per-stage override would plug in).
         set wolf_setup_views $wolf_analysis_view_names
         set wolf_hold_views  $wolf_analysis_view_names
-        set wolf_active_setup_views [get_flow_config -quiet active_views setup]
-        set wolf_active_hold_views [get_flow_config -quiet active_views hold]
+        set wolf_active_setup_views [get_flow_config active_views setup -quiet]
+        set wolf_active_hold_views [get_flow_config active_views hold -quiet]
         if {[llength $wolf_active_setup_views]} { set wolf_setup_views $wolf_active_setup_views }
         if {[llength $wolf_active_hold_views]}  { set wolf_hold_views  $wolf_active_hold_views }
         set_analysis_view -setup $wolf_setup_views -hold $wolf_hold_views
@@ -142,7 +142,7 @@ create_flow_step -name load_floorplan -owner wolf {
     wolf_step "load_floorplan"
     wolf_inject_for_step load_floorplan pre
 
-    set wolf_floorplan_def [get_flow_config -quiet floorplan_def]
+    set wolf_floorplan_def [get_flow_config floorplan_def -quiet]
     if {$wolf_floorplan_def ne ""} {
         read_def $wolf_floorplan_def
     } else {
@@ -215,9 +215,9 @@ create_flow_step -name add_clock_route_types -owner wolf {
     # clearly, before CTS runs, if a configured layer does not exist.
     # Left unset (today's default): this step is a no-op, same as before
     # this existed.
-    set wolf_clock_routing_width_mult [get_flow_config -quiet clock_routing_width_multiplier]
-    set wolf_clock_routing_spacing_mult [get_flow_config -quiet clock_routing_spacing_multiplier]
-    set wolf_clock_routing_types [get_flow_config -quiet clock_routing_types]
+    set wolf_clock_routing_width_mult [get_flow_config clock_routing_width_multiplier -quiet]
+    set wolf_clock_routing_spacing_mult [get_flow_config clock_routing_spacing_multiplier -quiet]
+    set wolf_clock_routing_types [get_flow_config clock_routing_types -quiet]
     set wolf_route_rule_name ""
     if {[llength $wolf_clock_routing_width_mult] || [llength $wolf_clock_routing_spacing_mult]} {
         set wolf_configured_layers {}
