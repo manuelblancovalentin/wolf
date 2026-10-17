@@ -2183,6 +2183,13 @@ def prepare_genus_inputs(
         "WOLF_RUN_TAG": destination.name,
         "WOLF_REPORTS_DIR": str(reports_directory),
         "WOLF_OUTPUTS_DIR": str(outputs_directory),
+        # Always present (not only when a setup.yaml is actually
+        # rendered below): flow.template.yaml's own design_yaml attribute
+        # references this unconditionally, since that is what tells
+        # Flowtool's get_flow_config which file to read at all -- a flow
+        # package with no setup.yaml gets an intentionally empty, valid
+        # attribute instead of a dangling unresolved ${TOKEN}.
+        "WOLF_SETUP_YAML": "",
     }
     flow_yaml = destination / f"flow.{context.design_name}.yaml"
     if setup_template is not None:

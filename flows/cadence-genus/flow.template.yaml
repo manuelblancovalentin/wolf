@@ -5,17 +5,22 @@
 # Genus/Innovus flow (common_flows.tcl and friends in this same directory).
 # The real flow sequencing lives in Tcl's own create_flow/create_flow_step
 # calls, not in a yaml step tree, so this file only tells Flowtool which
-# scripts define this run's steps and which resolved-value script to load --
-# nothing technology-, library-, or institution-specific belongs here, and
-# none is needed: unlike the yaml-step-tree style of Flowtool project (where
-# per-run values are read back via get_flow_config out of a companion
-# design/setup yaml), this flow reads its resolved values directly out of
-# flow-config.tcl as plain Tcl variables (see synthesis.tcl's header).
+# scripts define this run's steps and which resolved-value script to load.
 #
-# A project with its own extension Tcl that does rely on get_flow_config
-# (or on Cadence's other yaml-step-tree features) can still override this
-# file entirely via backend.cadence-flowtool.flowtool.flow_template (paired
-# with its own setup_template) -- that escape hatch is unchanged.
+# design_yaml (below) is the attribute that actually tells Flowtool's
+# get_flow_config which yaml file to read -- confirmed against a real
+# institution Flowtool project descriptor, where the equivalent attribute
+# (also named design_yaml there) points at that institution's own
+# per-run design-data yaml. Without it, get_flow_config has no file bound
+# at all and every lookup fails silently (a -quiet one returns "", a
+# required one errors) regardless of anything else being correct --
+# confirmed real: WOLF's own bundled flow migrated every step body to
+# get_flow_config before this line existed, and every lookup failed.
+#
+# A project with its own extension Tcl, or Cadence's other yaml-step-tree
+# features, can still override this file entirely via
+# backend.cadence-flowtool.flowtool.flow_template (paired with its own
+# setup_template) -- that escape hatch is unchanged.
 #
 # include_procs/default_flow_steps/user_flow_steps are written as absolute
 # paths rather than bare filenames resolved against init_flow_directory:
@@ -28,6 +33,13 @@
 # deduplicated scripts.<N> snapshot.
 
 remarks: WOLF generic Cadence Genus/Innovus flow descriptor
+
+# The real setup.<design_name>.yaml get_flow_config reads from --
+# WOLF_SETUP_YAML is "" (an intentionally empty, harmless attribute) for
+# the rare flow package that ships no setup.template.yaml of its own and
+# has no override either (see _flowtool_templates's own docstring in
+# wolf/backend/cadence_genus.py).
+design_yaml: ${WOLF_SETUP_YAML}
 
 init_flow_directory: ${WOLF_SCRIPTS_DIR}
 

@@ -239,8 +239,8 @@ present regardless of whether the template text itself references them:
 step body reads every resolved value this way, including which of
 `mmmc.tcl`/`technology.tcl` (still their own separate generated Tcl
 files, real `create_library_set`/`set_db library` commands, not plain
-data) to `source`: that choice is itself `get_flow_config -quiet
-technology_script`/`mmmc_script`, same as everything else. A project's
+data) to `source`: that choice is itself `get_flow_config
+technology_script -quiet`/`mmmc_script -quiet`, same as everything else. A project's
 own extension/injected Tcl gets exactly the same access, with no
 per-project configuration required to get it.
 
@@ -280,7 +280,7 @@ decides which of these tokens to use and how:
 | `${WOLF_DESIGN_TOP}` | resolved top-level module/entity |
 | `${WOLF_SCRIPTS_DIR}` | the scripts.\<N\> snapshot directory (see below) -- WOLF's own `flow_template` sets `init_flow_directory` here |
 | `${WOLF_FLOW_CONFIG_SCRIPT}` | this run's `flow-config.tcl` path -- WOLF's own `flow_template` lists it under `user_flow_steps` |
-| `${WOLF_SETUP_YAML}` | the rendered setup.yaml's own path (available inside the flow template only, and only when a `setup_template` override is given) |
+| `${WOLF_SETUP_YAML}` | the rendered setup.yaml's own path, bound into the flow descriptor's own `design_yaml` attribute -- the Flowtool attribute that tells `get_flow_config` which file to read at all. Always present (an empty string when no setup.yaml is rendered for this run) so the flow descriptor never ships a dangling unresolved token |
 | `${WOLF_WORKSPACE_DIR}` | resolved workspace root |
 | `${WOLF_RUN_DIRECTORY}` | this run's own numbered directory (`<design>.<N>`) |
 | `${WOLF_RUN_TAG}` | the real allocated run tag (`<design>.<N>`, matching `${WOLF_RUN_DIRECTORY}`'s own name) -- not the environment's `run_tag`, which only ever defaults to the bare design name |
@@ -338,7 +338,7 @@ so it's rendered differently, in three steps:
 WOLF's own `mmmc.tcl`/`technology.tcl` generation still happens
 regardless of whether `setup_template` is overridden -- they are what
 WOLF's own bundled flow steps actually `source` (via `get_flow_config
--quiet mmmc_script`/`technology_script`, same as everything else).
+mmmc_script -quiet`/`technology_script -quiet`, same as everything else).
 
 ## scripts.\<N\>/scripts.latest
 
