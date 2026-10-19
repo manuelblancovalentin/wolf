@@ -1041,10 +1041,11 @@ are also recorded in `genus-inputs.yaml` and frozen run provenance.
 
 ## CTS cell selection, timing targets, tie-offs, and clock routing
 
-These all default to today's behaviour (CCOpt/add_tieoffs/
-add_clock_route_types use their own library-wide defaults, unchanged)
-when left unset, and are generic across any technology package -- WOLF
-never hard-codes a cell or layer name; a project supplies its own.
+`add_tieoffs`/`add_clock_route_types` default to today's behaviour (their
+own library-wide defaults, unchanged) when left unset. `cts_*` cell
+selection has its own library-derived default instead (below). All are
+generic across any technology package -- WOLF never hard-codes a cell or
+layer name; a project supplies its own, or relies on the resolved default.
 
 **`cts_*`** -- CCOpt buffer/inverter/clock-gating cell selection and
 timing targets, applied by a shared `set_cts_config` step at the start of
@@ -1054,21 +1055,34 @@ restored from a checkpoint and attribute persistence across that restore
 is not documented (see "Settings across implementation stages" below):
 
 ```yaml
-cts_buffer_cells: ["BUFX*"]           # name or pattern list
-cts_inverter_cells: ["INVX*"]
-cts_clock_gating_cells: ["CKGX*"]
-cts_target_skew: 0.05                 # ns, optional
-cts_target_max_transition_time: 0.2   # ns, optional
+cts_buffer_cells: ["BUFX*"]           # name or pattern list, optional
+cts_inverter_cells: ["INVX*"]         # optional
+cts_clock_gating_cells: ["CKGX*"]     # optional
+cts_target_skew: 0.05                 # ns, or default/auto/ignore/double, optional
+cts_target_max_transition_time: 0.2   # ns, or default/auto/ignore/double, optional
 cts_max_fanout: 16                    # optional
 ```
 
 Cell lists map directly onto Innovus's own `cts_buffer_cells`/
 `cts_inverter_cells`/`cts_clock_gating_cells` (confirmed real, man 20.15):
 each accepts exact names *or* patterns (`BUFX*`), expanded against the
-loaded library by CCOpt itself -- WOLF does not need to query `base_cell`
-attributes (`is_buffer`, ...) to offer this, and does not (no confirmed
-20.15 reference for those attributes was found; guessing them risked the
-same class of error `genus_turn_on_analysis_views`'s `.active` bug was).
+loaded library by CCOpt itself. Left unset, `set_cts_config` defaults to
+every `base_cell` the loaded library itself reports as
+`is_buffer`/`is_inverter`/`is_integrated_clock_gating` (confirmed real
+attributes, read directly off a live Innovus session's own `get_db
+base_cells -if {...}`), excluding anything already `dont_use` -- not
+CCOpt's own unguided pick. This matters because a hand-written name
+pattern can collide with an unrelated cell family sharing the same
+prefix (confirmed real: a plain `CKND*` glob, meant for one inverter
+family, also matched an unrelated `CKND2D*` NAND-gate family in the
+same library) or resurrect a `dont_use`-flagged variant, since CCOpt
+stops honoring `dont_use` entirely the moment any explicit list is
+given (man 20.15: *"If set explicitly, CTS will ignore any don't use
+settings for the cells specified"*) -- a risk this default avoids by
+excluding `dont_use` cells itself before CCOpt ever sees the list.
+`cts_target_skew`/`cts_target_max_transition_time` each accept either a
+numeric target or one of `default`/`auto`/`ignore`/`double` (also
+confirmed real, man 20.15).
 
 **`add_tieoffs_*`** -- resolves `add_tieoffs_cells` (at most two: one
 tie-high driver, one tie-low driver, man 20.15) and its companion

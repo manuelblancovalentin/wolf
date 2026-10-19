@@ -419,11 +419,16 @@ def _cts_overrides(context: ResolvedContext) -> CtsOverrides:
     Cell lists are real Innovus cts_buffer_cells/cts_inverter_cells/
     cts_clock_gating_cells values directly (confirmed real, man 20.15):
     each one takes either exact cell names or name *patterns* ("bufAX*"),
-    expanded against the loaded library by CCOpt itself -- WOLF does not
-    need to resolve or guess at base_cell attributes (is_buffer, ...) to
-    offer this; a project supplies the pattern(s) its own library uses.
-    Left unset (today's default): CCOpt chooses from the whole library,
-    unchanged. target_skew/target_max_transition_time each take either a
+    expanded against the loaded library by CCOpt itself. Left unset
+    here, set_cts_config's own Tcl (common_steps.tcl) defaults to every
+    base_cell the loaded library itself reports as is_buffer/is_inverter/
+    is_integrated_clock_gating (excluding dont_use) -- not CCOpt's own
+    unguided pick, since a name pattern that happens to collide with an
+    unrelated cell family (confirmed real: a plain "CKND*" prefix also
+    matched the unrelated CKND2D* NAND family) is exactly the mistake
+    querying the real attributes avoids. A project supplying its own
+    pattern(s) here still overrides that default outright, same as
+    before. target_skew/target_max_transition_time each take either a
     numeric target or one of "default"/"auto"/"ignore"/"double" (also
     confirmed real, man 20.15) -- see _optional_cts_target.
     """

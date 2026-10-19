@@ -171,26 +171,58 @@ create_flow_step -name report_check_design -owner wolf {
 # set_cts_config -- shared by prects and cts: CCOpt cell selection
 # (cts_buffer_cells/cts_inverter_cells/cts_clock_gating_cells) and timing
 # targets (cts_target_skew/cts_target_max_transition_time/cts_max_fanout),
-# from backend.cadence-flowtool.cts. Each stage is a separate Innovus
-# invocation restored from a checkpoint, and whether these root
-# attributes survive that restore is not documented anywhere WOLF found
-# -- re-applying idempotently at the start of both stages (prects, before
-# add_clock_spec; cts, before CMD_check_design_cts) is the safe default
-# rather than assuming persistence.
+# from this design's own setup.<design>.yaml (get_flow_config). Cell
+# selection defaults to the loaded library's own is_buffer/is_inverter/
+# is_integrated_clock_gating cells (excluding dont_use) when setup.yaml
+# gives no explicit value -- see the foreach below. Each stage is a
+# separate Innovus invocation restored from a checkpoint, and whether
+# these root attributes survive that restore is not documented anywhere
+# WOLF found -- re-applying idempotently at the start of both stages
+# (prects, before add_clock_spec; cts, before CMD_check_design_cts) is
+# the safe default rather than assuming persistence.
 #=============================================================================
 
 create_flow_step -name set_cts_config -owner wolf {
     wolf_inject_for_step set_cts_config pre
     set wolf_cts_applied 0
+    # cts_buffer_cells/cts_inverter_cells/cts_clock_gating_cells: when
+    # setup.yaml gives no explicit value, default to every real
+    # buffer/inverter/integrated-clock-gate cell the loaded library
+    # itself reports (base_cell's own is_buffer/is_inverter/
+    # is_integrated_clock_gating, confirmed real attributes), excluding
+    # anything already dont_use -- not left for CCOpt to pick from the
+    # whole library on its own, since a name that happens to collide
+    # with a different cell family (confirmed real: a plain "CKND*"
+    # prefix glob also matched the unrelated CKND2D* NAND family) is
+    # exactly the kind of mistake querying the real attributes avoids.
+    # setup.yaml's own value, when given, replaces this default outright
+    # (not merged with it) -- same precedence as every other cts_* key.
+    foreach {wolf_cts_attr wolf_cts_is_attr} {
+        cts_buffer_cells is_buffer
+        cts_inverter_cells is_inverter
+        cts_clock_gating_cells is_integrated_clock_gating
+    } {
+        set wolf_cts_value [get_flow_config $wolf_cts_attr -quiet]
+        if {![llength $wolf_cts_value]} {
+            set wolf_cts_filter ".$wolf_cts_is_attr == true && .dont_use == false"
+            set wolf_cts_value [get_db [get_db base_cells -if $wolf_cts_filter] .name]
+        }
+        if {[llength $wolf_cts_value]} {
+            set_db $wolf_cts_attr $wolf_cts_value
+            wolf_info "$wolf_cts_attr: $wolf_cts_value"
+            set wolf_cts_applied 1
+        }
+    }
     # cts_buffer_cells_top/_leaf and cts_inverter_cells_top/_leaf
     # (confirmed real, man 20.15) narrow the plain/default attribute to
     # top-net-only or leaf-net-only cells; there is no _trunk variant for
     # either (trunk nets use the plain attribute). clock_gating_cells has
-    # no top/leaf variant at all.
+    # no top/leaf variant at all. These stay opt-in-only refinements --
+    # no library-attribute default, since "leaf-only buffer" has no
+    # equivalent base_cell attribute to query.
     foreach wolf_cts_attr {
-        cts_buffer_cells cts_buffer_cells_top cts_buffer_cells_leaf
-        cts_inverter_cells cts_inverter_cells_top cts_inverter_cells_leaf
-        cts_clock_gating_cells
+        cts_buffer_cells_top cts_buffer_cells_leaf
+        cts_inverter_cells_top cts_inverter_cells_leaf
     } {
         set wolf_cts_value [get_flow_config $wolf_cts_attr -quiet]
         if {[llength $wolf_cts_value]} {
@@ -218,7 +250,7 @@ create_flow_step -name set_cts_config -owner wolf {
         set wolf_cts_applied 1
     }
     if {!$wolf_cts_applied} {
-        wolf_info "set_cts_config: no cts_* overrides configured in setup.yaml -- CCOpt uses its own library-wide defaults"
+        wolf_info "set_cts_config: no cts_* overrides in setup.yaml and no matching library cells found -- CCOpt uses its own built-in defaults"
     }
     wolf_inject_for_step set_cts_config post
 }

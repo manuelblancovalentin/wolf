@@ -1294,6 +1294,98 @@ class GenusCtsCellTests(GenusFixtureTestCase):
             self.assertIn(f"set_db {attribute} ${variable}", body)
 
 
+@unittest.skipUnless(TCLSH, "tclsh is not installed")
+class GenusCtsLibraryDefaultTests(unittest.TestCase):
+    """Regression: set_cts_config used to leave cts_buffer_cells/
+    cts_inverter_cells/cts_clock_gating_cells alone whenever setup.yaml
+    gave no explicit value, letting CCOpt pick from the whole library
+    unguided. It now defaults to the loaded library's own is_buffer/
+    is_inverter/is_integrated_clock_gating cells (excluding dont_use)
+    instead -- confirmed real base_cell attributes, via a real Innovus
+    session -- so a project with no cts_* overrides at all still gets a
+    sane, library-derived default rather than depending on a name
+    pattern that might collide with an unrelated cell family."""
+
+    # A minimal get_db stand-in covering exactly the two call shapes
+    # set_cts_config makes: `get_db base_cells -if $filter` (resolved
+    # against a synthetic library below) and `get_db $collection .name`
+    # (the projection call, identity here since base_cells already
+    # returns names).
+    _STUB_LIBRARY = {
+        "BUFX1": {"is_buffer": True, "is_inverter": False,
+                   "is_integrated_clock_gating": False, "dont_use": False},
+        "BUFX2": {"is_buffer": True, "is_inverter": False,
+                   "is_integrated_clock_gating": False, "dont_use": False},
+        "BUFX_OLD": {"is_buffer": True, "is_inverter": False,
+                      "is_integrated_clock_gating": False, "dont_use": True},
+        "INVX1": {"is_buffer": False, "is_inverter": True,
+                   "is_integrated_clock_gating": False, "dont_use": False},
+        "CGX1": {"is_buffer": False, "is_inverter": False,
+                  "is_integrated_clock_gating": True, "dont_use": False},
+    }
+
+    def _get_db_stub(self) -> str:
+        lines = ["proc get_db {args} {\n", "    global wolf_test_library\n"]
+        lines.append("    if {[lindex $args 0] eq \"base_cells\"} {\n")
+        lines.append("        set filt [lindex $args 2]\n")
+        lines.append("        regexp {\\.(\\w+) == true} $filt -> attr\n")
+        lines.append("        set matches {}\n")
+        lines.append(
+            "        foreach name [dict keys $wolf_test_library] {\n"
+            "            set cell [dict get $wolf_test_library $name]\n"
+            "            if {[dict get $cell $attr] && ![dict get $cell dont_use]} {\n"
+            "                lappend matches $name\n"
+            "            }\n"
+            "        }\n"
+            "        return $matches\n"
+        )
+        lines.append("    }\n")
+        lines.append("    return [lindex $args 0]\n")
+        lines.append("}\n")
+        library_literal = "dict create " + " ".join(
+            f"{name} {{{' '.join(f'{k} {1 if v else 0}' for k, v in attrs.items())}}}"
+            for name, attrs in self._STUB_LIBRARY.items()
+        )
+        return "".join(lines) + f"set wolf_test_library [{library_literal}]\n"
+
+    def _run(self, overrides: dict) -> subprocess.CompletedProcess:
+        step = builtin_flow_root("cadence-genus") / "common_steps.tcl"
+        body = _extract_step_bodies(step.read_text(encoding="utf-8"))["set_cts_config"]
+        with tempfile.TemporaryDirectory(prefix="wolf-cts-default-") as tmp:
+            script = Path(tmp) / "script.tcl"
+            script.write_text(
+                "proc wolf_inject_for_step {args} {}\n"
+                "proc wolf_info {args} { puts \"INFO: $args\" }\n"
+                "proc set_db {args} { puts \"SETDB: $args\" }\n"
+                + self._get_db_stub()
+                + _get_flow_config_stub(overrides)
+                + f"uplevel #0 {body}\n",
+                encoding="utf-8",
+            )
+            return subprocess.run(
+                [TCLSH, str(script)], capture_output=True, text=True, check=False,
+            )
+
+    def test_no_setup_yaml_override_defaults_from_library_attributes(self):
+        result = self._run({})
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertIn("SETDB: cts_buffer_cells {BUFX1 BUFX2}", result.stdout)
+        self.assertIn("SETDB: cts_inverter_cells INVX1", result.stdout)
+        self.assertIn("SETDB: cts_clock_gating_cells CGX1", result.stdout)
+        # BUFX_OLD is dont_use -- must never appear in the resolved default.
+        self.assertNotIn("BUFX_OLD", result.stdout)
+
+    def test_setup_yaml_override_replaces_the_library_default_outright(self):
+        result = self._run({"cts_buffer_cells": ["CUSTOMBUF1", "CUSTOMBUF2"]})
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertIn("SETDB: cts_buffer_cells {CUSTOMBUF1 CUSTOMBUF2}", result.stdout)
+        self.assertNotIn("BUFX1", result.stdout)
+        self.assertNotIn("BUFX2", result.stdout)
+        # Inverter/clock-gating still fall back to the library default.
+        self.assertIn("SETDB: cts_inverter_cells INVX1", result.stdout)
+        self.assertIn("SETDB: cts_clock_gating_cells CGX1", result.stdout)
+
+
 class GenusTieoffTests(GenusFixtureTestCase):
     """backend.cadence-flowtool.tieoffs -- resolves add_tieoffs_cells (at
     most two: tie-high/tie-low) and its companion attributes before
