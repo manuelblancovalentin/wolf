@@ -61,6 +61,11 @@ create_flow_step -name init_innovus -owner wolf {
     # idempotent-every-stage-restore reasoning as the thread count and
     # analysis-view selection below.
     set_db timing_analysis_type ocv
+    # OCV's own clock-path pessimism (CHKCTS-51's recommended companion,
+    # confirmed real, man 20.15, default "none") is otherwise
+    # double-counted on any reconverging clock path -- standard practice
+    # once OCV is on, not a per-design knob either.
+    set_db timing_analysis_cppr both
     # Same resolved thread count synthesis.tcl's own init_genus already
     # applies to Genus (resources.threads/GENUS_NUM_CPUS, via
     # get_flow_config max_cpus_per_server) -- Innovus has no equivalent

@@ -832,6 +832,14 @@ class GenusThreadsTests(GenusFixtureTestCase):
         body = bodies["init_innovus"]
         self.assertIn("set_db timing_analysis_type ocv", body)
 
+    def test_init_innovus_enables_cppr_alongside_ocv(self):
+        """timing_analysis_cppr (man 20.15, default "none"): OCV's own
+        clock-path pessimism is otherwise double-counted on any
+        reconverging clock path -- standard practice once OCV is on."""
+        step = builtin_flow_root("cadence-genus") / "floorplanning.tcl"
+        body = _extract_step_bodies(step.read_text(encoding="utf-8"))["init_innovus"]
+        self.assertIn("set_db timing_analysis_cppr both", body)
+
 
 class GenusSynthesisFlowTests(GenusFixtureTestCase):
     """Resolved-value plumbing for the selectable Genus flows.

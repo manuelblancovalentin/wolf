@@ -1082,7 +1082,14 @@ settings for the cells specified"*) -- a risk this default avoids by
 excluding `dont_use` cells itself before CCOpt ever sees the list.
 `cts_target_skew`/`cts_target_max_transition_time` each accept either a
 numeric target or one of `default`/`auto`/`ignore`/`double` (also
-confirmed real, man 20.15).
+confirmed real, man 20.15). Not a `setup.yaml` knob: `init_innovus`
+(every implementation stage) also sets `timing_analysis_type ocv` and
+`timing_analysis_cppr both` unconditionally -- OCV's own documented
+default is already `ocv` (man 20.15), but a fresh Innovus session
+restored from the Genus handoff still fails `check_design -type cts`
+(CHKCTS-51) without it set explicitly, and CPPR is OCV's standard
+companion (otherwise clock-path pessimism is double-counted on any
+reconverging clock path).
 
 **`add_tieoffs_*`** -- resolves `add_tieoffs_cells` (at most two: one
 tie-high driver, one tie-low driver, man 20.15) and its companion
