@@ -1357,6 +1357,7 @@ class GenusCtsLibraryDefaultTests(unittest.TestCase):
                 "proc wolf_inject_for_step {args} {}\n"
                 "proc wolf_info {args} { puts \"INFO: $args\" }\n"
                 "proc set_db {args} { puts \"SETDB: $args\" }\n"
+                "namespace eval ansicolor { proc + {args} { return \"\" } }\n"
                 + self._get_db_stub()
                 + _get_flow_config_stub(overrides)
                 + f"uplevel #0 {body}\n",
@@ -1374,6 +1375,12 @@ class GenusCtsLibraryDefaultTests(unittest.TestCase):
         self.assertIn("SETDB: cts_clock_gating_cells CGX1", result.stdout)
         # BUFX_OLD is dont_use -- must never appear in the resolved default.
         self.assertNotIn("BUFX_OLD", result.stdout)
+        # Regression: the resolved source (library default vs setup.yaml
+        # override) must be visible in the printed INFO line, not just
+        # inferable from the value itself.
+        self.assertIn("cts_buffer_cells: BUFX1 BUFX2 (library default)", result.stdout)
+        self.assertIn("cts_inverter_cells: INVX1 (library default)", result.stdout)
+        self.assertIn("cts_clock_gating_cells: CGX1 (library default)", result.stdout)
 
     def test_setup_yaml_override_replaces_the_library_default_outright(self):
         result = self._run({"cts_buffer_cells": ["CUSTOMBUF1", "CUSTOMBUF2"]})
@@ -1381,9 +1388,14 @@ class GenusCtsLibraryDefaultTests(unittest.TestCase):
         self.assertIn("SETDB: cts_buffer_cells {CUSTOMBUF1 CUSTOMBUF2}", result.stdout)
         self.assertNotIn("BUFX1", result.stdout)
         self.assertNotIn("BUFX2", result.stdout)
+        self.assertIn(
+            "cts_buffer_cells: CUSTOMBUF1 CUSTOMBUF2 (setup.yaml override)", result.stdout,
+        )
         # Inverter/clock-gating still fall back to the library default.
         self.assertIn("SETDB: cts_inverter_cells INVX1", result.stdout)
         self.assertIn("SETDB: cts_clock_gating_cells CGX1", result.stdout)
+        self.assertIn("cts_inverter_cells: INVX1 (library default)", result.stdout)
+        self.assertIn("cts_clock_gating_cells: CGX1 (library default)", result.stdout)
 
 
 class GenusTieoffTests(GenusFixtureTestCase):

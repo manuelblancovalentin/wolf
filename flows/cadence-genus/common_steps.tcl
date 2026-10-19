@@ -203,13 +203,15 @@ create_flow_step -name set_cts_config -owner wolf {
         cts_clock_gating_cells is_integrated_clock_gating
     } {
         set wolf_cts_value [get_flow_config $wolf_cts_attr -quiet]
+        set wolf_cts_source "[ansicolor::+ bold cyan](setup.yaml override)[ansicolor::+]"
         if {![llength $wolf_cts_value]} {
             set wolf_cts_filter ".$wolf_cts_is_attr == true && .dont_use == false"
             set wolf_cts_value [get_db [get_db base_cells -if $wolf_cts_filter] .name]
+            set wolf_cts_source "[ansicolor::+ bold green](library default)[ansicolor::+]"
         }
         if {[llength $wolf_cts_value]} {
             set_db $wolf_cts_attr $wolf_cts_value
-            wolf_info "$wolf_cts_attr: $wolf_cts_value"
+            wolf_info "$wolf_cts_attr: $wolf_cts_value $wolf_cts_source"
             set wolf_cts_applied 1
         }
     }
