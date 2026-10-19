@@ -304,7 +304,7 @@ def _design_setup(context: ResolvedContext) -> Mapping[str, Any]:
 def _genus_set_db_overrides(context: ResolvedContext) -> tuple[tuple[str, Any], ...]:
     """Return ordered, validated set_db overrides from this design's
     setup.yaml genus_set_db key."""
-    set_db = _design_setup(context).get("genus_set_db", {})
+    set_db = _design_setup(context).get("genus_set_db") or {}
     if not isinstance(set_db, Mapping):
         raise ValueError("genus_set_db must be a mapping")
     return tuple(sorted(set_db.items()))
@@ -329,7 +329,7 @@ def _active_views_overrides(context: ResolvedContext) -> tuple[tuple[str, ...], 
     implementation stage (not yet selectable per stage); narrowing that
     further is a real possible follow-up, not implemented here.
     """
-    active_views = _design_setup(context).get("active_views", {})
+    active_views = _design_setup(context).get("active_views") or {}
     if not isinstance(active_views, Mapping):
         raise ValueError("active_views must be a mapping")
     unknown = set(active_views) - _ALLOWED_ACTIVE_VIEWS_KEYS
@@ -341,7 +341,7 @@ def _active_views_overrides(context: ResolvedContext) -> tuple[tuple[str, ...], 
     )
     result = []
     for key in ("setup", "hold"):
-        views = active_views.get(key, [])
+        views = active_views.get(key) or []
         if not isinstance(views, list) or not all(isinstance(view, str) and view for view in views):
             raise ValueError(f"active_views.{key} must be a list of strings")
         if declared:
@@ -435,7 +435,15 @@ def _cts_overrides(context: ResolvedContext) -> CtsOverrides:
     setup = _design_setup(context)
 
     def _cells(key: str) -> tuple[str, ...]:
-        return _cell_pattern_list(setup.get(key, []), key)
+        # setup.get(key) or [] (not setup.get(key, [])): a commented-out
+        # YAML list under a key that's still present parses as an
+        # explicit null, not an absent key -- confirmed real, a project
+        # commenting out cts_buffer_cells: [- CKBD*] to fall back to the
+        # library default kept the key with a null value. Treat both the
+        # same: an empty/absent value here means "no override", and
+        # set_cts_config's own Tcl already falls back to the library
+        # default for exactly that case.
+        return _cell_pattern_list(setup.get(key) or [], key)
 
     return CtsOverrides(
         buffer_cells=_cells("cts_buffer_cells"),
@@ -469,7 +477,7 @@ def _tieoff_overrides(context: ResolvedContext) -> TieoffOverrides:
     before this existed.
     """
     setup = _design_setup(context)
-    cells = _cell_pattern_list(setup.get("add_tieoffs_cells", []), "add_tieoffs_cells")
+    cells = _cell_pattern_list(setup.get("add_tieoffs_cells") or [], "add_tieoffs_cells")
     if len(cells) > 2:
         raise ValueError(
             "add_tieoffs_cells accepts at most two cells (one tie-high driver, one tie-low driver)"
@@ -526,13 +534,13 @@ def _clock_routing_overrides(context: ResolvedContext) -> ClockRoutingOverrides:
         return tuple(sorted(result))
 
     width_multiplier = _multiplier_map(
-        setup.get("clock_routing_width_multiplier", {}), "clock_routing_width_multiplier",
+        setup.get("clock_routing_width_multiplier") or {}, "clock_routing_width_multiplier",
     )
     spacing_multiplier = _multiplier_map(
-        setup.get("clock_routing_spacing_multiplier", {}), "clock_routing_spacing_multiplier",
+        setup.get("clock_routing_spacing_multiplier") or {}, "clock_routing_spacing_multiplier",
     )
 
-    types_value = setup.get("clock_routing_types", {})
+    types_value = setup.get("clock_routing_types") or {}
     if not isinstance(types_value, Mapping):
         raise ValueError("clock_routing_types must be a mapping")
     unknown_type_names = set(types_value) - _ALLOWED_CLOCK_ROUTING_TYPE_NAMES
@@ -570,7 +578,7 @@ def _postsyn_netlists(context: ResolvedContext) -> tuple[str, ...]:
     at that block's own synthesized netlist so the handoff includes it
     directly instead of every instance being re-elaborated and re-optimized.
     """
-    values = _design_setup(context).get("postsyn_netlists", [])
+    values = _design_setup(context).get("postsyn_netlists") or []
     if not isinstance(values, list) or not all(isinstance(value, str) and value for value in values):
         raise ValueError("postsyn_netlists must be a list of paths")
     return tuple(values)
@@ -588,7 +596,7 @@ def _inject_snippets(context: ResolvedContext) -> tuple[tuple[str, str, tuple[st
     through setup.yaml's own merged design-setup content, see
     _render_setup_yaml), same as the other _*_overrides functions.
     """
-    inject = _design_setup(context).get("inject", {})
+    inject = _design_setup(context).get("inject") or {}
     if not isinstance(inject, Mapping):
         raise ValueError("inject must be a mapping")
     result = []

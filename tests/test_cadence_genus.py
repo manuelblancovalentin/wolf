@@ -636,6 +636,16 @@ class GenusSetDbOverrideTests(GenusFixtureTestCase):
                 self.root / "backend" / "cadence-genus",
             )
 
+    def test_a_commented_out_genus_set_db_block_is_not_an_override(self):
+        """Regression: `genus_set_db:` left in setup.yaml with its
+        mapping entries commented out parses as null, not an absent
+        key -- must not raise."""
+        inputs = prepare_genus_inputs(
+            self._design_setup({"genus_set_db": None}),
+            self.root / "backend" / "cadence-genus",
+        )
+        self.assertIsNone(inputs.overrides_script)
+
 
 class GenusPostsynNetlistAndInjectOverrideTests(GenusFixtureTestCase):
     def test_no_postsyn_netlists_leaves_empty_config(self):
@@ -657,6 +667,22 @@ class GenusPostsynNetlistAndInjectOverrideTests(GenusFixtureTestCase):
                 self._design_setup({"postsyn_netlists": "not-a-list"}),
                 self.root / "backend" / "cadence-genus",
             )
+
+    def test_a_commented_out_postsyn_netlists_list_is_not_an_override(self):
+        inputs = prepare_genus_inputs(
+            self._design_setup({"postsyn_netlists": None}),
+            self.root / "backend" / "cadence-genus",
+        )
+        document = yaml.safe_load(inputs.setup_yaml.read_text(encoding="utf-8"))
+        self.assertIsNone(document["postsyn_netlists"])
+
+    def test_a_commented_out_inject_block_is_not_an_override(self):
+        inputs = prepare_genus_inputs(
+            self._design_setup({"inject": None}),
+            self.root / "backend" / "cadence-genus",
+        )
+        document = yaml.safe_load(inputs.setup_yaml.read_text(encoding="utf-8"))
+        self.assertIsNone(document["inject"])
 
     def test_no_inject_leaves_no_inject_key(self):
         inputs = prepare_genus_inputs(self._context(), self.root / "backend" / "cadence-genus")
@@ -1081,6 +1107,28 @@ class GenusActiveViewsTests(GenusFixtureTestCase):
                 self.root / "backend" / "cadence-genus",
             )
 
+    def test_a_commented_out_active_views_block_is_not_an_override(self):
+        inputs = prepare_genus_inputs(
+            self._design_setup({"active_views": None}),
+            self.root / "backend" / "cadence-genus",
+        )
+        document = yaml.safe_load(inputs.setup_yaml.read_text(encoding="utf-8"))
+        self.assertIsNone(document["active_views"])
+
+    def test_a_commented_out_setup_or_hold_sub_list_is_not_an_override(self):
+        inputs = prepare_genus_inputs(
+            self._design_setup(
+                {"active_views": {"setup": None, "hold": ["typical"]}},
+                technology=ResolvedTechnology(
+                    package="pdk/demo", revision="1", name="demo", root=self.root,
+                    timing_corners=self._corners(),
+                ),
+            ),
+            self.root / "backend" / "cadence-genus",
+        )
+        document = yaml.safe_load(inputs.setup_yaml.read_text(encoding="utf-8"))
+        self.assertEqual(document["active_views"], {"setup": None, "hold": ["typical"]})
+
     def test_init_innovus_activates_views_every_stage_not_only_floorplan(self):
         """Regression, hit for real: the view-activation logic used to
         live only in genus_turn_on_analysis_views, a step that only ever
@@ -1261,6 +1309,27 @@ class GenusCtsCellTests(GenusFixtureTestCase):
             self.assertEqual(document["cts_target_skew"], keyword)
             self.assertEqual(document["cts_target_max_transition_time"], keyword)
 
+    def test_a_commented_out_list_with_the_key_still_present_is_not_an_override(self):
+        """Regression: commenting out a cts_buffer_cells list's items in
+        setup.yaml (to fall back to the new library default) but leaving
+        the key itself -- `cts_buffer_cells:` with nothing under it --
+        parses as an explicit YAML null, not an absent key. setup.get(key,
+        []) only substitutes [] when the key is missing entirely, so a
+        null value reached _cell_pattern_list unchanged and raised "must
+        be a list of nonempty strings" -- a real workflow this must not
+        block."""
+        inputs = prepare_genus_inputs(
+            self._design_setup({"cts_buffer_cells": None, "cts_inverter_cells": None}),
+            self.root / "backend" / "cadence-genus",
+        )
+        document = yaml.safe_load(inputs.setup_yaml.read_text(encoding="utf-8"))
+        # Nulled-out keys pass straight through into the rendered
+        # setup.yaml unchanged -- set_cts_config's own Tcl (not this
+        # validator) is what turns a null/absent value into the library
+        # default at get_flow_config -quiet time.
+        self.assertIsNone(document["cts_buffer_cells"])
+        self.assertIsNone(document["cts_inverter_cells"])
+
     def test_set_cts_config_is_shared_by_prects_and_cts(self):
         flows_text = (builtin_flow_root("cadence-genus") / "common_flows.tcl").read_text(
             encoding="utf-8",
@@ -1430,6 +1499,14 @@ class GenusTieoffTests(GenusFixtureTestCase):
                 self.root / "backend" / "cadence-genus",
             )
 
+    def test_a_commented_out_add_tieoffs_cells_list_is_not_an_override(self):
+        inputs = prepare_genus_inputs(
+            self._design_setup({"add_tieoffs_cells": None}),
+            self.root / "backend" / "cadence-genus",
+        )
+        document = yaml.safe_load(inputs.setup_yaml.read_text(encoding="utf-8"))
+        self.assertIsNone(document["add_tieoffs_cells"])
+
     def test_add_tieoffs_step_resolves_and_reports(self):
         step = builtin_flow_root("cadence-genus") / "cts.tcl"
         body = _extract_step_bodies(step.read_text(encoding="utf-8"))["add_tieoffs"]
@@ -1483,6 +1560,19 @@ class GenusClockRoutingTests(GenusFixtureTestCase):
                 self._design_setup({"clock_routing_types": {"bogus": {}}}),
                 self.root / "backend" / "cadence-genus",
             )
+
+    def test_commented_out_clock_routing_blocks_are_not_overrides(self):
+        inputs = prepare_genus_inputs(
+            self._design_setup({
+                "clock_routing_width_multiplier": None, "clock_routing_spacing_multiplier": None,
+                "clock_routing_types": None,
+            }),
+            self.root / "backend" / "cadence-genus",
+        )
+        document = yaml.safe_load(inputs.setup_yaml.read_text(encoding="utf-8"))
+        self.assertIsNone(document["clock_routing_width_multiplier"])
+        self.assertIsNone(document["clock_routing_spacing_multiplier"])
+        self.assertIsNone(document["clock_routing_types"])
 
     def test_add_clock_route_types_step_validates_layers_and_creates_rule_and_types(self):
         step = builtin_flow_root("cadence-genus") / "floorplanning.tcl"
