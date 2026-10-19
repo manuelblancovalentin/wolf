@@ -791,6 +791,21 @@ class GenusThreadsTests(GenusFixtureTestCase):
         self.assertIn("set_multi_cpu_usage -local_cpu $wolf_max_cpus_per_server", body)
         self.assertIn('if {$wolf_max_cpus_per_server ne ""}', body)
 
+    def test_init_innovus_sets_ocv_analysis_before_placement(self):
+        """Regression: CHKCTS-51 ("The timing analysis type is not set to
+        OCV") fires on a real check_design -type cts run even though
+        timing_analysis_type's own documented default is already "ocv" --
+        a fresh Innovus session restored from the Genus handoff needs it
+        set explicitly. Required before placement (Cadence's own
+        recommendation) and by CCOpt's clock-source-latency update during
+        CTS, so init_innovus (re-run at the start of every implementation
+        stage) sets it unconditionally, not behind a setup.yaml key."""
+        step = builtin_flow_root("cadence-genus") / "floorplanning.tcl"
+        text = step.read_text(encoding="utf-8")
+        bodies = _extract_step_bodies(text)
+        body = bodies["init_innovus"]
+        self.assertIn("set_db timing_analysis_type ocv", body)
+
 
 class GenusSynthesisFlowTests(GenusFixtureTestCase):
     """Resolved-value plumbing for the selectable Genus flows.
@@ -1223,12 +1238,28 @@ class GenusCtsCellTests(GenusFixtureTestCase):
                 self.root / "backend" / "cadence-genus",
             )
 
-    def test_target_skew_must_be_a_number(self):
+    def test_target_skew_rejects_an_unrecognized_string(self):
         with self.assertRaisesRegex(ValueError, "cts_target_skew must be a number"):
             prepare_genus_inputs(
                 self._design_setup({"cts_target_skew": "fast"}),
                 self.root / "backend" / "cadence-genus",
             )
+
+    def test_target_skew_and_transition_time_accept_the_documented_keywords(self):
+        """Regression: cts_target_skew/cts_target_max_transition_time (man
+        20.15) accept "default"/"auto"/"ignore"/"double" in addition to a
+        numeric target -- a float-only check rejected these legitimate
+        values outright."""
+        for keyword in ("default", "auto", "ignore", "double"):
+            inputs = prepare_genus_inputs(
+                self._design_setup({
+                    "cts_target_skew": keyword, "cts_target_max_transition_time": keyword,
+                }),
+                self.root / "backend" / "cadence-genus",
+            )
+            document = yaml.safe_load(inputs.setup_yaml.read_text(encoding="utf-8"))
+            self.assertEqual(document["cts_target_skew"], keyword)
+            self.assertEqual(document["cts_target_max_transition_time"], keyword)
 
     def test_set_cts_config_is_shared_by_prects_and_cts(self):
         flows_text = (builtin_flow_root("cadence-genus") / "common_flows.tcl").read_text(

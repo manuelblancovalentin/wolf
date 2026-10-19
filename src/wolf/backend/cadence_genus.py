@@ -17,7 +17,7 @@ import re
 import shutil
 import subprocess
 import time
-from typing import Any, Mapping, NamedTuple, Optional
+from typing import Any, Mapping, NamedTuple, Optional, Union
 
 import yaml
 
@@ -363,6 +363,26 @@ def _optional_float(value: Any, field: str) -> Optional[float]:
     return float(value)
 
 
+_CTS_TARGET_KEYWORDS = frozenset({"default", "auto", "ignore", "double"})
+
+
+def _optional_cts_target(value: Any, field: str) -> Optional[Union[float, str]]:
+    """cts_target_skew/cts_target_max_transition_time (man 20.15): either a
+    numeric target, or one of the four literal keywords Innovus itself
+    recognizes -- a plain float-only check rejects legitimate values like
+    "auto"/"ignore", which real CCOpt methodology (and CHKCTS-51's own
+    cousin checks) uses routinely."""
+    if value is None:
+        return None
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float(value)
+    if isinstance(value, str) and value in _CTS_TARGET_KEYWORDS:
+        return value
+    raise ValueError(
+        f"{field} must be a number or one of {sorted(_CTS_TARGET_KEYWORDS)}"
+    )
+
+
 def _optional_int(value: Any, field: str) -> Optional[int]:
     if value is None:
         return None
@@ -385,8 +405,8 @@ class CtsOverrides(NamedTuple):
     inverter_cells_top: tuple[str, ...] = ()
     inverter_cells_leaf: tuple[str, ...] = ()
     clock_gating_cells: tuple[str, ...] = ()
-    target_skew: Optional[float] = None
-    target_max_transition_time: Optional[float] = None
+    target_skew: Optional[Union[float, str]] = None
+    target_max_transition_time: Optional[Union[float, str]] = None
     max_fanout: Optional[int] = None
 
 
@@ -403,7 +423,9 @@ def _cts_overrides(context: ResolvedContext) -> CtsOverrides:
     need to resolve or guess at base_cell attributes (is_buffer, ...) to
     offer this; a project supplies the pattern(s) its own library uses.
     Left unset (today's default): CCOpt chooses from the whole library,
-    unchanged.
+    unchanged. target_skew/target_max_transition_time each take either a
+    numeric target or one of "default"/"auto"/"ignore"/"double" (also
+    confirmed real, man 20.15) -- see _optional_cts_target.
     """
     setup = _design_setup(context)
 
@@ -418,8 +440,8 @@ def _cts_overrides(context: ResolvedContext) -> CtsOverrides:
         inverter_cells_top=_cells("cts_inverter_cells_top"),
         inverter_cells_leaf=_cells("cts_inverter_cells_leaf"),
         clock_gating_cells=_cells("cts_clock_gating_cells"),
-        target_skew=_optional_float(setup.get("cts_target_skew"), "cts_target_skew"),
-        target_max_transition_time=_optional_float(
+        target_skew=_optional_cts_target(setup.get("cts_target_skew"), "cts_target_skew"),
+        target_max_transition_time=_optional_cts_target(
             setup.get("cts_target_max_transition_time"), "cts_target_max_transition_time",
         ),
         max_fanout=_optional_int(setup.get("cts_max_fanout"), "cts_max_fanout"),

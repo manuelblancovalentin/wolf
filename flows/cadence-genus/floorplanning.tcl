@@ -49,6 +49,18 @@ create_flow_step -name init_implementation -owner wolf -write_db {
 create_flow_step -name init_innovus -owner wolf {
     wolf_step "init_innovus"
     wolf_inject_for_step init_innovus pre
+    # CHKCTS-51 (check_design -type cts): "The timing analysis type is
+    # not set to OCV". timing_analysis_type's own documented default is
+    # already "ocv" (man 20.15), but confirmed real: a fresh Innovus
+    # session restored from the Genus handoff still fails this check
+    # without an explicit set_db here. Cadence's own recommendation
+    # (CHKCTS-51's description) is to set this before placement, and
+    # since OCV is required by CCOpt's own clock-source-latency update
+    # ("IO latency update") performed during CTS, this is not a
+    # per-design knob -- every implementation stage gets it, the same
+    # idempotent-every-stage-restore reasoning as the thread count and
+    # analysis-view selection below.
+    set_db timing_analysis_type ocv
     # Same resolved thread count synthesis.tcl's own init_genus already
     # applies to Genus (resources.threads/GENUS_NUM_CPUS, via
     # get_flow_config max_cpus_per_server) -- Innovus has no equivalent
