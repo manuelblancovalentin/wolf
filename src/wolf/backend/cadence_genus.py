@@ -1566,7 +1566,13 @@ def genus_run_qor(run_directory: Path) -> dict[str, dict[str, dict[str, float]]]
     result: dict[str, dict[str, dict[str, float]]] = {}
     for stage in SYNTHESIS_STAGES:
         for kind in _QOR_REPORT_KINDS:
-            report_path = reports_directory / f"{kind}.{stage}.rpt"
+            # flow_report_name (common_flows.tcl's flow_header_tcl) names
+            # this same per-stage subdirectory every real report write
+            # joins in now -- confirmed real, a project opening the run
+            # directory by hand found every reports/<stage>/ subdirectory
+            # Flowtool itself pre-creates sitting empty, with every
+            # actual report still landing flat one level up.
+            report_path = reports_directory / stage / f"{kind}.{stage}.rpt"
             if not report_path.is_file():
                 continue
             parsed = _cached_qor_parse(report_path, _QOR_PARSERS[kind])

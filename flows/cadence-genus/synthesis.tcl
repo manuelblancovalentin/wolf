@@ -436,7 +436,9 @@ create_flow_step -name report_start -owner wolf {
 
 create_flow_step -name report_area_genus -owner wolf {
     wolf_inject_for_step report_area_genus pre
-    set report_area_genus_file [file join [get_flow_config reports_dir] "area.[get_db flow_report_name].rpt"]
+    set report_area_genus_file \
+        [file join [get_flow_config reports_dir] [get_db flow_report_name] \
+            "area.[get_db flow_report_name].rpt"]
     report_area > $report_area_genus_file
     wolf_file $report_area_genus_file
     wolf_inject_for_step report_area_genus post
@@ -445,7 +447,8 @@ create_flow_step -name report_area_genus -owner wolf {
 create_flow_step -name report_timing_summary_late_genus -owner wolf {
     wolf_inject_for_step report_timing_summary_late_genus pre
     set report_timing_summary_late_genus_file \
-        [file join [get_flow_config reports_dir] "timing.[get_db flow_report_name].rpt"]
+        [file join [get_flow_config reports_dir] [get_db flow_report_name] \
+            "timing.[get_db flow_report_name].rpt"]
     report_timing_summary -checks {setup drv} > $report_timing_summary_late_genus_file
     wolf_file $report_timing_summary_late_genus_file
     wolf_inject_for_step report_timing_summary_late_genus post
@@ -458,7 +461,9 @@ create_flow_step -name report_timing_summary_late_genus -owner wolf {
 
 create_flow_step -name report_power_genus -owner wolf {
     wolf_inject_for_step report_power_genus pre
-    set report_power_genus_file [file join [get_flow_config reports_dir] "power.[get_db flow_report_name].rpt"]
+    set report_power_genus_file \
+        [file join [get_flow_config reports_dir] [get_db flow_report_name] \
+            "power.[get_db flow_report_name].rpt"]
     report_power > $report_power_genus_file
     wolf_file $report_power_genus_file
     wolf_inject_for_step report_power_genus post
@@ -469,7 +474,9 @@ create_flow_step -name report_power_genus -owner wolf {
 # pass rather than left opt-syn_opt-only.
 create_flow_step -name report_hierarchy_genus -owner wolf {
     wolf_inject_for_step report_hierarchy_genus pre
-    set report_hierarchy_genus_file [file join [get_flow_config reports_dir] "hierarchy.[get_db flow_report_name].rpt"]
+    set report_hierarchy_genus_file \
+        [file join [get_flow_config reports_dir] [get_db flow_report_name] \
+            "hierarchy.[get_db flow_report_name].rpt"]
     report_hierarchy > $report_hierarchy_genus_file
     wolf_file $report_hierarchy_genus_file
     wolf_inject_for_step report_hierarchy_genus post
@@ -477,7 +484,9 @@ create_flow_step -name report_hierarchy_genus -owner wolf {
 
 create_flow_step -name report_messages_genus -owner wolf {
     wolf_inject_for_step report_messages_genus pre
-    set report_messages_genus_file [file join [get_flow_config reports_dir] "messages.[get_db flow_report_name].rpt"]
+    set report_messages_genus_file \
+        [file join [get_flow_config reports_dir] [get_db flow_report_name] \
+            "messages.[get_db flow_report_name].rpt"]
     report_messages > $report_messages_genus_file
     wolf_file $report_messages_genus_file
     wolf_inject_for_step report_messages_genus post

@@ -1,4 +1,5 @@
 import json
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -2032,6 +2033,59 @@ proc wolf_test_run_flow {name} {
         self.assertLess(inject_index, dont_use_index)
 
 
+class ReportsDirIncludesStageSubdirectoryTests(unittest.TestCase):
+    """Regression: every real report write joined [get_flow_config
+    reports_dir] (or [get_db flow_report_directory]) directly to a
+    filename, landing flat in the top-level reports/ directory with
+    the stage only as a filename suffix. common_flows.tcl's own
+    flow_header_tcl hook separately creates a reports/<stage>/
+    subdirectory via [get_db flow_report_name] at the start of every
+    stage, but nothing ever wrote into it -- confirmed real, a project
+    opening the run directory by hand found every one of those
+    subdirectories sitting empty. Every report path must now join
+    [get_db flow_report_name] as the subdirectory component, right
+    after the base reports directory, so this cannot regress silently
+    for a future report call site."""
+
+    # file.join calls built across more than one line (continued with a
+    # trailing backslash) still read as one logical statement once
+    # backslash-newline is collapsed the same way Tcl itself would.
+    _BASE_DIR_RE = re.compile(r"\[(get_flow_config reports_dir|get_db flow_report_directory)\]")
+
+    def _logical_lines(self, name: str) -> str:
+        text = (builtin_flow_root("cadence-genus") / name).read_text(encoding="utf-8")
+        return text.replace("\\\n", " ")
+
+    def test_every_report_path_joins_the_stage_subdirectory(self):
+        for name in (
+            "route.tcl", "common_steps.tcl", "postroute.tcl", "floorplanning.tcl",
+            "synthesis.tcl", "cts.tcl",
+        ):
+            text = self._logical_lines(name)
+            matches = list(self._BASE_DIR_RE.finditer(text))
+            self.assertTrue(matches, f"{name}: expected at least one reports_dir-based file join")
+            for match in matches:
+                window = text[match.end():match.end() + 40]
+                self.assertIn(
+                    "get_db flow_report_name", window,
+                    f"{name}: {match.group(0)}{window!r} is missing the stage subdirectory",
+                )
+
+    def test_wolf_reports_dir_variable_itself_includes_the_stage(self):
+        """postroute.tcl/floorplanning.tcl/cts.tcl all assign
+        $wolf_reports_dir once, then build several report paths from it
+        -- the subdirectory has to be baked into that one assignment,
+        not re-added at every downstream use."""
+        for name in ("postroute.tcl", "floorplanning.tcl", "cts.tcl"):
+            text = (builtin_flow_root("cadence-genus") / name).read_text(encoding="utf-8")
+            assignments = re.findall(
+                r"set wolf_reports_dir \[([^\n]*)\]", text,
+            )
+            self.assertTrue(assignments, f"{name}: expected at least one wolf_reports_dir assignment")
+            for assignment in assignments:
+                self.assertIn("get_db flow_report_name", assignment, f"{name}: {assignment!r}")
+
+
 class FlowMembershipTests(unittest.TestCase):
     """flow_membership/flow_descendant_steps parse create_flow's own
     member lists from common_flows.tcl -- the real flow->step tree, not
@@ -3289,7 +3343,7 @@ class GenusQorReportParsersTests(unittest.TestCase):
 
 
 class GenusRunQorTests(unittest.TestCase):
-    """genus_run_qor scans <run_directory>/reports for every real
+    """genus_run_qor scans <run_directory>/reports/<stage> for every real
     area/timing/power.<stage>.rpt the synthesis stages have produced
     so far, mtime-cached per file since a report is Genus's own static
     snapshot, never rewritten once its own step finishes."""
@@ -3304,6 +3358,11 @@ class GenusRunQorTests(unittest.TestCase):
     def tearDown(self):
         self.temporary.cleanup()
 
+    def _stage_reports_directory(self, stage: str) -> Path:
+        directory = self.reports_directory / stage
+        directory.mkdir(parents=True, exist_ok=True)
+        return directory
+
     def test_no_reports_directory_yet_returns_empty(self):
         from wolf.backend.cadence_genus import genus_run_qor
         empty_run = self.root / "work" / "demo.2"
@@ -3312,9 +3371,10 @@ class GenusRunQorTests(unittest.TestCase):
 
     def test_a_complete_stage_reports_all_three_kinds(self):
         from wolf.backend.cadence_genus import genus_run_qor
-        (self.reports_directory / "area.syn_generic.rpt").write_text(_REAL_AREA_REPORT, encoding="utf-8")
-        (self.reports_directory / "timing.syn_generic.rpt").write_text(_REAL_TIMING_REPORT, encoding="utf-8")
-        (self.reports_directory / "power.syn_generic.rpt").write_text(_REAL_POWER_REPORT, encoding="utf-8")
+        stage_directory = self._stage_reports_directory("syn_generic")
+        (stage_directory / "area.syn_generic.rpt").write_text(_REAL_AREA_REPORT, encoding="utf-8")
+        (stage_directory / "timing.syn_generic.rpt").write_text(_REAL_TIMING_REPORT, encoding="utf-8")
+        (stage_directory / "power.syn_generic.rpt").write_text(_REAL_POWER_REPORT, encoding="utf-8")
         result = genus_run_qor(self.run_directory)
         self.assertEqual(set(result), {"syn_generic"})
         self.assertEqual(set(result["syn_generic"]), {"area", "timing", "power"})
@@ -3324,7 +3384,8 @@ class GenusRunQorTests(unittest.TestCase):
         """report_synth hasn't finished writing every report yet --
         whatever exists is real and shown, the rest simply absent."""
         from wolf.backend.cadence_genus import genus_run_qor
-        (self.reports_directory / "area.syn_map.rpt").write_text(_REAL_AREA_REPORT, encoding="utf-8")
+        stage_directory = self._stage_reports_directory("syn_map")
+        (stage_directory / "area.syn_map.rpt").write_text(_REAL_AREA_REPORT, encoding="utf-8")
         result = genus_run_qor(self.run_directory)
         self.assertEqual(set(result["syn_map"]), {"area"})
 
@@ -3333,12 +3394,13 @@ class GenusRunQorTests(unittest.TestCase):
         later extension, not guessed ahead of real evidence (DRC/LVS
         reports don't exist until those stages actually run)."""
         from wolf.backend.cadence_genus import genus_run_qor
-        (self.reports_directory / "area.floorplan.rpt").write_text(_REAL_AREA_REPORT, encoding="utf-8")
+        stage_directory = self._stage_reports_directory("floorplan")
+        (stage_directory / "area.floorplan.rpt").write_text(_REAL_AREA_REPORT, encoding="utf-8")
         self.assertEqual(genus_run_qor(self.run_directory), {})
 
     def test_a_reparsed_report_is_served_from_cache_until_its_mtime_changes(self):
         from wolf.backend.cadence_genus import genus_run_qor
-        path = self.reports_directory / "area.syn_generic.rpt"
+        path = self._stage_reports_directory("syn_generic") / "area.syn_generic.rpt"
         path.write_text(_REAL_AREA_REPORT, encoding="utf-8")
         first = genus_run_qor(self.run_directory)
         # Rewritten with different content but the same mtime second --

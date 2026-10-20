@@ -8,7 +8,8 @@
 
 create_flow_step -name CMD_check_design_cts -owner wolf {
     wolf_inject_for_step CMD_check_design_cts pre
-    set cmd_check_design_cts_file [file join [get_db flow_report_directory] checkDesignCTS.rpt]
+    set cmd_check_design_cts_file \
+        [file join [get_db flow_report_directory] [get_db flow_report_name] checkDesignCTS.rpt]
     check_design -type cts -out_file $cmd_check_design_cts_file
     wolf_file $cmd_check_design_cts_file
     wolf_inject_for_step CMD_check_design_cts post
@@ -18,7 +19,7 @@ create_flow_step -name add_clock_tree -owner wolf {
     wolf_step "add_clock_tree: implementing clock trees, propagated-clock optimization"
     wolf_inject_for_step add_clock_tree pre
 
-    set wolf_reports_dir [get_flow_config reports_dir]
+    set wolf_reports_dir [file join [get_flow_config reports_dir] [get_db flow_report_name]]
     ccopt_design -report_dir $wolf_reports_dir -report_prefix cts.
 
     set add_clock_tree_timing_file [file join $wolf_reports_dir timing.cts.rpt]
@@ -80,7 +81,8 @@ create_flow_step -name add_tieoffs -owner wolf {
             incr wolf_tie_count [llength [get_db insts -if {.base_cell.name == $wolf_tie_cell}]]
         }
         wolf_info "add_tieoffs: $wolf_tie_count tie cell instance(s) added ([get_db add_tieoffs_cells])"
-        set add_tieoffs_check_file [file join [get_flow_config reports_dir] tieoffs.cts.rpt]
+        set add_tieoffs_check_file \
+            [file join [get_flow_config reports_dir] [get_db flow_report_name] tieoffs.cts.rpt]
         check_tieoffs -out_file $add_tieoffs_check_file
         wolf_file $add_tieoffs_check_file
     } else {
@@ -93,7 +95,7 @@ create_flow_step -name run_opt_postcts_hold -owner wolf {
     wolf_step "run_opt_postcts_hold: post-CTS hold optimization"
     wolf_inject_for_step run_opt_postcts_hold pre
 
-    set wolf_reports_dir [get_flow_config reports_dir]
+    set wolf_reports_dir [file join [get_flow_config reports_dir] [get_db flow_report_name]]
     opt_design -post_cts -hold -report_dir $wolf_reports_dir -report_prefix postcts.
 
     set run_opt_postcts_hold_timing_file [file join $wolf_reports_dir timing.postcts_hold.rpt]

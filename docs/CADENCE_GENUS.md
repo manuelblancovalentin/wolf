@@ -946,12 +946,16 @@ chain was originally `a or b or c`, which silently treats a genuine
 ### QoR (area/timing/power) by stage
 
 Genus already writes its own real, stable QoR reports to
-`<run_directory>/reports/<kind>.<stage>.rpt` (named via `flow_report_name`,
-see `common_flows.tcl`'s own header on `report_synth` -- confirmed real
-against an actual run's `area.syn_generic.rpt`/`timing.syn_generic.rpt`/
-`power.syn_generic.rpt`). Rather than have WOLF's own Tcl generate a
-second, parallel metadata file duplicating what Genus already writes,
-`genus_run_qor` parses these directly:
+`<run_directory>/reports/<stage>/<kind>.<stage>.rpt` -- a per-stage
+subdirectory (`[get_db flow_report_name]`, the same current-stage name
+`common_flows.tcl`'s own `flow_header_tcl` hook already uses to
+pre-create it) joined onto the filename itself, which still carries the
+redundant `.<stage>.` suffix too -- confirmed real against an actual
+run's `reports/syn_generic/area.syn_generic.rpt`/
+`reports/syn_generic/timing.syn_generic.rpt`/
+`reports/syn_generic/power.syn_generic.rpt`. Rather than have WOLF's own
+Tcl generate a second, parallel metadata file duplicating what Genus
+already writes, `genus_run_qor` parses these directly:
 
 - **area**: the design's own top-level row (not an indented child) --
   confirmed real shape, a `---`-only separator line then one row per
@@ -979,7 +983,7 @@ QoR columns (Area/WNS/TNS/Viol/Power) are merged directly into the same
 Stages table rather than shown as a separate one -- QoR is the same
 per-stage granularity as Status/Elapsed, so a second table repeating
 the same row labels was just duplication. A report can land mid-stage
-(e.g. `syn_map`'s own `area.syn_map.rpt` exists well before
+(e.g. `syn_map`'s own `reports/syn_map/area.syn_map.rpt` exists well before
 `run_syn_map`/`report_synth` finish), so a "running" stage's QoR
 columns genuinely can fill in before its own Status does; each column
 stays `-` on its own until that one report exists.

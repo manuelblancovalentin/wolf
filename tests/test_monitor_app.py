@@ -172,8 +172,8 @@ class MonitorAppTests(unittest.TestCase):
         _run_async(drive())
 
     def test_qor_columns_populate_from_real_reports(self):
-        reports = self.run_directory / "reports"
-        reports.mkdir()
+        reports = self.run_directory / "reports" / "syn_generic"
+        reports.mkdir(parents=True)
         (reports / "area.syn_generic.rpt").write_text(
             "-------------------------------------------------------------\n"
             "ESP_ASIC_TOP                 3286713 24485968.048    87.318  24486055.365 \n",

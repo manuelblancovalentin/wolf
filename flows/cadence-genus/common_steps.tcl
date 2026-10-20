@@ -60,7 +60,8 @@ create_flow_step -name genus_to_innovus -owner wolf {
     wolf_inject_for_step genus_to_innovus pre
 
     #- Apply change_name rules so the netlist is Verilog/Innovus-legal
-    set genus_to_innovus_change_names_log [file join [get_flow_config reports_dir] design.change_names.rpt]
+    set genus_to_innovus_change_names_log \
+        [file join [get_flow_config reports_dir] [get_db flow_report_name] design.change_names.rpt]
     update_names \
         [get_db current_design] \
         -force \
@@ -147,7 +148,8 @@ create_flow_step -name build_xsim_files -owner wolf {
 create_flow_step -name report_check_design -owner wolf {
     wolf_inject_for_step report_check_design pre
     set report_check_design_file \
-        [file join [get_db flow_report_directory] "checkDesign.[get_db flow_report_name].rpt"]
+        [file join [get_db flow_report_directory] [get_db flow_report_name] \
+            "checkDesign.[get_db flow_report_name].rpt"]
     # "place" and "cts" are both confirmed real, valid -type values (man
     # 20.15; "cts" is also already used as-is by CMD_check_design_cts).
     # This step is shared by report_floorplan/report_prects (still in
@@ -280,7 +282,9 @@ create_flow_step -name commit_power_intent -owner wolf {
 
 create_flow_step -name report_area_innovus -owner wolf {
     wolf_inject_for_step report_area_innovus pre
-    set report_area_innovus_file [file join [get_flow_config reports_dir] "area.[get_db flow_report_name].rpt"]
+    set report_area_innovus_file \
+        [file join [get_flow_config reports_dir] [get_db flow_report_name] \
+            "area.[get_db flow_report_name].rpt"]
     report_area -min_count 1000 > $report_area_innovus_file
     wolf_file $report_area_innovus_file
     wolf_inject_for_step report_area_innovus post
@@ -288,7 +292,9 @@ create_flow_step -name report_area_innovus -owner wolf {
 
 create_flow_step -name report_power_innovus -owner wolf {
     wolf_inject_for_step report_power_innovus pre
-    set report_power_innovus_file [file join [get_flow_config reports_dir] "power.[get_db flow_report_name].rpt"]
+    set report_power_innovus_file \
+        [file join [get_flow_config reports_dir] [get_db flow_report_name] \
+            "power.[get_db flow_report_name].rpt"]
     report_power -no_wrap > $report_power_innovus_file
     wolf_file $report_power_innovus_file
     wolf_inject_for_step report_power_innovus post
@@ -296,7 +302,9 @@ create_flow_step -name report_power_innovus -owner wolf {
 
 create_flow_step -name report_late_paths -owner wolf {
     wolf_inject_for_step report_late_paths pre
-    set report_late_paths_file [file join [get_flow_config reports_dir] "late_paths.[get_db flow_report_name].rpt"]
+    set report_late_paths_file \
+        [file join [get_flow_config reports_dir] [get_db flow_report_name] \
+            "late_paths.[get_db flow_report_name].rpt"]
     report_timing -nworst 5 > $report_late_paths_file
     wolf_file $report_late_paths_file
     wolf_inject_for_step report_late_paths post
@@ -304,7 +312,9 @@ create_flow_step -name report_late_paths -owner wolf {
 
 create_flow_step -name report_clock_timing -owner wolf {
     wolf_inject_for_step report_clock_timing pre
-    set report_clock_timing_file [file join [get_flow_config reports_dir] "clock_timing.[get_db flow_report_name].rpt"]
+    set report_clock_timing_file \
+        [file join [get_flow_config reports_dir] [get_db flow_report_name] \
+            "clock_timing.[get_db flow_report_name].rpt"]
     report_clock_timing > $report_clock_timing_file
     wolf_file $report_clock_timing_file
     wolf_inject_for_step report_clock_timing post
@@ -312,7 +322,9 @@ create_flow_step -name report_clock_timing -owner wolf {
 
 create_flow_step -name report_route_drc -owner wolf {
     wolf_inject_for_step report_route_drc pre
-    set report_route_drc_file [file join [get_flow_config reports_dir] "route_drc.[get_db flow_report_name].rpt"]
+    set report_route_drc_file \
+        [file join [get_flow_config reports_dir] [get_db flow_report_name] \
+            "route_drc.[get_db flow_report_name].rpt"]
     check_drc -out_file $report_route_drc_file
     wolf_file $report_route_drc_file
     wolf_inject_for_step report_route_drc post
@@ -320,7 +332,9 @@ create_flow_step -name report_route_drc -owner wolf {
 
 create_flow_step -name report_route_density -owner wolf {
     wolf_inject_for_step report_route_density pre
-    set report_route_density_file [file join [get_flow_config reports_dir] "route_density.[get_db flow_report_name].rpt"]
+    set report_route_density_file \
+        [file join [get_flow_config reports_dir] [get_db flow_report_name] \
+            "route_density.[get_db flow_report_name].rpt"]
     report_route_density > $report_route_density_file
     wolf_file $report_route_density_file
     wolf_inject_for_step report_route_density post
@@ -337,7 +351,8 @@ create_flow_step -name report_route_density -owner wolf {
 create_flow_step -name report_early_summary_innovus -owner wolf {
     wolf_inject_for_step report_early_summary_innovus pre
     set report_early_summary_innovus_file \
-        [file join [get_flow_config reports_dir] "early_summary.[get_db flow_report_name].rpt"]
+        [file join [get_flow_config reports_dir] [get_db flow_report_name] \
+            "early_summary.[get_db flow_report_name].rpt"]
     report_timing_summary -checks {hold drv} > $report_early_summary_innovus_file
     wolf_file $report_early_summary_innovus_file
     wolf_inject_for_step report_early_summary_innovus post
@@ -345,7 +360,9 @@ create_flow_step -name report_early_summary_innovus -owner wolf {
 
 create_flow_step -name report_early_paths -owner wolf {
     wolf_inject_for_step report_early_paths pre
-    set report_early_paths_file [file join [get_flow_config reports_dir] "early_paths.[get_db flow_report_name].rpt"]
+    set report_early_paths_file \
+        [file join [get_flow_config reports_dir] [get_db flow_report_name] \
+            "early_paths.[get_db flow_report_name].rpt"]
     report_timing -early -nworst 5 > $report_early_paths_file
     wolf_file $report_early_paths_file
     wolf_inject_for_step report_early_paths post
@@ -354,7 +371,8 @@ create_flow_step -name report_early_paths -owner wolf {
 create_flow_step -name report_late_summary_innovus -owner wolf {
     wolf_inject_for_step report_late_summary_innovus pre
     set report_late_summary_innovus_file \
-        [file join [get_flow_config reports_dir] "late_summary.[get_db flow_report_name].rpt"]
+        [file join [get_flow_config reports_dir] [get_db flow_report_name] \
+            "late_summary.[get_db flow_report_name].rpt"]
     report_timing_summary -checks {setup drv} > $report_late_summary_innovus_file
     wolf_file $report_late_summary_innovus_file
     wolf_inject_for_step report_late_summary_innovus post

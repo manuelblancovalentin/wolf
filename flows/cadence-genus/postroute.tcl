@@ -16,7 +16,7 @@ create_flow_step -name run_opt_postroute -owner wolf {
     wolf_step "run_opt_postroute: post-route setup/hold optimization"
     wolf_inject_for_step run_opt_postroute pre
 
-    set wolf_reports_dir [get_flow_config reports_dir]
+    set wolf_reports_dir [file join [get_flow_config reports_dir] [get_db flow_report_name]]
     opt_design -post_route -setup -hold -report_dir $wolf_reports_dir -report_prefix postroute.
 
     check_design -unresolved
@@ -47,7 +47,8 @@ create_flow_step -name run_opt_postroute -owner wolf {
 create_flow_step -name CMD_check_placement -owner wolf {
     wolf_inject_for_step CMD_check_placement pre
     set cmd_check_placement_file \
-        [file join [get_db flow_report_directory] "checkPlace.[get_db flow_report_name].rpt"]
+        [file join [get_db flow_report_directory] [get_db flow_report_name] \
+            "checkPlace.[get_db flow_report_name].rpt"]
     check_place $cmd_check_placement_file
     wolf_file $cmd_check_placement_file
     wolf_inject_for_step CMD_check_placement post

@@ -296,7 +296,7 @@ create_flow_step -name run_place_opt -owner wolf {
     wolf_step "run_place_opt: global placement and ideal-clock setup optimization"
     wolf_inject_for_step run_place_opt pre
 
-    set wolf_reports_dir [get_flow_config reports_dir]
+    set wolf_reports_dir [file join [get_flow_config reports_dir] [get_db flow_report_name]]
     place_opt_design -report_dir $wolf_reports_dir -report_prefix placed.
 
     set run_place_opt_area_file [file join $wolf_reports_dir area.placed.rpt]
@@ -309,7 +309,8 @@ create_flow_step -name run_place_opt -owner wolf {
 
 create_flow_step -name CMD_check_place -owner wolf {
     wolf_inject_for_step CMD_check_place pre
-    set cmd_check_place_file [file join [get_db flow_report_directory] checkDesignPlace.rpt]
+    set cmd_check_place_file \
+        [file join [get_db flow_report_directory] [get_db flow_report_name] checkDesignPlace.rpt]
     check_design -type place -out_file $cmd_check_place_file
     wolf_file $cmd_check_place_file
     wolf_inject_for_step CMD_check_place post
