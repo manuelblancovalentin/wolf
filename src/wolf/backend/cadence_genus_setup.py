@@ -35,6 +35,7 @@ DESIGN_SETUP_ALLOWED_KEYS = frozenset({
     "cts_target_skew", "cts_target_max_transition_time", "cts_max_fanout",
     "add_tieoffs_cells", "add_tieoffs_honor_dont_use",
     "add_tieoffs_max_fanout", "add_tieoffs_max_distance",
+    "add_fillers_cells",
     "clock_routing_width_multiplier", "clock_routing_spacing_multiplier",
     "clock_routing_types",
     "active_views",

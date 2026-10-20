@@ -1122,6 +1122,24 @@ instances -- `add_tieoffs` is what actually inserts the driver cells for
 synthesis's own literal constants, and should (and does, in the bundled
 flow order) run after the floorplan script's own global net connections.
 
+**`add_fillers_cells`** -- exact filler cell names (man 20.15: no
+pattern expansion documented, unlike `cts_buffer_cells`/etc), applied
+inside `route.tcl`'s `add_fillers` step right before its own
+`[get_db add_fillers_cells] ne ""` guard:
+
+```yaml
+add_fillers_cells: ["FILLER1", "FILLER2", "FILLER3"]
+```
+
+Confirmed real gap this closes: `add_fillers` (the command that
+inserts filler-cell instances for power/ground rail and n-well
+continuity) was always guarded on this exact attribute, but nothing
+ever set it -- its own documented default is empty, so the step
+silently never ran. Left unset, it stays a no-op, same as before this
+existed, but now logs a loud `wolf_error` (not a silent skip) the same
+way `add_tieoffs` does, since missing filler cells before routing is a
+likely LVS/DRC problem too.
+
 **`clock_routing_*`** -- a non-default routing rule and top/trunk/leaf
 route types for `add_clock_route_types` (`CMD_set_cong_aware`'s sibling
 extension point in the `prects` flow, previously always empty):

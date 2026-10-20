@@ -7,9 +7,20 @@
 
 create_flow_step -name add_fillers -owner wolf {
     wolf_inject_for_step add_fillers pre
+    # add_fillers_cells (man 20.15): exact filler cell names, no pattern
+    # expansion documented (unlike cts_buffer_cells/etc) -- its own
+    # default is empty, so without this, add_fillers below never had
+    # anything to insert and silently stayed a no-op.
+    set wolf_add_fillers_cells [get_flow_config add_fillers_cells -quiet]
+    if {[llength $wolf_add_fillers_cells]} {
+        set_db add_fillers_cells $wolf_add_fillers_cells
+        wolf_info "add_fillers_cells: $wolf_add_fillers_cells"
+    }
     #- insert filler cells before final routing, if any are configured
     if {[get_db add_fillers_cells] ne ""} {
         add_fillers
+    } else {
+        wolf_error "add_fillers: no filler cells configured (add_fillers_cells in setup.yaml) -- no filler cell instances will be inserted, a likely LVS/DRC problem (missing power/ground rail and n-well continuity)"
     }
     wolf_inject_for_step add_fillers post
 }

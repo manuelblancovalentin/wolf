@@ -1526,6 +1526,48 @@ class GenusTieoffTests(GenusFixtureTestCase):
         self.assertIn("wolf_error", body)
 
 
+class GenusFillerTests(GenusFixtureTestCase):
+    """add_fillers_cells -- confirmed real gap: route.tcl's add_fillers
+    step has always guarded on [get_db add_fillers_cells] ne "", but
+    nothing ever set this attribute, so add_fillers (which actually
+    inserts filler-cell instances) silently never ran."""
+
+    def test_default_is_empty(self):
+        inputs = prepare_genus_inputs(self._context(), self.root / "backend" / "cadence-genus")
+        document = yaml.safe_load(inputs.setup_yaml.read_text(encoding="utf-8"))
+        self.assertNotIn("add_fillers_cells", document)
+
+    def test_resolved_cells_are_written_into_flow_config(self):
+        inputs = prepare_genus_inputs(
+            self._design_setup({"add_fillers_cells": ["FILLER1", "FILLER2", "FILLER3"]}),
+            self.root / "backend" / "cadence-genus",
+        )
+        document = yaml.safe_load(inputs.setup_yaml.read_text(encoding="utf-8"))
+        self.assertEqual(document["add_fillers_cells"], ["FILLER1", "FILLER2", "FILLER3"])
+
+    def test_a_commented_out_add_fillers_cells_list_is_not_an_override(self):
+        inputs = prepare_genus_inputs(
+            self._design_setup({"add_fillers_cells": None}),
+            self.root / "backend" / "cadence-genus",
+        )
+        document = yaml.safe_load(inputs.setup_yaml.read_text(encoding="utf-8"))
+        self.assertIsNone(document["add_fillers_cells"])
+
+    def test_non_string_cell_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "add_fillers_cells must be a list"):
+            prepare_genus_inputs(
+                self._design_setup({"add_fillers_cells": [1, 2]}),
+                self.root / "backend" / "cadence-genus",
+            )
+
+    def test_add_fillers_step_resolves_and_warns_when_unconfigured(self):
+        step = builtin_flow_root("cadence-genus") / "route.tcl"
+        body = _extract_step_bodies(step.read_text(encoding="utf-8"))["add_fillers"]
+        self.assertIn("get_flow_config add_fillers_cells -quiet", body)
+        self.assertIn("set_db add_fillers_cells $wolf_add_fillers_cells", body)
+        self.assertIn("wolf_error", body)
+
+
 class GenusClockRoutingTests(GenusFixtureTestCase):
     """backend.cadence-flowtool.clock_routing -- a non-default route rule
     and top/trunk/leaf route types for add_clock_route_types, with layer

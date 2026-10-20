@@ -493,6 +493,29 @@ def _tieoff_overrides(context: ResolvedContext) -> TieoffOverrides:
     )
 
 
+class FillerOverrides(NamedTuple):
+    cells: tuple[str, ...] = ()
+
+
+def _filler_overrides(context: ResolvedContext) -> FillerOverrides:
+    """Validate this design's setup.yaml add_fillers_cells -> the real
+    Innovus add_fillers_cells attribute (man 20.15: exact cell names,
+    no pattern expansion documented, unlike cts_buffer_cells/etc).
+
+    Confirmed real gap: route.tcl's add_fillers step has always guarded
+    on `[get_db add_fillers_cells] ne ""`, but nothing ever set this
+    attribute -- its own documented default is empty, so add_fillers
+    (the command that actually inserts filler-cell instances) silently
+    never ran. Left unset (today's post-fix default): still empty,
+    same no-op behavior as before this existed, now at least reachable
+    by setup.yaml instead of unreachable entirely.
+    """
+    setup = _design_setup(context)
+    return FillerOverrides(
+        cells=_cell_pattern_list(setup.get("add_fillers_cells") or [], "add_fillers_cells"),
+    )
+
+
 class ClockRoutingType(NamedTuple):
     use_rule: bool = False
     top_preferred_layer: Optional[str] = None
@@ -2037,6 +2060,7 @@ def prepare_genus_inputs(
     _active_views_overrides(context)
     _cts_overrides(context)
     _tieoff_overrides(context)
+    _filler_overrides(context)
     _clock_routing_overrides(context)
     flow_config_script = destination / "flow-config.tcl"
     manifest = destination / "genus-inputs.yaml"
