@@ -1612,6 +1612,15 @@ class GenusReportStepsTests(GenusFixtureTestCase):
         self.assertIn("report_timing -early -nworst 5", bodies["report_early_paths"])
         self.assertIn("report_timing_summary -checks {setup drv}", bodies["report_late_summary_innovus"])
 
+    def test_report_clock_timing_passes_the_required_type_argument(self):
+        """Regression, hit for real: report_clock_timing's -type argument
+        is required (man 20.15, TCLCMD-982 otherwise) -- the plain,
+        no-argument call used here failed on a live run during
+        report_postcts."""
+        step = builtin_flow_root("cadence-genus") / "common_steps.tcl"
+        body = _extract_step_bodies(step.read_text(encoding="utf-8"))["report_clock_timing"]
+        self.assertIn("report_clock_timing -type skew", body)
+
 
 class GenusCongestionReapplyTests(GenusFixtureTestCase):
     """CMD_set_cong_aware (design_cong_effort/opt_consider_routing_congestion/

@@ -315,7 +315,11 @@ create_flow_step -name report_clock_timing -owner wolf {
     set report_clock_timing_file \
         [file join [get_flow_config reports_dir] [get_db flow_report_name] \
             "clock_timing.[get_db flow_report_name].rpt"]
-    report_clock_timing > $report_clock_timing_file
+    # -type is a required argument (man 20.15, TCLCMD-982 otherwise) --
+    # skew is the report's own first documented example ("reports worst
+    # case skew for all clocks in a design") and the plain, no-argument
+    # default every other report_* step here already uses elsewhere.
+    report_clock_timing -type skew > $report_clock_timing_file
     wolf_file $report_clock_timing_file
     wolf_inject_for_step report_clock_timing post
 }
