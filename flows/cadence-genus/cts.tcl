@@ -78,7 +78,13 @@ create_flow_step -name add_tieoffs -owner wolf {
         add_tieoffs -matching_power_domains true
         set wolf_tie_count 0
         foreach wolf_tie_cell [get_db add_tieoffs_cells] {
-            incr wolf_tie_count [llength [get_db insts -if {.base_cell.name == $wolf_tie_cell}]]
+            # Brace-quoted (the obvious way to write this) never
+            # substitutes $wolf_tie_cell -- confirmed real, the count
+            # stayed 0 on an actual run with real tie-cell instances in
+            # the design. Double-quoted so Tcl substitutes the variable
+            # before get_db ever sees the filter text, same fix as
+            # set_cts_config's own library-default filter string.
+            incr wolf_tie_count [llength [get_db insts -if ".base_cell.name == $wolf_tie_cell"]]
         }
         wolf_info "add_tieoffs: $wolf_tie_count tie cell instance(s) added ([get_db add_tieoffs_cells])"
         set add_tieoffs_check_file \

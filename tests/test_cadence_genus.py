@@ -1521,9 +1521,56 @@ class GenusTieoffTests(GenusFixtureTestCase):
         body = _extract_step_bodies(step.read_text(encoding="utf-8"))["add_tieoffs"]
         self.assertIn("get_flow_config add_tieoffs_cells -quiet", body)
         self.assertIn("set_db add_tieoffs_cells $wolf_tieoff_cells", body)
-        self.assertIn("get_db insts -if {.base_cell.name == $wolf_tie_cell}", body)
+        self.assertIn('get_db insts -if ".base_cell.name == $wolf_tie_cell"', body)
         self.assertIn("check_tieoffs", body)
         self.assertIn("wolf_error", body)
+
+    @unittest.skipUnless(TCLSH, "tclsh is not installed")
+    def test_tie_count_substitutes_the_real_cell_name_not_a_literal_dollar_sign(self):
+        """Regression, hit for real: get_db insts -if {.base_cell.name ==
+        $wolf_tie_cell} (brace-quoted) never substitutes the Tcl
+        variable, so the filter compares against the literal string
+        "$wolf_tie_cell" and always returns nothing -- a real run with
+        150 real tie-cell instances placed still logged
+        "0 tie cell instance(s) added". Double-quoting the filter fixes
+        this the same way set_cts_config's own library-default filter
+        already needed it."""
+        step = builtin_flow_root("cadence-genus") / "cts.tcl"
+        body = _extract_step_bodies(step.read_text(encoding="utf-8"))["add_tieoffs"]
+        script_text = (
+            'proc wolf_inject_for_step {args} {}\n'
+            'proc wolf_info {args} { puts "INFO: $args" }\n'
+            'proc wolf_error {args} { puts "ERROR: $args" }\n'
+            'proc wolf_file {args} {}\n'
+            'proc set_db {args} {}\n'
+            'proc delete_tieoffs {} {}\n'
+            'proc add_tieoffs {args} {}\n'
+            'proc check_tieoffs {args} {}\n'
+            # A minimal get_db stub: real TIEHLVT/TIELLVT insts exist,
+            # and the -if argument is checked for an unsubstituted "$"
+            # to catch exactly the brace-quoting mistake.
+            'proc get_db {args} {\n'
+            '    if {[lindex $args 0] eq "add_tieoffs_cells"} { return {TIEHLVT TIELLVT} }\n'
+            '    if {[lindex $args 0] eq "insts"} {\n'
+            '        set filt [lindex $args 2]\n'
+            '        if {[string first {$} $filt] >= 0} { return {} }\n'
+            '        if {[string match "*TIEHLVT*" $filt]} { return {i1 i2 i3} }\n'
+            '        if {[string match "*TIELLVT*" $filt]} { return {i4 i5} }\n'
+            '        return {}\n'
+            '    }\n'
+            '    return {}\n'
+            '}\n'
+            + _get_flow_config_stub({"reports_dir": "/tmp", "flow_report_name": "cts"})
+            + f"uplevel #0 {body}\n"
+        )
+        with tempfile.TemporaryDirectory(prefix="wolf-tieoff-count-") as tmp:
+            script = Path(tmp) / "script.tcl"
+            script.write_text(script_text, encoding="utf-8")
+            result = subprocess.run(
+                [TCLSH, str(script)], capture_output=True, text=True, check=False,
+            )
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertIn("5 tie cell instance(s) added", result.stdout)
 
 
 class GenusFillerTests(GenusFixtureTestCase):
