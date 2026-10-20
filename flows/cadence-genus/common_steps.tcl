@@ -340,12 +340,13 @@ create_flow_step -name report_route_density -owner wolf {
         [file join [get_flow_config reports_dir] [get_db flow_report_name] \
             "route_density.[get_db flow_report_name].rpt"]
     # report_route_density was never a real command -- confirmed real,
-    # "invalid command name" on an actual run. The reference flow's own
-    # metal-density check is the legacy TCR verifyMetalDensity (no
-    # Common UI snake_case equivalent exists, unlike check_drc/
-    # check_place above); -report writes the file directly rather than
-    # needing a shell redirect.
-    verifyMetalDensity -report $report_route_density_file
+    # "invalid command name" on an actual run. The legacy TCR
+    # verifyMetalDensity isn't loaded in this Stylus/Common UI session
+    # either (confirmed real, same error on that name too) -- the real
+    # Common UI command is check_metal_density, same check_* family as
+    # check_drc/check_place/check_tieoffs above; -report writes the
+    # file directly rather than needing a shell redirect.
+    check_metal_density -report $report_route_density_file
     wolf_file $report_route_density_file
     wolf_inject_for_step report_route_density post
 }

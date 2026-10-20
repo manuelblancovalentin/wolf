@@ -1800,12 +1800,13 @@ class GenusReportStepsTests(GenusFixtureTestCase):
         """Regression, hit for real: report_route_density was never a
         real Tcl command at all -- "invalid command name
         "report_route_density"" on an actual route/postroute run. The
-        real metal-density check is the legacy TCR verifyMetalDensity
-        (no Common UI snake_case equivalent exists), confirmed real via
-        its own doc page; -report writes the file directly."""
+        legacy TCR verifyMetalDensity isn't loaded in this Stylus/
+        Common UI session either (confirmed real, same error on that
+        name too) -- the real Common UI command is check_metal_density
+        (man 20.15), same check_* family as check_drc/check_place."""
         step = builtin_flow_root("cadence-genus") / "common_steps.tcl"
         body = _extract_step_bodies(step.read_text(encoding="utf-8"))["report_route_density"]
-        self.assertIn("verifyMetalDensity -report $report_route_density_file", body)
+        self.assertIn("check_metal_density -report $report_route_density_file", body)
         self.assertNotIn("report_route_density >", body)
 
 
