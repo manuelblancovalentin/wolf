@@ -339,7 +339,13 @@ create_flow_step -name report_route_density -owner wolf {
     set report_route_density_file \
         [file join [get_flow_config reports_dir] [get_db flow_report_name] \
             "route_density.[get_db flow_report_name].rpt"]
-    report_route_density > $report_route_density_file
+    # report_route_density was never a real command -- confirmed real,
+    # "invalid command name" on an actual run. The reference flow's own
+    # metal-density check is the legacy TCR verifyMetalDensity (no
+    # Common UI snake_case equivalent exists, unlike check_drc/
+    # check_place above); -report writes the file directly rather than
+    # needing a shell redirect.
+    verifyMetalDensity -report $report_route_density_file
     wolf_file $report_route_density_file
     wolf_inject_for_step report_route_density post
 }

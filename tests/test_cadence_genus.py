@@ -1796,6 +1796,18 @@ class GenusReportStepsTests(GenusFixtureTestCase):
         body = _extract_step_bodies(step.read_text(encoding="utf-8"))["report_clock_timing"]
         self.assertIn("report_clock_timing -type skew", body)
 
+    def test_report_route_density_uses_the_real_command(self):
+        """Regression, hit for real: report_route_density was never a
+        real Tcl command at all -- "invalid command name
+        "report_route_density"" on an actual route/postroute run. The
+        real metal-density check is the legacy TCR verifyMetalDensity
+        (no Common UI snake_case equivalent exists), confirmed real via
+        its own doc page; -report writes the file directly."""
+        step = builtin_flow_root("cadence-genus") / "common_steps.tcl"
+        body = _extract_step_bodies(step.read_text(encoding="utf-8"))["report_route_density"]
+        self.assertIn("verifyMetalDensity -report $report_route_density_file", body)
+        self.assertNotIn("report_route_density >", body)
+
 
 class GenusCongestionReapplyTests(GenusFixtureTestCase):
     """CMD_set_cong_aware (design_cong_effort/opt_consider_routing_congestion/
