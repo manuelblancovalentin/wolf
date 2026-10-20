@@ -1646,6 +1646,61 @@ class GenusFillerTests(GenusFixtureTestCase):
         self.assertIn("wolf_error", body)
 
 
+class GenusRouteDesignOverrideTests(GenusFixtureTestCase):
+    """design_top_routing_layer/design_bottom_routing_layer/
+    route_design_antenna_cell_name -- confirmed real gaps: route.tcl's
+    run_route step never constrained the routing layer range or
+    configured an antenna-violation diode cell at all."""
+
+    def test_defaults_are_empty(self):
+        inputs = prepare_genus_inputs(self._context(), self.root / "backend" / "cadence-genus")
+        document = yaml.safe_load(inputs.setup_yaml.read_text(encoding="utf-8"))
+        self.assertNotIn("design_top_routing_layer", document)
+        self.assertNotIn("design_bottom_routing_layer", document)
+        self.assertNotIn("route_design_antenna_cell_name", document)
+
+    def test_resolved_values_are_written_into_flow_config(self):
+        inputs = prepare_genus_inputs(
+            self._design_setup({
+                "design_top_routing_layer": "M8", "design_bottom_routing_layer": "M1",
+                "route_design_antenna_cell_name": ["ANTENNA1", "ANTENNA2"],
+            }),
+            self.root / "backend" / "cadence-genus",
+        )
+        document = yaml.safe_load(inputs.setup_yaml.read_text(encoding="utf-8"))
+        self.assertEqual(document["design_top_routing_layer"], "M8")
+        self.assertEqual(document["design_bottom_routing_layer"], "M1")
+        self.assertEqual(document["route_design_antenna_cell_name"], ["ANTENNA1", "ANTENNA2"])
+
+    def test_non_string_routing_layer_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "design_top_routing_layer must be a nonempty string"):
+            prepare_genus_inputs(
+                self._design_setup({"design_top_routing_layer": 8}),
+                self.root / "backend" / "cadence-genus",
+            )
+
+    def test_a_commented_out_routing_layer_is_not_an_override(self):
+        inputs = prepare_genus_inputs(
+            self._design_setup({
+                "design_top_routing_layer": None, "route_design_antenna_cell_name": None,
+            }),
+            self.root / "backend" / "cadence-genus",
+        )
+        document = yaml.safe_load(inputs.setup_yaml.read_text(encoding="utf-8"))
+        self.assertIsNone(document["design_top_routing_layer"])
+        self.assertIsNone(document["route_design_antenna_cell_name"])
+
+    def test_run_route_step_resolves_layer_range_and_antenna_cell(self):
+        step = builtin_flow_root("cadence-genus") / "route.tcl"
+        body = _extract_step_bodies(step.read_text(encoding="utf-8"))["run_route"]
+        self.assertIn("get_flow_config design_top_routing_layer -quiet", body)
+        self.assertIn("set_db design_top_routing_layer $wolf_top_routing_layer", body)
+        self.assertIn("get_flow_config design_bottom_routing_layer -quiet", body)
+        self.assertIn("set_db design_bottom_routing_layer $wolf_bottom_routing_layer", body)
+        self.assertIn("get_flow_config route_design_antenna_cell_name -quiet", body)
+        self.assertIn("set_db route_design_antenna_cell_name $wolf_antenna_cell_name", body)
+
+
 class GenusClockRoutingTests(GenusFixtureTestCase):
     """backend.cadence-flowtool.clock_routing -- a non-default route rule
     and top/trunk/leaf route types for add_clock_route_types, with layer

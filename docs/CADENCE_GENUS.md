@@ -1145,6 +1145,22 @@ existed, but now logs a loud `wolf_error` (not a silent skip) the same
 way `add_tieoffs` does, since missing filler cells before routing is a
 likely LVS/DRC problem too.
 
+**`design_top_routing_layer`/`design_bottom_routing_layer`/
+`route_design_antenna_cell_name`** -- applied inside `route.tcl`'s
+`run_route` step right before `route_design`:
+
+```yaml
+design_top_routing_layer: M8
+design_bottom_routing_layer: M1
+route_design_antenna_cell_name: ["ANTENNA1", "ANTENNA2"]
+```
+
+Confirmed real gap this closes: all three default to empty (man
+20.15) -- `run_route` had no layer-range constraint on global/detail
+routing at all, and no antenna-violation diode cell configured,
+regardless of a project's own signed-off methodology. Left unset,
+both stay exactly as permissive as before this existed.
+
 **`clock_routing_*`** -- a non-default routing rule and top/trunk/leaf
 route types for `add_clock_route_types` (`CMD_set_cong_aware`'s sibling
 extension point in the `prects` flow, previously always empty):

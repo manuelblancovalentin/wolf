@@ -516,6 +516,41 @@ def _filler_overrides(context: ResolvedContext) -> FillerOverrides:
     )
 
 
+class RouteDesignOverrides(NamedTuple):
+    top_routing_layer: Optional[str] = None
+    bottom_routing_layer: Optional[str] = None
+    antenna_cell_name: tuple[str, ...] = ()
+
+
+def _route_design_overrides(context: ResolvedContext) -> RouteDesignOverrides:
+    """Validate this design's setup.yaml design_top_routing_layer/
+    design_bottom_routing_layer/route_design_antenna_cell_name -> the
+    real Innovus design_top_routing_layer/design_bottom_routing_layer/
+    route_design_antenna_cell_name attributes (confirmed real, man
+    20.15). Left unset (today's default, both ""): route_design has no
+    layer-range constraint at all, which is a real risk -- routing
+    into layers outside a project's own signed-off methodology,
+    silently.
+    """
+    setup = _design_setup(context)
+
+    def _layer(key: str) -> Optional[str]:
+        value = setup.get(key)
+        if value is None:
+            return None
+        if not isinstance(value, str) or not value:
+            raise ValueError(f"{key} must be a nonempty string")
+        return value
+
+    return RouteDesignOverrides(
+        top_routing_layer=_layer("design_top_routing_layer"),
+        bottom_routing_layer=_layer("design_bottom_routing_layer"),
+        antenna_cell_name=_cell_pattern_list(
+            setup.get("route_design_antenna_cell_name") or [], "route_design_antenna_cell_name",
+        ),
+    )
+
+
 class ClockRoutingType(NamedTuple):
     use_rule: bool = False
     top_preferred_layer: Optional[str] = None
@@ -2064,6 +2099,7 @@ def prepare_genus_inputs(
     _cts_overrides(context)
     _tieoff_overrides(context)
     _filler_overrides(context)
+    _route_design_overrides(context)
     _clock_routing_overrides(context)
     flow_config_script = destination / "flow-config.tcl"
     manifest = destination / "genus-inputs.yaml"

@@ -29,6 +29,31 @@ create_flow_step -name run_route -owner wolf {
     wolf_step "run_route: detail routing and DRC cleanup"
     wolf_inject_for_step run_route pre
 
+    # design_top_routing_layer/design_bottom_routing_layer (confirmed
+    # real, man 20.15, both default "" -- no constraint at all): a
+    # real risk left unset, since route_design would then be free to
+    # route into layers outside a project's own signed-off methodology
+    # with no warning at all.
+    set wolf_top_routing_layer [get_flow_config design_top_routing_layer -quiet]
+    if {$wolf_top_routing_layer ne ""} {
+        set_db design_top_routing_layer $wolf_top_routing_layer
+        wolf_info "design_top_routing_layer: $wolf_top_routing_layer"
+    }
+    set wolf_bottom_routing_layer [get_flow_config design_bottom_routing_layer -quiet]
+    if {$wolf_bottom_routing_layer ne ""} {
+        set_db design_bottom_routing_layer $wolf_bottom_routing_layer
+        wolf_info "design_bottom_routing_layer: $wolf_bottom_routing_layer"
+    }
+    # route_design_antenna_cell_name (confirmed real, man 20.15,
+    # default "" -- no antenna-violation diode cell configured at
+    # all): left unset, route_design simply does not fix antenna
+    # violations, same as before this existed.
+    set wolf_antenna_cell_name [get_flow_config route_design_antenna_cell_name -quiet]
+    if {[llength $wolf_antenna_cell_name]} {
+        set_db route_design_antenna_cell_name $wolf_antenna_cell_name
+        wolf_info "route_design_antenna_cell_name: $wolf_antenna_cell_name"
+    }
+
     route_design
 
     set run_route_drc_file \
