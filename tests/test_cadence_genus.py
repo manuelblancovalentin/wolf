@@ -1809,6 +1809,20 @@ class GenusReportStepsTests(GenusFixtureTestCase):
         self.assertIn("check_metal_density -report $report_route_density_file", body)
         self.assertNotIn("report_route_density >", body)
 
+    def test_run_opt_postroute_does_not_call_the_invalid_unresolved_flag(self):
+        """Regression, hit for real: check_design -unresolved was never
+        a legal option in this version -- confirmed real, IMPTCM-48 on
+        an actual postroute run ("-unresolved" is not a legal option
+        for command "check_design"). man 20.15's own usage line
+        requires -type or -no_check instead; dropped rather than
+        guessed at a -type substitute (the only close candidate,
+        signoff, requires a Tempus path this flow doesn't set up)."""
+        step = builtin_flow_root("cadence-genus") / "postroute.tcl"
+        body = _extract_step_bodies(step.read_text(encoding="utf-8"))["run_opt_postroute"]
+        self.assertNotIn("check_design -unresolved", body)
+        # check_drc still runs its own real post-route verification.
+        self.assertIn("check_drc -out_file $run_opt_postroute_drc_file", body)
+
 
 class GenusCongestionReapplyTests(GenusFixtureTestCase):
     """CMD_set_cong_aware (design_cong_effort/opt_consider_routing_congestion/

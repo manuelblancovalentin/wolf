@@ -19,7 +19,15 @@ create_flow_step -name run_opt_postroute -owner wolf {
     set wolf_reports_dir [file join [get_flow_config reports_dir] [get_db flow_report_name]]
     opt_design -post_route -setup -hold -report_dir $wolf_reports_dir -report_prefix postroute.
 
-    check_design -unresolved
+    # A check_design call with the flag -unresolved used to sit here --
+    # never valid in this version, confirmed real: that flag isn't a
+    # legal check_design option (man 20.15's own usage line: -type or
+    # -no_check is required instead, and none of the documented -type
+    # values correspond to what -unresolved implied). No safe
+    # substitute to guess at here -- the closest candidate, -type
+    # signoff, requires a Tempus path this flow doesn't set up,
+    # risking a different failure -- so dropped rather than guessed;
+    # check_drc below still runs its own real post-route verification.
     set run_opt_postroute_area_file [file join $wolf_reports_dir area.postroute.rpt]
     report_area -min_count 1000 -out_file $run_opt_postroute_area_file
     wolf_file $run_opt_postroute_area_file
