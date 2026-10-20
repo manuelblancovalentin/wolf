@@ -1093,7 +1093,12 @@ default is already `ocv` (man 20.15), but a fresh Innovus session
 restored from the Genus handoff still fails `check_design -type cts`
 (CHKCTS-51) without it set explicitly, and CPPR is OCV's standard
 companion (otherwise clock-path pessimism is double-counted on any
-reconverging clock path).
+reconverging clock path). `init_innovus` also sets `design_process_node`
+when `technology.process_node_nm` is declared in the environment (man
+20.15, default `90`, nm) -- confirmed real, a run never setting this
+explicitly logged `Design Mode: 90nm` and `IMPEXT-3530` at every
+implementation stage regardless of the actual resolved PDK's real node
+size. See `docs/PDK_PACKAGES.md` for `technology.process_node_nm`.
 
 **`add_tieoffs_*`** -- resolves `add_tieoffs_cells` (at most two: one
 tie-high driver, one tie-low driver, man 20.15) and its companion

@@ -841,6 +841,37 @@ class GenusThreadsTests(GenusFixtureTestCase):
         body = _extract_step_bodies(step.read_text(encoding="utf-8"))["init_innovus"]
         self.assertIn("set_db timing_analysis_cppr both", body)
 
+    def test_init_innovus_sets_design_process_node_when_declared(self):
+        """design_process_node (man 20.15, default 90): confirmed real,
+        a run never setting this explicitly logged "Design Mode: 90nm"
+        and IMPEXT-3530 at every implementation stage regardless of
+        the actual resolved PDK."""
+        step = builtin_flow_root("cadence-genus") / "floorplanning.tcl"
+        body = _extract_step_bodies(step.read_text(encoding="utf-8"))["init_innovus"]
+        self.assertIn("get_flow_config design_process_node -quiet", body)
+        self.assertIn("set_db design_process_node $wolf_process_node", body)
+
+    def test_process_node_nm_is_written_into_setup_yaml_when_declared(self):
+        inputs = prepare_genus_inputs(
+            self._context(technology=ResolvedTechnology(
+                package="pdk/demo", revision="1", name="demo", root=self.root,
+                process_node_nm=65,
+            )),
+            self.root / "backend" / "cadence-genus",
+        )
+        document = yaml.safe_load(inputs.setup_yaml.read_text(encoding="utf-8"))
+        self.assertEqual(document["design_process_node"], 65)
+
+    def test_process_node_nm_is_absent_when_not_declared(self):
+        inputs = prepare_genus_inputs(
+            self._context(technology=ResolvedTechnology(
+                package="pdk/demo", revision="1", name="demo", root=self.root,
+            )),
+            self.root / "backend" / "cadence-genus",
+        )
+        document = yaml.safe_load(inputs.setup_yaml.read_text(encoding="utf-8"))
+        self.assertNotIn("design_process_node", document)
+
 
 class GenusSynthesisFlowTests(GenusFixtureTestCase):
     """Resolved-value plumbing for the selectable Genus flows.

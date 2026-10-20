@@ -1021,6 +1021,52 @@ class MetalStackTests(DeclarativeEnvironmentTests):
             )
 
 
+class ProcessNodeTests(DeclarativeEnvironmentTests):
+    """technology.process_node_nm -- Innovus's own design_process_node
+    attribute defaults to 90 (man 20.15) regardless of the actual
+    resolved PDK, confirmed real on an actual run; a project declares
+    the real value explicitly since it isn't reliably derivable from
+    the package name across every PDK's own naming convention."""
+
+    def test_process_node_nm_is_resolved_onto_technology(self):
+        text = self._complete_yaml().replace(
+            "package: pdk/asap7", "package: pdk/asap7\n  process_node_nm: 7",
+        )
+        context = resolve_declarative_environment(
+            load_environment(self._write(text, "node.yaml")),
+            state_root=self.state, environment_directory=self.environment,
+        )
+        self.assertEqual(context.technology.process_node_nm, 7)
+
+    def test_process_node_nm_defaults_to_none(self):
+        context = resolve_declarative_environment(
+            load_environment(self._write(self._complete_yaml())),
+            state_root=self.state, environment_directory=self.environment,
+        )
+        self.assertIsNone(context.technology.process_node_nm)
+
+    def test_zero_or_negative_process_node_nm_is_rejected(self):
+        for bad_value in (0, -65):
+            text = self._complete_yaml().replace(
+                "package: pdk/asap7", f"package: pdk/asap7\n  process_node_nm: {bad_value}",
+            )
+            with self.assertRaisesRegex(ValueError, "process_node_nm must be a positive integer"):
+                resolve_declarative_environment(
+                    load_environment(self._write(text, "badnode.yaml")),
+                    state_root=self.state, environment_directory=self.environment,
+                )
+
+    def test_non_integer_process_node_nm_is_rejected(self):
+        text = self._complete_yaml().replace(
+            "package: pdk/asap7", "package: pdk/asap7\n  process_node_nm: \"65nm\"",
+        )
+        with self.assertRaisesRegex(ValueError, "process_node_nm must be a positive integer"):
+            resolve_declarative_environment(
+                load_environment(self._write(text, "strnode.yaml")),
+                state_root=self.state, environment_directory=self.environment,
+            )
+
+
 class SignoffCatalogTests(DeclarativeEnvironmentTests):
     """opconds -> delay_corners -> analysis_views: a static catalog
     mirroring the real MMMC object chain, each referencing the declared

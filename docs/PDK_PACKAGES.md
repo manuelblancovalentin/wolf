@@ -153,6 +153,14 @@ stack is declared, else a clear error listing what's available. Cloning
 an environment and changing only `metal_stack` is meant to just work --
 it's one field, resolved the same way `track`/`vth` already are.
 
+`technology.process_node_nm` (optional, a positive integer) declares the
+real process node size in nanometers for backends that need it (Cadence
+Innovus's own `design_process_node` attribute defaults to 90 regardless
+of the actual resolved PDK -- see `docs/CADENCE_GENUS.md`). Not derived
+from the package name: not every PDK package names itself after its
+node size the same way, so a project declares it explicitly rather than
+WOLF guessing.
+
 A corner's optional `format` (default `liberty`) records what kind of
 library it actually is -- plain Liberty, ECSM, a variation/AOCV-SOCV
 library, or whatever else shows up -- for whatever future consumer cares.

@@ -197,6 +197,7 @@ class ResolvedTechnology:
     selected_tracks: tuple[str, ...] = ()
     selected_vths: tuple[str, ...] = ()
     metal_stack: Optional[str] = None
+    process_node_nm: Optional[int] = None
     timing_corner: str = "typical"
     timing_libraries: tuple[Path, ...] = ()
     timing_corners: tuple[ResolvedTimingCorner, ...] = ()

@@ -64,6 +64,14 @@ class ComponentReference:
     tracks: tuple[str, ...] = ()
     vths: tuple[str, ...] = ()
     metal_stack: Optional[str] = None
+    # technology only: the process technology value Innovus's own
+    # design_process_node attribute expects (nm, man 20.15, default 90
+    # -- confirmed real, a run never setting this explicitly logged
+    # "Design Mode: 90nm" and IMPEXT-3530 at every implementation
+    # stage regardless of the actual resolved PDK). Not derived from
+    # the package name (fragile: not every PDK package name encodes
+    # the node size the same way) -- a project declares it explicitly.
+    process_node_nm: Optional[int] = None
     # flow.backend only: persists a bundled-default flow's backend choice
     # (cadence-flowtool, orfs, ...) in wolf.yaml itself, rather than it
     # only ever existing as a `wolf run --backend` override that has to
@@ -190,7 +198,7 @@ def _component(
     allowed = (
         {"package", "name"}
         | ({"top", "sources"} if field == "design" else set())
-        | ({"track", "vth", "metal_stack"} if field == "technology" else set())
+        | ({"track", "vth", "metal_stack", "process_node_nm"} if field == "technology" else set())
         | ({"backend"} if field == "flow" else set())
     )
     _known_fields(mapping, allowed, field)
@@ -205,12 +213,20 @@ def _component(
     metal_stack = (
         _optional_string(mapping.get("metal_stack"), f"{field}.metal_stack") if is_technology else None
     )
+    process_node_nm = None
+    if is_technology and mapping.get("process_node_nm") is not None:
+        process_node_nm = mapping.get("process_node_nm")
+        if (
+            not isinstance(process_node_nm, int) or isinstance(process_node_nm, bool)
+            or process_node_nm <= 0
+        ):
+            raise ValueError(f"{field}.process_node_nm must be a positive integer")
     backend = _optional_string(mapping.get("backend"), f"{field}.backend") if field == "flow" else None
     if not any((package, name, top, backend)) and not extra_satisfied:
         raise ValueError(f"{field} must define at least one value")
     return ComponentReference(
         package=package, name=name, top=top, track=track, vth=vth, tracks=tracks, vths=vths,
-        metal_stack=metal_stack, backend=backend,
+        metal_stack=metal_stack, process_node_nm=process_node_nm, backend=backend,
     )
 
 
@@ -1020,6 +1036,7 @@ def _technology_inputs(
 
     track: Optional[str] = None
     vth: Optional[str] = None
+    process_node_nm = reference.process_node_nm if reference else None
     generic: Mapping[str, Any] = {}
     verilog_models: tuple[Path, ...] = ()
     spice_models: tuple[Path, ...] = ()
@@ -1130,6 +1147,7 @@ def _technology_inputs(
         catalog_gds_files=catalog_gds_files,
         catalog_opconds=catalog_opconds, catalog_delay_corners=catalog_delay_corners,
         catalog_analysis_views=catalog_analysis_views,
+        process_node_nm=process_node_nm,
     )
 
 

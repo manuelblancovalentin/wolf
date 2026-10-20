@@ -779,6 +779,7 @@ def _catalog_document(context: ResolvedContext) -> dict:
 
       get_flow_config design_name / design_top
       get_flow_config tracks / get_flow_config vths / get_flow_config metal_stack
+      get_flow_config design_process_node
       get_flow_config power_nets / get_flow_config ground_nets
       get_flow_config floorplan_def / get_flow_config max_cpus_per_server
       get_flow_config dont_use_cells / technology_lefs / cell_lefs
@@ -837,6 +838,8 @@ def _catalog_document(context: ResolvedContext) -> dict:
         document["vths"] = list(selected_vths)
     if technology.metal_stack:
         document["metal_stack"] = technology.metal_stack
+    if technology.process_node_nm:
+        document["design_process_node"] = technology.process_node_nm
     library_sets: dict[str, Any] = {}
     for entry in technology.catalog_library_sets:
         corner = library_sets.setdefault(entry.corner, {"library_files": {}})

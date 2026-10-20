@@ -66,6 +66,18 @@ create_flow_step -name init_innovus -owner wolf {
     # double-counted on any reconverging clock path -- standard practice
     # once OCV is on, not a per-design knob either.
     set_db timing_analysis_cppr both
+    # design_process_node (man 20.15, default 90 -- confirmed real, a
+    # run never setting this explicitly logged "Design Mode: 90nm" and
+    # IMPEXT-3530 at every implementation stage regardless of the
+    # actual resolved PDK's real node size). Only present when the
+    # technology package declares technology.process_node_nm in
+    # wolf.yaml -- not guessed from the package name, which isn't a
+    # reliable source across every PDK's own naming convention.
+    set wolf_process_node [get_flow_config design_process_node -quiet]
+    if {$wolf_process_node ne ""} {
+        set_db design_process_node $wolf_process_node
+        wolf_info "design_process_node: $wolf_process_node"
+    }
     # Same resolved thread count synthesis.tcl's own init_genus already
     # applies to Genus (resources.threads/GENUS_NUM_CPUS, via
     # get_flow_config max_cpus_per_server) -- Innovus has no equivalent
