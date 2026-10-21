@@ -461,12 +461,12 @@ def _parse_timing_corners(
 
 # A flat (no tracks) technology's timing/physical keys, kept exactly as before.
 _FLAT_TECHNOLOGY_FIELDS = {
-    "name", "timing", "physical", "synthesis", "setup_yaml_fragment",
+    "name", "timing", "physical", "synthesis", "setup_yaml_fragment", "gds_layermap",
     "opconds", "delay_corners", "analysis_views",
 }
 # A multi-track technology's own top-level keys.
 _TRACKED_TECHNOLOGY_FIELDS = {
-    "name", "tracks", "generic", "synthesis", "setup_yaml_fragment",
+    "name", "tracks", "generic", "synthesis", "setup_yaml_fragment", "gds_layermap",
     "opconds", "delay_corners", "analysis_views",
 }
 
@@ -1128,6 +1128,21 @@ def _technology_inputs(
         setup_yaml_fragment = _paths_under(root, [setup_yaml_fragment_value], "setup_yaml_fragment")[0]
         all_files = (*all_files, setup_yaml_fragment)
 
+    # One shared GDS stream-out layer map for the whole package --
+    # same shape as setup_yaml_fragment (a single file, independent of
+    # track/vth), not nested under physical.* like technology_lefs/
+    # cell_lefs/gds (those are per-track/vth; this one map covers
+    # every cell the package declares regardless of track/vth). A
+    # design's own setup.yaml gds_layermap key still overrides this
+    # package default when set (see cadence_genus._catalog_document).
+    gds_layermap_value = metadata.get("gds_layermap")
+    gds_layermap: Optional[Path] = None
+    if gds_layermap_value is not None:
+        if not isinstance(gds_layermap_value, str) or not gds_layermap_value:
+            raise ValueError("technology.gds_layermap must be a nonempty string")
+        gds_layermap = _paths_under(root, [gds_layermap_value], "gds_layermap")[0]
+        all_files = (*all_files, gds_layermap)
+
     checksums = _cached_checksums(all_files)
     dont_use = synthesis.get("dont_use", [])
     if not isinstance(dont_use, list) or not all(isinstance(item, str) and item for item in dont_use):
@@ -1143,6 +1158,7 @@ def _technology_inputs(
         qrc_techfiles=qrc_techfiles, qrc_corners=qrc_corners, generic=generic,
         checksums=checksums, dont_use_cells=tuple(dont_use),
         setup_yaml_fragment=setup_yaml_fragment,
+        gds_layermap=gds_layermap,
         catalog_library_sets=catalog_library_sets, catalog_lef_files=catalog_lef_files,
         catalog_gds_files=catalog_gds_files,
         catalog_opconds=catalog_opconds, catalog_delay_corners=catalog_delay_corners,

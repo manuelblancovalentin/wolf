@@ -1067,6 +1067,54 @@ class ProcessNodeTests(DeclarativeEnvironmentTests):
             )
 
 
+class GdsLayermapTests(DeclarativeEnvironmentTests):
+    """technology.gds_layermap -- one shared GDS stream-out layer map
+    for the whole PDK package (write_stream's own -map_file, man
+    20.15), declared once so every environment selecting that package
+    inherits it automatically -- confirmed real need: a project's own
+    layer map (e.g. a foundry-provided .gds2map) has to be available
+    to everyone with access to that PDK, not re-typed per design."""
+
+    def _package_with_layermap(self, package_name, *, layermap_value):
+        self._package("pdk", package_name, "pdk-rev", {
+            "technology": {"name": package_name, "gds_layermap": layermap_value},
+        })
+        if layermap_value is not None:
+            path = (
+                self.state / "packages" / "pdk" / package_name / "pdk-rev" / "source"
+                / layermap_value
+            )
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("-- layermap --\n", encoding="utf-8")
+
+    def test_gds_layermap_is_resolved_onto_technology(self):
+        self._package_with_layermap("tsmc65-layermap", layermap_value="tech.layermap")
+        text = self._complete_yaml().replace("package: pdk/asap7", "package: pdk/tsmc65-layermap")
+        context = resolve_declarative_environment(
+            load_environment(self._write(text, "layermap.yaml")),
+            state_root=self.state, environment_directory=self.environment,
+        )
+        self.assertEqual(context.technology.gds_layermap.name, "tech.layermap")
+
+    def test_gds_layermap_defaults_to_none(self):
+        context = resolve_declarative_environment(
+            load_environment(self._write(self._complete_yaml())),
+            state_root=self.state, environment_directory=self.environment,
+        )
+        self.assertIsNone(context.technology.gds_layermap)
+
+    def test_missing_gds_layermap_file_is_rejected(self):
+        self._package("pdk", "tsmc65-badlayermap", "pdk-rev", {
+            "technology": {"name": "tsmc65-badlayermap", "gds_layermap": "nope.layermap"},
+        })
+        text = self._complete_yaml().replace("package: pdk/asap7", "package: pdk/tsmc65-badlayermap")
+        with self.assertRaisesRegex(ValueError, "gds_layermap file does not exist"):
+            resolve_declarative_environment(
+                load_environment(self._write(text, "badlayermap.yaml")),
+                state_root=self.state, environment_directory=self.environment,
+            )
+
+
 class SignoffCatalogTests(DeclarativeEnvironmentTests):
     """opconds -> delay_corners -> analysis_views: a static catalog
     mirroring the real MMMC object chain, each referencing the declared

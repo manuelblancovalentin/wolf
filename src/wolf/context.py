@@ -213,6 +213,10 @@ class ResolvedTechnology:
     checksums: Mapping[str, str] = field(default_factory=dict)
     dont_use_cells: tuple[str, ...] = ()
     setup_yaml_fragment: Optional[Path] = None
+    # One shared GDS stream-out layer map for the whole package (write_stream's
+    # own -map_file, man 20.15) -- a design's own setup.yaml gds_layermap key
+    # still overrides this (see cadence_genus._catalog_document).
+    gds_layermap: Optional[Path] = None
     catalog_library_sets: tuple[CatalogLibrarySet, ...] = ()
     catalog_lef_files: tuple[CatalogFileList, ...] = ()
     catalog_gds_files: tuple[CatalogFileList, ...] = ()

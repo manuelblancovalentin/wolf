@@ -906,6 +906,8 @@ def _catalog_document(context: ResolvedContext) -> dict:
         document["metal_stack"] = technology.metal_stack
     if technology.process_node_nm:
         document["design_process_node"] = technology.process_node_nm
+    if technology.gds_layermap:
+        document["gds_layermap"] = str(technology.gds_layermap)
     library_sets: dict[str, Any] = {}
     for entry in technology.catalog_library_sets:
         corner = library_sets.setdefault(entry.corner, {"library_files": {}})
@@ -983,7 +985,16 @@ def _render_setup_yaml(
         raise ValueError(f"rendered setup.yaml is not a yaml mapping: {setup_template}")
     document.update(_catalog_document(context))
     document.update(run_paths or {})
-    document.update(_design_setup(context))
+    # None-valued design-setup keys (a commented-out YAML list/value
+    # with the key left in place -- the established "null means no
+    # override" convention, see _cell_pattern_list's own callers)
+    # don't participate in this merge: gds_layermap is now set by
+    # _catalog_document too (the PDK package's own shared default), and
+    # a stray `gds_layermap:` left in a design's setup.yaml must not
+    # blank that default back out.
+    document.update({
+        key: value for key, value in _design_setup(context).items() if value is not None
+    })
     return yaml.safe_dump(document, sort_keys=False)
 
 

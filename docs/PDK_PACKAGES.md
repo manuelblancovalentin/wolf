@@ -323,6 +323,28 @@ expects. Nothing needs to be hand-maintained for that part; it comes
 straight from the same track/vth/corner data `wolf pdk menu` already
 edits.
 
+### `gds_layermap`: one shared GDS stream-out layer map for the whole PDK
+
+`technology.gds_layermap` points at one GDSII/OASIS layer-map file --
+`write_stream`'s own `-map_file` (man 20.15), real tool input, not
+committed library content. Same flat-path shape as
+`setup_yaml_fragment`, available for both flat and tracked packages:
+
+```yaml
+technology:
+  name: tsmc65
+  gds_layermap: config/tsmc65.sorted.gds2map
+  tracks: {...}
+```
+
+Confirmed real need: a foundry-provided layer map has to be available
+to everyone with access to that PDK, not re-typed into every design's
+own `setup.yaml`. Declared once here, it flows into every run's
+rendered `setup.yaml` as the top-level `gds_layermap` key
+automatically (see `export` in [CADENCE_GENUS.md](CADENCE_GENUS.md)) --
+a design's own `setup.<design>.yaml` can still set `gds_layermap`
+itself to override this package default for that one design.
+
 ## Listing and inspecting
 
 `wolf pdk list` lists every `pdk/*` manifest across all configured

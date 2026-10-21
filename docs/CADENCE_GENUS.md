@@ -1165,8 +1165,8 @@ both stay exactly as permissive as before this existed.
 (man 20.15) and whether `export` also extracts and writes SPEF:
 
 ```yaml
-gds_layermap: /path/to/your/tech.layermap   # optional
 export_spef: true                           # optional, default off
+gds_layermap: /design/override.layermap     # optional -- overrides the PDK package's own default
 ```
 
 Confirmed real: `export` used to be an empty extension point with no
@@ -1174,10 +1174,38 @@ output at all -- it now writes GDS (`write_stream`), netlist
 (`write_netlist`), DEF (`write_def -floorplan -netlist -routing`),
 LEF (`write_lef_abstract`), and SDC (`write_sdc`) into `outputs_dir`
 every time it runs (floorplan/postcts/postroute, each stamped with
-that stage's own name). `gds_layermap` is an optional quality knob --
-left unset, `write_stream` still runs and Innovus generates its own
+that stage's own name).
+
+The GDS write also merges in every resolved standard-cell GDS file
+(`get_flow_config std_cell_GDS_files $track $vth`, flattened across
+every selected track/vth) and omits `-unit` entirely -- both
+confirmed real, hit on an actual run: without `-merge`, `write_stream`
+only emits LEF-abstract shapes for std-cell instances (no
+front-end-of-line layers at all), and a hardcoded `-unit` not matching
+the design's own database precision produced a unit-mismatch warning
+(IMPOGDS-250). `-unit`'s own documented default, "units specified in
+LEF file", always matches the real database, so it's never passed
+explicitly. If no standard-cell GDS files resolve at all, or no
+`gds_layermap` is available, `export` says so loudly (`wolf_error`,
+not a silent skip) -- a GDS without the real cell GDS or without a
+real layer map is not signoff-grade, and that should be obvious in
+the log, not discovered later.
+
+`gds_layermap` is normally a **PDK package fact**, not a per-design
+setting: the technology package's own manifest can declare
+`technology.gds_layermap` (one shared layer map file, the same shape
+as `technology.setup_yaml_fragment` -- see `docs/PDK_PACKAGES.md`),
+and every environment selecting that package inherits it
+automatically, with no setup.yaml edit needed. The `gds_layermap` key
+shown above is a *design-level override* of that package default, for
+the rare case a specific design needs a different map; a
+commented-out `gds_layermap:` left in a design's own setup.yaml does
+not blank out the package's default (same "null means no override"
+handling every other design-level key already gets). Left unset
+everywhere, `write_stream` still runs and Innovus generates its own
 generic layer-map file rather than refusing (also confirmed real, man
-20.15), so this never blocks GDS output, just its precision.
+20.15) -- which is exactly the case `export` now warns loudly about.
+
 `export_spef` is opt-in rather than always-on like the writes above:
 when true, `export` also runs `extract_rc` (confirmed real, man
 20.15: no required args, run after routing) followed by
@@ -1186,6 +1214,9 @@ first) -- `extract_rc` is a real-time cost on a large design, not a
 cheap write, so it only runs when asked for. Neither call takes
 `-view`/`-rc_corner`, so SPEF is extracted for whichever analysis
 view is currently active, not looped per-corner.
+
+Every write reports its real file size (`[file size ...]`) via
+`wolf_info`, not just its path.
 
 This is deliberately the generic subset only -- an institution's own
 export step (Calibre/QRC merge, per-view SDF/timing-model export,

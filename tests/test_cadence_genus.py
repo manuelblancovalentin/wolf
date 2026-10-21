@@ -675,7 +675,7 @@ class GenusPostsynNetlistAndInjectOverrideTests(GenusFixtureTestCase):
             self.root / "backend" / "cadence-genus",
         )
         document = yaml.safe_load(inputs.setup_yaml.read_text(encoding="utf-8"))
-        self.assertIsNone(document["postsyn_netlists"])
+        self.assertNotIn("postsyn_netlists", document)
 
     def test_a_commented_out_inject_block_is_not_an_override(self):
         inputs = prepare_genus_inputs(
@@ -683,7 +683,7 @@ class GenusPostsynNetlistAndInjectOverrideTests(GenusFixtureTestCase):
             self.root / "backend" / "cadence-genus",
         )
         document = yaml.safe_load(inputs.setup_yaml.read_text(encoding="utf-8"))
-        self.assertIsNone(document["inject"])
+        self.assertNotIn("inject", document)
 
     def test_no_inject_leaves_no_inject_key(self):
         inputs = prepare_genus_inputs(self._context(), self.root / "backend" / "cadence-genus")
@@ -1153,7 +1153,7 @@ class GenusActiveViewsTests(GenusFixtureTestCase):
             self.root / "backend" / "cadence-genus",
         )
         document = yaml.safe_load(inputs.setup_yaml.read_text(encoding="utf-8"))
-        self.assertIsNone(document["active_views"])
+        self.assertNotIn("active_views", document)
 
     def test_a_commented_out_setup_or_hold_sub_list_is_not_an_override(self):
         inputs = prepare_genus_inputs(
@@ -1367,8 +1367,8 @@ class GenusCtsCellTests(GenusFixtureTestCase):
         # setup.yaml unchanged -- set_cts_config's own Tcl (not this
         # validator) is what turns a null/absent value into the library
         # default at get_flow_config -quiet time.
-        self.assertIsNone(document["cts_buffer_cells"])
-        self.assertIsNone(document["cts_inverter_cells"])
+        self.assertNotIn("cts_buffer_cells", document)
+        self.assertNotIn("cts_inverter_cells", document)
 
     def test_set_cts_config_is_shared_by_prects_and_cts(self):
         flows_text = (builtin_flow_root("cadence-genus") / "common_flows.tcl").read_text(
@@ -1545,7 +1545,7 @@ class GenusTieoffTests(GenusFixtureTestCase):
             self.root / "backend" / "cadence-genus",
         )
         document = yaml.safe_load(inputs.setup_yaml.read_text(encoding="utf-8"))
-        self.assertIsNone(document["add_tieoffs_cells"])
+        self.assertNotIn("add_tieoffs_cells", document)
 
     def test_add_tieoffs_step_resolves_and_reports(self):
         step = builtin_flow_root("cadence-genus") / "cts.tcl"
@@ -1629,7 +1629,7 @@ class GenusFillerTests(GenusFixtureTestCase):
             self.root / "backend" / "cadence-genus",
         )
         document = yaml.safe_load(inputs.setup_yaml.read_text(encoding="utf-8"))
-        self.assertIsNone(document["add_fillers_cells"])
+        self.assertNotIn("add_fillers_cells", document)
 
     def test_non_string_cell_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "add_fillers_cells must be a list"):
@@ -1687,8 +1687,8 @@ class GenusRouteDesignOverrideTests(GenusFixtureTestCase):
             self.root / "backend" / "cadence-genus",
         )
         document = yaml.safe_load(inputs.setup_yaml.read_text(encoding="utf-8"))
-        self.assertIsNone(document["design_top_routing_layer"])
-        self.assertIsNone(document["route_design_antenna_cell_name"])
+        self.assertNotIn("design_top_routing_layer", document)
+        self.assertNotIn("route_design_antenna_cell_name", document)
 
     def test_run_route_step_resolves_layer_range_and_antenna_cell(self):
         step = builtin_flow_root("cadence-genus") / "route.tcl"
@@ -1727,24 +1727,117 @@ class GenusExportOverrideTests(GenusFixtureTestCase):
                 self.root / "backend" / "cadence-genus",
             )
 
+    def test_pdk_level_gds_layermap_is_resolved_into_flow_config(self):
+        """gds_layermap is a shared PDK-package default (one layer map
+        for everyone with access to that PDK, not re-typed per
+        design) -- confirmed real need. A design with no override at
+        all still gets the package's own declared value."""
+        inputs = prepare_genus_inputs(
+            self._context(technology=ResolvedTechnology(
+                package="pdk/demo", revision="1", name="demo", root=self.root,
+                gds_layermap=Path("/pdk/tech.layermap"),
+            )),
+            self.root / "backend" / "cadence-genus",
+        )
+        document = yaml.safe_load(inputs.setup_yaml.read_text(encoding="utf-8"))
+        self.assertEqual(document["gds_layermap"], "/pdk/tech.layermap")
+
+    def test_a_commented_out_design_level_gds_layermap_does_not_clobber_the_pdk_default(self):
+        """Regression: a stray `gds_layermap:` left null in a design's
+        own setup.yaml (the established "commented-out list, key left
+        behind" pattern) must not blank out the PDK package's own
+        shared default -- only an explicit design-level string value
+        should override it."""
+        inputs = prepare_genus_inputs(
+            self._design_setup(
+                {"gds_layermap": None},
+                technology=ResolvedTechnology(
+                    package="pdk/demo", revision="1", name="demo", root=self.root,
+                    gds_layermap=Path("/pdk/tech.layermap"),
+                ),
+            ),
+            self.root / "backend" / "cadence-genus",
+        )
+        document = yaml.safe_load(inputs.setup_yaml.read_text(encoding="utf-8"))
+        self.assertEqual(document["gds_layermap"], "/pdk/tech.layermap")
+
+    def test_an_explicit_design_level_gds_layermap_overrides_the_pdk_default(self):
+        inputs = prepare_genus_inputs(
+            self._design_setup(
+                {"gds_layermap": "/design/override.layermap"},
+                technology=ResolvedTechnology(
+                    package="pdk/demo", revision="1", name="demo", root=self.root,
+                    gds_layermap=Path("/pdk/tech.layermap"),
+                ),
+            ),
+            self.root / "backend" / "cadence-genus",
+        )
+        document = yaml.safe_load(inputs.setup_yaml.read_text(encoding="utf-8"))
+        self.assertEqual(document["gds_layermap"], "/design/override.layermap")
+
     def test_a_commented_out_gds_layermap_is_not_an_override(self):
         inputs = prepare_genus_inputs(
             self._design_setup({"gds_layermap": None}),
             self.root / "backend" / "cadence-genus",
         )
         document = yaml.safe_load(inputs.setup_yaml.read_text(encoding="utf-8"))
-        self.assertIsNone(document["gds_layermap"])
+        self.assertNotIn("gds_layermap", document)
 
     def test_export_step_writes_gds_netlist_def_lef_sdc(self):
         step = builtin_flow_root("cadence-genus") / "common_steps.tcl"
         body = _extract_step_bodies(step.read_text(encoding="utf-8"))["export"]
         self.assertIn("get_flow_config gds_layermap -quiet", body)
-        self.assertIn("write_stream $wolf_gds_file", body)
+        self.assertIn("write_stream {*}$wolf_gds_write_args", body)
         self.assertIn("-map_file $wolf_gds_layermap", body)
         self.assertIn("write_netlist $wolf_netlist_file", body)
         self.assertIn("write_def -floorplan -netlist -routing $wolf_def_file", body)
         self.assertIn("write_lef_abstract $wolf_lef_file", body)
         self.assertIn("write_sdc $wolf_sdc_file", body)
+
+    def test_export_merges_resolved_std_cell_gds_files(self):
+        """Regression, hit for real: write_stream with no -merge only
+        emitted LEF-abstract shapes for every std-cell instance (no
+        front-end-of-line layers at all) on an actual postroute GDS.
+        The resolved std_cell_GDS_files catalog (get_flow_config
+        std_cell_GDS_files $track $vth, flattened across every
+        selected track/vth) must be merged in."""
+        step = builtin_flow_root("cadence-genus") / "common_steps.tcl"
+        body = _extract_step_bodies(step.read_text(encoding="utf-8"))["export"]
+        self.assertIn("get_flow_config tracks -quiet", body)
+        self.assertIn("get_flow_config vths -quiet", body)
+        self.assertIn("get_flow_config std_cell_GDS_files $wolf_trk $wolf_vth -quiet", body)
+        self.assertIn("-merge $wolf_std_cell_gds_files -uniquify_cell_names", body)
+
+    def test_export_does_not_hardcode_a_gds_unit(self):
+        """Regression, hit for real: a hardcoded -unit 1000 (copied from
+        a legacy reference flow with no basis in this run's own
+        database) produced IMPOGDS-250 against the real 2000-per-micron
+        database on an actual run. write_stream's own documented
+        default ("units specified in LEF file") always matches the
+        real database, so -unit is omitted entirely."""
+        step = builtin_flow_root("cadence-genus") / "common_steps.tcl"
+        body = _extract_step_bodies(step.read_text(encoding="utf-8"))["export"]
+        for line in body.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("#"):
+                continue
+            self.assertNotIn("-unit", stripped)
+
+    def test_export_warns_loudly_when_gds_layermap_or_cell_list_missing(self):
+        step = builtin_flow_root("cadence-genus") / "common_steps.tcl"
+        body = _extract_step_bodies(step.read_text(encoding="utf-8"))["export"]
+        self.assertIn('if {$wolf_gds_layermap eq ""}', body)
+        self.assertIn("wolf_error", body)
+        self.assertIn("if {![llength $wolf_std_cell_gds_files]}", body)
+
+    def test_export_reports_file_sizes(self):
+        step = builtin_flow_root("cadence-genus") / "common_steps.tcl"
+        body = _extract_step_bodies(step.read_text(encoding="utf-8"))["export"]
+        for var in (
+            "wolf_gds_file", "wolf_netlist_file", "wolf_def_file",
+            "wolf_lef_file", "wolf_sdc_file",
+        ):
+            self.assertIn(f"[file size ${var}]", body)
 
     def test_export_spef_default_is_empty(self):
         inputs = prepare_genus_inputs(self._context(), self.root / "backend" / "cadence-genus")
@@ -1782,15 +1875,17 @@ class GenusExportOverrideTests(GenusFixtureTestCase):
             'proc wolf_step {args} {}\n'
             'proc wolf_inject_for_step {args} {}\n'
             'proc wolf_info {args} { puts "INFO: $args" }\n'
+            'proc wolf_error {args} { puts "ERROR: $args" }\n'
             'proc wolf_file {args} {}\n'
             'proc wolf_sep {} { return "" }\n'
-            'proc write_stream {args} {}\n'
-            'proc write_netlist {args} {}\n'
-            'proc write_def {args} {}\n'
-            'proc write_lef_abstract {args} {}\n'
-            'proc write_sdc {args} {}\n'
+            'proc touch {path} { set f [open $path w]; puts $f ""; close $f }\n'
+            'proc write_stream {path args} { touch $path }\n'
+            'proc write_netlist {path} { touch $path }\n'
+            'proc write_def {args} { touch [lindex $args end] }\n'
+            'proc write_lef_abstract {path} { touch $path }\n'
+            'proc write_sdc {path} { touch $path }\n'
             'proc extract_rc {args} { puts "RAN: extract_rc" }\n'
-            'proc write_parasitics {args} { puts "RAN: write_parasitics $args" }\n'
+            'proc write_parasitics {args} { touch [lindex $args end]; puts "RAN: write_parasitics $args" }\n'
             'proc get_db {args} { return "demo" }\n'
         )
 
@@ -1872,9 +1967,9 @@ class GenusClockRoutingTests(GenusFixtureTestCase):
             self.root / "backend" / "cadence-genus",
         )
         document = yaml.safe_load(inputs.setup_yaml.read_text(encoding="utf-8"))
-        self.assertIsNone(document["clock_routing_width_multiplier"])
-        self.assertIsNone(document["clock_routing_spacing_multiplier"])
-        self.assertIsNone(document["clock_routing_types"])
+        self.assertNotIn("clock_routing_width_multiplier", document)
+        self.assertNotIn("clock_routing_spacing_multiplier", document)
+        self.assertNotIn("clock_routing_types", document)
 
     def test_add_clock_route_types_step_validates_layers_and_creates_rule_and_types(self):
         step = builtin_flow_root("cadence-genus") / "floorplanning.tcl"

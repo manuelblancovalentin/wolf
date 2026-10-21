@@ -414,37 +414,74 @@ create_flow_step -name export -owner wolf {
     set wolf_design_name [get_flow_config design_name]
     set wolf_export_suffix [get_db flow_report_name]
 
+    # Flatten the resolved standard-cell GDS catalog (get_flow_config
+    # std_cell_GDS_files $track $vth, confirmed real key shape, see
+    # _catalog_document in wolf/backend/cadence_genus.py) across every
+    # selected track/vth pair -- confirmed real, hit on an actual run:
+    # a write_stream with no -merge only emits LEF-abstract shapes for
+    # every std-cell instance (no FEOL layers at all), not the real
+    # cell GDS. WOLF's own resolver is the only source for this list;
+    # nothing here names a PDK path or cell directly.
+    set wolf_std_cell_gds_files [list]
+    foreach wolf_trk [get_flow_config tracks -quiet] {
+        foreach wolf_vth [get_flow_config vths -quiet] {
+            foreach wolf_gf [get_flow_config std_cell_GDS_files $wolf_trk $wolf_vth -quiet] {
+                lappend wolf_std_cell_gds_files $wolf_gf
+            }
+        }
+    }
+    if {![llength $wolf_std_cell_gds_files]} {
+        wolf_error "export: no standard-cell GDS files resolved for this technology (tracks/vths/std_cell_GDS_files) -- GDS will only contain LEF-abstract shapes for std cells, no front-end-of-line layers"
+    }
+
     # gds_layermap (setup.yaml, optional): write_stream's own -map_file.
     # Left unset, write_stream still runs -- confirmed real, Innovus
     # generates its own generic layer-map file rather than refusing --
-    # so this is a quality knob, not a hard requirement.
+    # but a generic auto-generated map is not what a project's real
+    # signoff GDS wants, so this is loud (wolf_error), not a quiet
+    # info line, when it happens.
     set wolf_gds_layermap [get_flow_config gds_layermap -quiet]
+    if {$wolf_gds_layermap eq ""} {
+        wolf_error "export: no gds_layermap configured in setup.yaml -- GDS will use Innovus's own generic layer map (generic layer numbers), not a real signoff-grade layer mapping"
+    }
+
+    # -unit intentionally omitted -- confirmed real, its own documented
+    # default is "units specified in LEF file", which always matches
+    # the design's real database unit; a hardcoded -unit here (1000,
+    # copied from a legacy reference flow with no basis in this run's
+    # own database) produced a mismatch warning (IMPOGDS-250) against
+    # the real 2000-per-micron database on an actual run.
     set wolf_gds_file \
         [file join $wolf_outputs_dir "$wolf_design_name.$wolf_export_suffix.gds"]
-    if {$wolf_gds_layermap ne ""} {
-        write_stream $wolf_gds_file -output_macros -unit 1000 -die_area_as_boundary \
-            -map_file $wolf_gds_layermap
-        wolf_info "GDS: $wolf_gds_file (gds_layermap: $wolf_gds_layermap)"
-    } else {
-        write_stream $wolf_gds_file -output_macros -unit 1000 -die_area_as_boundary
-        wolf_info "GDS: $wolf_gds_file (gds_layermap not configured -- Innovus's own generic layer map)"
+    set wolf_gds_write_args [list $wolf_gds_file -output_macros -die_area_as_boundary]
+    if {[llength $wolf_std_cell_gds_files]} {
+        lappend wolf_gds_write_args -merge $wolf_std_cell_gds_files -uniquify_cell_names
     }
+    if {$wolf_gds_layermap ne ""} {
+        lappend wolf_gds_write_args -map_file $wolf_gds_layermap
+    }
+    write_stream {*}$wolf_gds_write_args
+    wolf_info "GDS: $wolf_gds_file ([file size $wolf_gds_file] bytes, [llength $wolf_std_cell_gds_files] std-cell GDS file(s) merged)"
     wolf_file $wolf_gds_file
 
     set wolf_netlist_file [file join $wolf_outputs_dir "$wolf_design_name.$wolf_export_suffix.v"]
     write_netlist $wolf_netlist_file
+    wolf_info "Netlist: $wolf_netlist_file ([file size $wolf_netlist_file] bytes)"
     wolf_file $wolf_netlist_file
 
     set wolf_def_file [file join $wolf_outputs_dir "$wolf_design_name.$wolf_export_suffix.def"]
     write_def -floorplan -netlist -routing $wolf_def_file
+    wolf_info "DEF: $wolf_def_file ([file size $wolf_def_file] bytes)"
     wolf_file $wolf_def_file
 
     set wolf_lef_file [file join $wolf_outputs_dir "$wolf_design_name.$wolf_export_suffix.lef"]
     write_lef_abstract $wolf_lef_file
+    wolf_info "LEF: $wolf_lef_file ([file size $wolf_lef_file] bytes)"
     wolf_file $wolf_lef_file
 
     set wolf_sdc_file [file join $wolf_outputs_dir "$wolf_design_name.$wolf_export_suffix.sdc"]
     write_sdc $wolf_sdc_file
+    wolf_info "SDC: $wolf_sdc_file ([file size $wolf_sdc_file] bytes)"
     wolf_file $wolf_sdc_file
 
     # export_spef (setup.yaml, optional, default off): extract_rc
@@ -457,8 +494,8 @@ create_flow_step -name export -owner wolf {
         extract_rc
         set wolf_spef_file [file join $wolf_outputs_dir "$wolf_design_name.$wolf_export_suffix.spef"]
         write_parasitics -spef_file $wolf_spef_file
+        wolf_info "SPEF: $wolf_spef_file ([file size $wolf_spef_file] bytes)"
         wolf_file $wolf_spef_file
-        wolf_info "SPEF: $wolf_spef_file"
     }
 
     wolf_inject_for_step export post
