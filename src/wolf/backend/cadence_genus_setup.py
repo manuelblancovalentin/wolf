@@ -38,6 +38,8 @@ DESIGN_SETUP_ALLOWED_KEYS = frozenset({
     "add_fillers_cells",
     "design_top_routing_layer", "design_bottom_routing_layer",
     "route_design_antenna_cell_name",
+    "gds_layermap",
+    "export_spef",
     "clock_routing_width_multiplier", "clock_routing_spacing_multiplier",
     "clock_routing_types",
     "active_views",

@@ -551,6 +551,37 @@ def _route_design_overrides(context: ResolvedContext) -> RouteDesignOverrides:
     )
 
 
+class ExportOverrides(NamedTuple):
+    gds_layermap: Optional[str] = None
+    export_spef: Optional[bool] = None
+
+
+def _export_overrides(context: ResolvedContext) -> ExportOverrides:
+    """Validate this design's setup.yaml gds_layermap/export_spef.
+
+    gds_layermap -> write_stream's own -map_file argument (man 20.15).
+    Left unset: write_stream still runs without -map_file -- confirmed
+    real, Innovus then generates its own generic layer-map file rather
+    than refusing to run -- so this is a quality knob, not a hard
+    requirement.
+
+    export_spef -> whether `export` also runs extract_rc (confirmed
+    real, man 20.15: no required args, run after routing) followed by
+    write_parasitics -spef_file (confirmed real, needs extract_rc run
+    first). Opt-in, unlike the always-on GDS/netlist/DEF/LEF/SDC
+    writes: extract_rc is a real-time cost on a large design, not a
+    cheap write.
+    """
+    setup = _design_setup(context)
+    gds_layermap = setup.get("gds_layermap")
+    if gds_layermap is not None and (not isinstance(gds_layermap, str) or not gds_layermap):
+        raise ValueError("gds_layermap must be a nonempty string")
+    export_spef = setup.get("export_spef")
+    if export_spef is not None and not isinstance(export_spef, bool):
+        raise ValueError("export_spef must be a boolean")
+    return ExportOverrides(gds_layermap=gds_layermap, export_spef=export_spef)
+
+
 class ClockRoutingType(NamedTuple):
     use_rule: bool = False
     top_preferred_layer: Optional[str] = None
@@ -2100,6 +2131,7 @@ def prepare_genus_inputs(
     _tieoff_overrides(context)
     _filler_overrides(context)
     _route_design_overrides(context)
+    _export_overrides(context)
     _clock_routing_overrides(context)
     flow_config_script = destination / "flow-config.tcl"
     manifest = destination / "genus-inputs.yaml"

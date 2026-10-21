@@ -1161,6 +1161,38 @@ routing at all, and no antenna-violation diode cell configured,
 regardless of a project's own signed-off methodology. Left unset,
 both stay exactly as permissive as before this existed.
 
+**`gds_layermap`/`export_spef`** -- `write_stream`'s own `-map_file`
+(man 20.15) and whether `export` also extracts and writes SPEF:
+
+```yaml
+gds_layermap: /path/to/your/tech.layermap   # optional
+export_spef: true                           # optional, default off
+```
+
+Confirmed real: `export` used to be an empty extension point with no
+output at all -- it now writes GDS (`write_stream`), netlist
+(`write_netlist`), DEF (`write_def -floorplan -netlist -routing`),
+LEF (`write_lef_abstract`), and SDC (`write_sdc`) into `outputs_dir`
+every time it runs (floorplan/postcts/postroute, each stamped with
+that stage's own name). `gds_layermap` is an optional quality knob --
+left unset, `write_stream` still runs and Innovus generates its own
+generic layer-map file rather than refusing (also confirmed real, man
+20.15), so this never blocks GDS output, just its precision.
+`export_spef` is opt-in rather than always-on like the writes above:
+when true, `export` also runs `extract_rc` (confirmed real, man
+20.15: no required args, run after routing) followed by
+`write_parasitics -spef_file` (confirmed real, needs `extract_rc` run
+first) -- `extract_rc` is a real-time cost on a large design, not a
+cheap write, so it only runs when asked for. Neither call takes
+`-view`/`-rc_corner`, so SPEF is extracted for whichever analysis
+view is currently active, not looped per-corner.
+
+This is deliberately the generic subset only -- an institution's own
+export step (Calibre/QRC merge, per-view SDF/timing-model export,
+LVS-specific netlist variants) is real functionality a project may
+still want, but is site-specific enough to add via
+`wolf_inject_for_step export post` instead of WOLF's own bundled flow.
+
 **`clock_routing_*`** -- a non-default routing rule and top/trunk/leaf
 route types for `add_clock_route_types` (`CMD_set_cong_aware`'s sibling
 extension point in the `prects` flow, previously always empty):

@@ -390,18 +390,77 @@ create_flow_step -name report_late_summary_innovus -owner wolf {
 }
 
 #=============================================================================
-# Signoff/handoff extension points downstream of Innovus -- export, DRC/LVS
-# (Calibre), LEC (Conformal), and schematic/Virtuoso library generation.
-# Same status as genus_to_lec/genus_to_clp/build_sim_testbench above: real,
-# named, always-invokable steps, bodies intentionally left for
-# wolf_inject_for_step or a forked flow to fill in, since the actual
-# commands (TSMC65_run_Calibre_DRC/LVS in particular) are institution-
-# specific Calibre integration WOLF has no visibility into.
+# export: GDS/netlist/DEF/LEF/SDC into outputs_dir -- real, generic Common
+# UI commands only (write_stream/write_netlist/write_def/write_lef_abstract/
+# write_sdc, all confirmed real, man 20.15), not a copy of any institution's
+# own export step (Calibre/QRC merge, per-view SDF/timing-model export,
+# LVS-specific netlist variants are real things a project may still want,
+# but are institution-specific enough to stay out of WOLF's own bundled
+# flow -- add them via wolf_inject_for_step instead). Runs once per stage
+# that reaches it (floorplan/postcts/postroute, see common_flows.tcl),
+# each stamped with that stage's own flow_report_name.
+#
+# DRC/LVS (Calibre) and lec (Conformal) below stay empty extension points:
+# same status as genus_to_lec/genus_to_clp/build_sim_testbench above, since
+# those commands are institution-specific Calibre/Conformal integration
+# WOLF has no visibility into.
 #=============================================================================
 
 create_flow_step -name export -owner wolf {
     wolf_step "export: writing design data"
     wolf_inject_for_step export pre
+
+    set wolf_outputs_dir [get_flow_config outputs_dir]
+    set wolf_design_name [get_flow_config design_name]
+    set wolf_export_suffix [get_db flow_report_name]
+
+    # gds_layermap (setup.yaml, optional): write_stream's own -map_file.
+    # Left unset, write_stream still runs -- confirmed real, Innovus
+    # generates its own generic layer-map file rather than refusing --
+    # so this is a quality knob, not a hard requirement.
+    set wolf_gds_layermap [get_flow_config gds_layermap -quiet]
+    set wolf_gds_file \
+        [file join $wolf_outputs_dir "$wolf_design_name.$wolf_export_suffix.gds"]
+    if {$wolf_gds_layermap ne ""} {
+        write_stream $wolf_gds_file -output_macros -unit 1000 -die_area_as_boundary \
+            -map_file $wolf_gds_layermap
+        wolf_info "GDS: $wolf_gds_file (gds_layermap: $wolf_gds_layermap)"
+    } else {
+        write_stream $wolf_gds_file -output_macros -unit 1000 -die_area_as_boundary
+        wolf_info "GDS: $wolf_gds_file (gds_layermap not configured -- Innovus's own generic layer map)"
+    }
+    wolf_file $wolf_gds_file
+
+    set wolf_netlist_file [file join $wolf_outputs_dir "$wolf_design_name.$wolf_export_suffix.v"]
+    write_netlist $wolf_netlist_file
+    wolf_file $wolf_netlist_file
+
+    set wolf_def_file [file join $wolf_outputs_dir "$wolf_design_name.$wolf_export_suffix.def"]
+    write_def -floorplan -netlist -routing $wolf_def_file
+    wolf_file $wolf_def_file
+
+    set wolf_lef_file [file join $wolf_outputs_dir "$wolf_design_name.$wolf_export_suffix.lef"]
+    write_lef_abstract $wolf_lef_file
+    wolf_file $wolf_lef_file
+
+    set wolf_sdc_file [file join $wolf_outputs_dir "$wolf_design_name.$wolf_export_suffix.sdc"]
+    write_sdc $wolf_sdc_file
+    wolf_file $wolf_sdc_file
+
+    # export_spef (setup.yaml, optional, default off): extract_rc
+    # (confirmed real, man 20.15: no required args, run after routing)
+    # followed by write_parasitics -spef_file (confirmed real, needs
+    # extract_rc run first). Opt-in unlike the writes above -- extract_rc
+    # is a real-time cost on a large design, not a cheap write.
+    set wolf_export_spef [get_flow_config export_spef -quiet]
+    if {$wolf_export_spef eq "true"} {
+        extract_rc
+        set wolf_spef_file [file join $wolf_outputs_dir "$wolf_design_name.$wolf_export_suffix.spef"]
+        write_parasitics -spef_file $wolf_spef_file
+        wolf_file $wolf_spef_file
+        wolf_info "SPEF: $wolf_spef_file"
+    }
+
     wolf_inject_for_step export post
     puts [wolf_sep]
 }

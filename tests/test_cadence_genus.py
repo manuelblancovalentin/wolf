@@ -1701,6 +1701,124 @@ class GenusRouteDesignOverrideTests(GenusFixtureTestCase):
         self.assertIn("set_db route_design_antenna_cell_name $wolf_antenna_cell_name", body)
 
 
+class GenusExportOverrideTests(GenusFixtureTestCase):
+    """export -- was an empty extension point with no GDS/netlist/DEF/
+    LEF/SDC output at all; now writes all five via confirmed-real
+    Common UI commands (man 20.15), with gds_layermap as the one
+    optional setup.yaml quality knob."""
+
+    def test_default_is_empty(self):
+        inputs = prepare_genus_inputs(self._context(), self.root / "backend" / "cadence-genus")
+        document = yaml.safe_load(inputs.setup_yaml.read_text(encoding="utf-8"))
+        self.assertNotIn("gds_layermap", document)
+
+    def test_resolved_value_is_written_into_flow_config(self):
+        inputs = prepare_genus_inputs(
+            self._design_setup({"gds_layermap": "/path/to/tech.layermap"}),
+            self.root / "backend" / "cadence-genus",
+        )
+        document = yaml.safe_load(inputs.setup_yaml.read_text(encoding="utf-8"))
+        self.assertEqual(document["gds_layermap"], "/path/to/tech.layermap")
+
+    def test_non_string_gds_layermap_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "gds_layermap must be a nonempty string"):
+            prepare_genus_inputs(
+                self._design_setup({"gds_layermap": 8}),
+                self.root / "backend" / "cadence-genus",
+            )
+
+    def test_a_commented_out_gds_layermap_is_not_an_override(self):
+        inputs = prepare_genus_inputs(
+            self._design_setup({"gds_layermap": None}),
+            self.root / "backend" / "cadence-genus",
+        )
+        document = yaml.safe_load(inputs.setup_yaml.read_text(encoding="utf-8"))
+        self.assertIsNone(document["gds_layermap"])
+
+    def test_export_step_writes_gds_netlist_def_lef_sdc(self):
+        step = builtin_flow_root("cadence-genus") / "common_steps.tcl"
+        body = _extract_step_bodies(step.read_text(encoding="utf-8"))["export"]
+        self.assertIn("get_flow_config gds_layermap -quiet", body)
+        self.assertIn("write_stream $wolf_gds_file", body)
+        self.assertIn("-map_file $wolf_gds_layermap", body)
+        self.assertIn("write_netlist $wolf_netlist_file", body)
+        self.assertIn("write_def -floorplan -netlist -routing $wolf_def_file", body)
+        self.assertIn("write_lef_abstract $wolf_lef_file", body)
+        self.assertIn("write_sdc $wolf_sdc_file", body)
+
+    def test_export_spef_default_is_empty(self):
+        inputs = prepare_genus_inputs(self._context(), self.root / "backend" / "cadence-genus")
+        document = yaml.safe_load(inputs.setup_yaml.read_text(encoding="utf-8"))
+        self.assertNotIn("export_spef", document)
+
+    def test_export_spef_resolved_value_is_written_into_flow_config(self):
+        inputs = prepare_genus_inputs(
+            self._design_setup({"export_spef": True}),
+            self.root / "backend" / "cadence-genus",
+        )
+        document = yaml.safe_load(inputs.setup_yaml.read_text(encoding="utf-8"))
+        self.assertIs(document["export_spef"], True)
+
+    def test_export_spef_non_boolean_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "export_spef must be a boolean"):
+            prepare_genus_inputs(
+                self._design_setup({"export_spef": "yes"}),
+                self.root / "backend" / "cadence-genus",
+            )
+
+    def test_export_step_gates_spef_extraction_on_export_spef(self):
+        step = builtin_flow_root("cadence-genus") / "common_steps.tcl"
+        body = _extract_step_bodies(step.read_text(encoding="utf-8"))["export"]
+        self.assertIn("get_flow_config export_spef -quiet", body)
+        self.assertIn('if {$wolf_export_spef eq "true"}', body)
+        self.assertIn("extract_rc", body)
+        self.assertIn("write_parasitics -spef_file $wolf_spef_file", body)
+
+    @unittest.skipUnless(TCLSH, "tclsh is not installed")
+    def test_export_spef_is_skipped_when_unset_and_run_when_true(self):
+        step = builtin_flow_root("cadence-genus") / "common_steps.tcl"
+        body = _extract_step_bodies(step.read_text(encoding="utf-8"))["export"]
+        stub = (
+            'proc wolf_step {args} {}\n'
+            'proc wolf_inject_for_step {args} {}\n'
+            'proc wolf_info {args} { puts "INFO: $args" }\n'
+            'proc wolf_file {args} {}\n'
+            'proc wolf_sep {} { return "" }\n'
+            'proc write_stream {args} {}\n'
+            'proc write_netlist {args} {}\n'
+            'proc write_def {args} {}\n'
+            'proc write_lef_abstract {args} {}\n'
+            'proc write_sdc {args} {}\n'
+            'proc extract_rc {args} { puts "RAN: extract_rc" }\n'
+            'proc write_parasitics {args} { puts "RAN: write_parasitics $args" }\n'
+            'proc get_db {args} { return "demo" }\n'
+        )
+
+        def run(overrides):
+            script_text = (
+                stub
+                + _get_flow_config_stub({
+                    "outputs_dir": "/tmp", "design_name": "demo", **overrides,
+                })
+                + f"uplevel #0 {body}\n"
+            )
+            with tempfile.TemporaryDirectory(prefix="wolf-export-spef-") as tmp:
+                script = Path(tmp) / "script.tcl"
+                script.write_text(script_text, encoding="utf-8")
+                return subprocess.run(
+                    [TCLSH, str(script)], capture_output=True, text=True, check=False,
+                )
+
+        unset_result = run({})
+        self.assertEqual(unset_result.returncode, 0, msg=unset_result.stdout + unset_result.stderr)
+        self.assertNotIn("extract_rc", unset_result.stdout)
+
+        enabled_result = run({"export_spef": True})
+        self.assertEqual(enabled_result.returncode, 0, msg=enabled_result.stdout + enabled_result.stderr)
+        self.assertIn("RAN: extract_rc", enabled_result.stdout)
+        self.assertIn("RAN: write_parasitics", enabled_result.stdout)
+
+
 class GenusClockRoutingTests(GenusFixtureTestCase):
     """backend.cadence-flowtool.clock_routing -- a non-default route rule
     and top/trunk/leaf route types for add_clock_route_types, with layer
