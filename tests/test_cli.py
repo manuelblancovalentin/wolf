@@ -9,6 +9,8 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SOURCE_ROOT = REPO_ROOT / "src"
+sys.path.insert(0, str(SOURCE_ROOT))
+from wolf import __version__ as WOLF_VERSION  # noqa: E402
 
 
 class InstalledCliTests(unittest.TestCase):
@@ -75,7 +77,7 @@ class InstalledCliTests(unittest.TestCase):
     def test_cli_version(self):
         result = self.wolf("--version")
         self.assert_success(result)
-        self.assertEqual(result.stdout.strip(), "wolf 0.1.0.dev0")
+        self.assertEqual(result.stdout.strip(), f"wolf {WOLF_VERSION}")
 
     def test_config_cli_persists_validated_values(self):
         result = self.wolf("config", "set", "paths.packages", "./managed", cwd=self.root)
@@ -85,7 +87,7 @@ class InstalledCliTests(unittest.TestCase):
         self.assertEqual(result.stdout.strip(), str(self.root / "managed"))
         path = self.wolf("config", "path")
         self.assert_success(path)
-        self.assertEqual(Path(path.stdout.strip()), self.home / ".config" / "wolf" / "config.yaml")
+        self.assertEqual(Path(path.stdout.strip()), self.wolf_home / "config.yaml")
         invalid = self.wolf("config", "set", "container.preferred_runtime", "bad")
         self.assertNotEqual(invalid.returncode, 0)
         self.assertEqual(self.wolf("config", "get", "paths.packages").stdout.strip(),
@@ -269,7 +271,7 @@ constraints:
     def test_doctor_is_backend_neutral(self):
         result = self.wolf("doctor")
         self.assert_success(result)
-        self.assertIn("WOLF version: 0.1.0.dev0 (available)", result.stdout)
+        self.assertIn(f"WOLF version: {WOLF_VERSION} (available)", result.stdout)
         self.assertIn(f"WOLF state root: {self.wolf_home} (available)", result.stdout)
         self.assertIn(f"Package store: available ({self.wolf_home / 'packages'}", result.stdout)
         self.assertIn("Docker:", result.stdout)
