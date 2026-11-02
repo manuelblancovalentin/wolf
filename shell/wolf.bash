@@ -4,6 +4,57 @@ _wolf_command() {
     command wolf "$@"
 }
 
+# proj (kona's project/environment manager) owns the prompt while one of its
+# own environments is active, and draws a wolf emoji of its own in that case
+# (PROJ_PROMPT_TOKENS, space-separated token names, set while proj is active
+# and removed on proj deactivate -- see docs/CLI.md's "Active environments").
+# Never calls proj itself -- it only reads the variable proj already exports.
+_wolf_hidden_by_proj() {
+    case " ${PROJ_PROMPT_TOKENS-} " in
+        *" wolf "*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# Recomputed at every prompt (via PROMPT_COMMAND below), not frozen at
+# activation time, so a `wolf activate`/`wolf deactivate` typed while a proj
+# environment is active, or a `proj activate`/`proj deactivate` typed while a
+# wolf environment is active, both take effect at the next prompt either way.
+_wolf_bash_prompt() {
+    if [ -z "${WOLF_ACTIVE_ENV-}" ]; then
+        if [ -n "${_WOLF_ORIGINAL_PS1+x}" ]; then
+            PS1=$_WOLF_ORIGINAL_PS1
+            unset _WOLF_ORIGINAL_PS1
+        fi
+        return 0
+    fi
+    if [ -z "${_WOLF_ORIGINAL_PS1+x}" ]; then
+        _WOLF_ORIGINAL_PS1=${PS1-}
+    fi
+    if _wolf_hidden_by_proj; then
+        PS1=$_WOLF_ORIGINAL_PS1
+    else
+        PS1="\[\033[38;5;135m\]«${WOLF_ACTIVE_ENV}»\[\033[0m\] ${_WOLF_ORIGINAL_PS1}"
+    fi
+}
+
+# Idempotent: adds _wolf_bash_prompt to PROMPT_COMMAND exactly once, in
+# whichever form (string or array, bash >=5.1 supports both) it already has.
+_wolf_bash_install_prompt_command() {
+    if declare -p PROMPT_COMMAND 2>/dev/null | grep -q '^declare -a'; then
+        local _wolf_already=0 _wolf_item
+        for _wolf_item in "${PROMPT_COMMAND[@]}"; do
+            [ "$_wolf_item" = "_wolf_bash_prompt" ] && _wolf_already=1
+        done
+        [ "$_wolf_already" -eq 1 ] || PROMPT_COMMAND+=(_wolf_bash_prompt)
+    else
+        case ";${PROMPT_COMMAND-};" in
+            *";_wolf_bash_prompt;"*) ;;
+            *) PROMPT_COMMAND="${PROMPT_COMMAND:+$PROMPT_COMMAND; }_wolf_bash_prompt" ;;
+        esac
+    fi
+}
+
 wolf() {
     case "${1-}" in
         activate)
@@ -19,8 +70,8 @@ wolf() {
             if [ -z "${_WOLF_ORIGINAL_PS1+x}" ]; then
                 _WOLF_ORIGINAL_PS1=${PS1-}
             fi
-            PS1="\[\033[38;5;135m\]«${2}»\[\033[0m\] ${_WOLF_ORIGINAL_PS1}"
             export WOLF_ACTIVE_ENV="$2"
+            _wolf_bash_prompt
             # Export the environment's declared env: map. Each key's prior
             # value (or absence) is saved once so deactivate can restore it,
             # the same save-once/restore-on-deactivate pattern used for PS1.
@@ -62,10 +113,7 @@ for key, value in (json.load(sys.stdin).get("env") or {}).items():
                 fi
             done
             unset _WOLF_ACTIVE_ENV_VAR_NAMES _wolf_env_key _wolf_saved_var
-            if [ -n "${_WOLF_ORIGINAL_PS1+x}" ]; then
-                PS1=$_WOLF_ORIGINAL_PS1
-                unset _WOLF_ORIGINAL_PS1
-            fi
+            _wolf_bash_prompt
             ;;
         *)
             _wolf_command "$@"
@@ -82,3 +130,6 @@ _wolf_complete() {
 }
 
 complete -F _wolf_complete wolf
+
+_wolf_bash_install_prompt_command
+_wolf_bash_prompt

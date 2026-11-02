@@ -18,6 +18,18 @@ _wolf_command() {
     command wolf "$@"
 }
 
+# proj (kona's project/environment manager) owns the prompt while one of its
+# own environments is active, and draws a wolf emoji of its own in that case
+# (PROJ_PROMPT_TOKENS, space-separated token names, set while proj is active
+# and removed on proj deactivate -- see docs/CLI.md's "Active environments").
+# Never calls proj itself -- it only reads the variable proj already exports.
+_wolf_hidden_by_proj() {
+    case " ${PROJ_PROMPT_TOKENS-} " in
+        *" wolf "*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 _wolf_zsh_prompt() {
     if [ -z "${WOLF_ACTIVE_ENV-}" ]; then
         if [ -n "${_WOLF_ZSH_BASE_PROMPT+x}" ]; then
@@ -28,6 +40,11 @@ _wolf_zsh_prompt() {
     fi
     if [ -z "${_WOLF_ZSH_BASE_PROMPT+x}" ]; then
         _WOLF_ZSH_BASE_PROMPT=$PROMPT
+    fi
+    if _wolf_hidden_by_proj; then
+        PROMPT=$_WOLF_ZSH_BASE_PROMPT
+        unset _WOLF_ZSH_PROMPT_MARKER
+        return 0
     fi
     _WOLF_ZSH_PROMPT_MARKER="%F{135}«${WOLF_ACTIVE_ENV}»%f"
     PROMPT="${_WOLF_ZSH_PROMPT_MARKER} ${_WOLF_ZSH_BASE_PROMPT}"

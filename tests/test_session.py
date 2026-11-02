@@ -78,6 +78,28 @@ wolf deactivate
         )
         self.assertEqual(result.returncode, 0, msg=result.stderr)
 
+    def test_bash_marker_hidden_while_proj_draws_the_wolf_token(self):
+        result = self.bash(
+            f'''PROMPT_COMMAND="echo sentinel"
+source "{REPO_ROOT}/shell/wolf.bash"
+wolf activate foo || exit $?
+case "$PS1" in *foo*) ;; *) exit 10 ;; esac
+PROJ_PROMPT_TOKENS="python wolf"
+_wolf_bash_prompt
+case "$PS1" in *foo*) exit 11 ;; esac
+unset PROJ_PROMPT_TOKENS
+_wolf_bash_prompt
+case "$PS1" in *foo*) ;; *) exit 12 ;; esac
+PROJ_PROMPT_TOKENS="python"
+_wolf_bash_prompt
+case "$PS1" in *foo*) ;; *) exit 13 ;; esac
+case "$PROMPT_COMMAND" in *"echo sentinel"*"_wolf_bash_prompt"*) ;; *) exit 14 ;; esac
+eval "$PROMPT_COMMAND" >/dev/null
+wolf deactivate
+'''
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+
     def test_bash_completion_preserves_dynamic_candidates(self):
         (self.root / "envs" / "foo space").mkdir()
         result = self.bash(
@@ -116,6 +138,25 @@ wolf info >/dev/null || exit $?
 cd /; wolf run --plan >/dev/null || exit $?
 wolf deactivate
 [[ -z "${{WOLF_ACTIVE_ENV+x}}" && "$PROMPT" = "$original_ps1" && "$RPROMPT" = "$original_rps1" && "$$" = "$original_pid" && "$KEEP" = value ]] || exit 12
+'''
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+
+    def test_zsh_marker_hidden_while_proj_draws_the_wolf_token(self):
+        result = self.zsh(
+            f'''source "{REPO_ROOT}/shell/wolf.zsh"
+wolf activate foo || exit $?
+case "$PROMPT" in *foo*) ;; *) exit 10 ;; esac
+PROJ_PROMPT_TOKENS="python wolf"
+_wolf_zsh_prompt
+case "$PROMPT" in *foo*) exit 11 ;; esac
+unset PROJ_PROMPT_TOKENS
+_wolf_zsh_prompt
+case "$PROMPT" in *foo*) ;; *) exit 12 ;; esac
+PROJ_PROMPT_TOKENS="python"
+_wolf_zsh_prompt
+case "$PROMPT" in *foo*) ;; *) exit 13 ;; esac
+wolf deactivate
 '''
         )
         self.assertEqual(result.returncode, 0, msg=result.stderr)

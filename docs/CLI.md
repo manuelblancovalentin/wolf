@@ -82,9 +82,23 @@ the same map into whatever subprocess the selected backend execs, at the
 generic run-orchestration layer; no backend has any code that interprets what
 a key means.
 
-Use `shell/wolf.bash` for Bash and `shell/wolf.zsh` for zsh. The zsh integration
-uses a `precmd` hook so theme-managed prompts retain the active-environment
-marker.
+Use `shell/wolf.bash` for Bash and `shell/wolf.zsh` for zsh. Both integrations
+recompute the marker at every prompt (Bash via `PROMPT_COMMAND`, zsh via a
+`precmd` hook) rather than freezing it at activation, so theme-managed
+prompts retain it and other tools that also affect the prompt take effect
+immediately rather than after the next `wolf activate`/`deactivate`.
+
+`WOLF_ACTIVE_ENV` is a stable, documented contract: set to the active
+environment's name exactly while one is active, and unset otherwise -- any
+tool may read it to know whether a WOLF environment is active. One such
+tool is kona's `proj`: while a `proj` environment is active, `proj` draws
+its own prompt segment and may include a wolf emoji (🐺, wolf's entry in
+the shared emoji list documented in kona's `docs/prompt-markers.md`) in
+place of WOLF's own marker. `proj` tells WOLF this is happening via
+`PROJ_PROMPT_TOKENS` (space-separated token names it is currently drawing);
+WOLF hides its own marker whenever `wolf` appears in that list, and shows it
+exactly as it would outside `proj` otherwise. WOLF never invokes `proj`
+itself to check this -- it only reads the variable `proj` already exports.
 
 ## Shell completion
 
