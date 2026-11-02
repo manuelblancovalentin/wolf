@@ -75,10 +75,16 @@ class ConfigStoreTests(unittest.TestCase):
             store.set("container.preferred_runtime", "singularity")
         self.assertEqual(store.path.read_bytes(), before)
 
-    def test_wolf_home_only_overrides_wolf_owned_data(self):
+    def test_wolf_home_overrides_config_path_and_wolf_owned_data(self):
+        # A scratch WOLF_HOME must isolate *every* piece of WOLF's state,
+        # including the registries list in config.yaml -- not just
+        # packages/envs/registries_dir's own package-content cache.
+        # Confirmed necessary in practice: without this, `wolf registry add`
+        # under a scratch WOLF_HOME alone silently wrote into the real
+        # installation's ~/.wolf/config.yaml instead of the scratch tree.
         isolated = self.root / "legacy-state"
         with mock.patch.dict(os.environ, {"WOLF_HOME": str(isolated)}):
-            self.assertEqual(config_path(), self.root / "config" / "wolf" / "config.yaml")
+            self.assertEqual(config_path(), isolated / "config.yaml")
             self.assertEqual(state_root(), isolated)
             self.assertEqual(packages_dir(), isolated / "packages")
             self.assertEqual(environments_dir(), isolated / "envs")

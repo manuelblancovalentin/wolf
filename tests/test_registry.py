@@ -68,6 +68,19 @@ class RegistryTests(unittest.TestCase):
     def test_builtin_registry_remains_available(self):
         self.assertEqual(PackageRegistry().get("rtl/ibex").registry_name, "builtin")
 
+    def test_add_lands_under_wolf_home_not_xdg_config_home(self):
+        # WOLF_HOME takes priority over XDG_CONFIG_HOME for config.yaml too
+        # (the same priority registries_dir() already gives it) -- confirmed
+        # necessary in practice: `wolf registry add` previously wrote into
+        # config.yaml under XDG_CONFIG_HOME/HOME even with a scratch
+        # WOLF_HOME set, since config_path() never looked at it.
+        manager = RegistryManager()
+        registry_root = self.make_registry()
+        manager.add("isolated", str(registry_root), kind="local")
+        self.assertIn("isolated", manager.config.load()["registries"])
+        self.assertTrue((self.root / "state" / "config.yaml").exists())
+        self.assertFalse((self.root / "config" / "wolf" / "config.yaml").exists())
+
     def test_local_registry_discovery_and_package_lookup(self):
         local = self.make_registry()
         self.manager.add("lab", str(local), "local")

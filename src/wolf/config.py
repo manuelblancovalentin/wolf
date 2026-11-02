@@ -39,6 +39,9 @@ def wolf_home_default() -> Path:
 
 
 def config_path() -> Path:
+    configured = os.environ.get("WOLF_HOME")
+    if configured:
+        return (Path(configured).expanduser() / "config.yaml").resolve()
     root = os.environ.get("XDG_CONFIG_HOME")
     if root:
         return (Path(root).expanduser() / "wolf" / "config.yaml").resolve()
