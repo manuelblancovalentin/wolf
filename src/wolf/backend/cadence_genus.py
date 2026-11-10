@@ -1545,9 +1545,11 @@ def genus_run_metrics(run_directory: Path) -> dict[str, Any]:
 # area/timing/power.<stage>.rpt -- Genus's own real, already-written report
 # files (named via flow_report_name, see common_flows.tcl's own header on
 # report_synth), confirmed real and already present on disk for any
-# completed synthesis stage. Deliberately not scanning for DRC/LVS/signoff
-# reports yet -- those only exist once a run has reached floorplan/route,
-# a later extension, not guessed ahead of real evidence.
+# completed synthesis stage, same naming convention for the implementation
+# (Innovus) stages below -- same flow_report_name mechanism, no separate
+# format confirmed yet for the implementation side, so this parses them
+# with the exact same parsers as synthesis until real evidence says
+# otherwise.
 _QOR_REPORT_KINDS = ("area", "timing", "power")
 
 # {report path: (mtime, parsed)} -- a report file is Genus's own static
@@ -1652,7 +1654,7 @@ _QOR_PARSERS = {
 
 def genus_run_qor(run_directory: Path) -> dict[str, dict[str, dict[str, float]]]:
     """Real QoR figures straight from Genus's own already-written
-    area/timing/power reports for every synthesis stage that has
+    area/timing/power reports for every stage that has
     produced one so far -- `wolf status --watch`'s QoR table. Each
     report is Genus's own static snapshot (never rewritten once its
     own step finishes), so this is mtime-cached per file rather than
@@ -1667,7 +1669,7 @@ def genus_run_qor(run_directory: Path) -> dict[str, dict[str, dict[str, float]]]
     if not reports_directory.is_dir():
         return {}
     result: dict[str, dict[str, dict[str, float]]] = {}
-    for stage in SYNTHESIS_STAGES:
+    for stage in STAGE_ORDER:
         for kind in _QOR_REPORT_KINDS:
             # flow_report_name (common_flows.tcl's flow_header_tcl) names
             # this same per-stage subdirectory every real report write
@@ -1681,6 +1683,120 @@ def genus_run_qor(run_directory: Path) -> dict[str, dict[str, dict[str, float]]]
             parsed = _cached_qor_parse(report_path, _QOR_PARSERS[kind])
             if parsed is not None:
                 result.setdefault(stage, {})[kind] = parsed
+    return result
+
+
+_ATTEMPT_FILE = re.compile(r"^(?P<stage>[a-z_]+)(?:_(?P<retry>\d+))?$")
+
+
+def stage_attempt_counts(run_directory: Path) -> dict[str, int]:
+    """How many times Flowtool actually (re)ran each stage, counted from
+    file *names* alone in `flow.status.d/` -- confirmed real naming from
+    a real run: one file per stage for the first attempt (bare stage
+    name, e.g. `postroute`) and one more per retry (`postroute_1`,
+    `postroute_2`, ...). Never opens any of these files -- a retry count
+    is exactly the number of names present, nothing inside them is
+    needed.
+
+    `flow.status` itself (see genus_run_status) only ever keeps the
+    latest outcome per step, so a stage that failed twice and then
+    succeeded shows as plain "complete" there with no sign it was ever
+    retried -- this is the only source of that count. Returns {} for a
+    run whose Flowtool is too old to write `flow.status.d` at all (no
+    directory), not a guess of zero attempts for every stage."""
+    status_directory = run_directory / "flow.status.d"
+    if not status_directory.is_dir():
+        return {}
+    counts: dict[str, int] = {}
+    try:
+        names = [entry.name for entry in status_directory.iterdir() if entry.is_file()]
+    except OSError:
+        return {}
+    for name in names:
+        match = _ATTEMPT_FILE.fullmatch(name)
+        if not match or match.group("stage") not in STAGE_ORDER:
+            continue
+        counts[match.group("stage")] = counts.get(match.group("stage"), 0) + 1
+    return counts
+
+
+# Innovus verifyGeometry/verifyConnectivity reports -- confirmed real
+# file names (`*.geom.rpt`/`*.conn.rpt`, sitting directly in the run
+# directory) and confirmed real *shapes* from a masked (words/numbers
+# replaced, never pasted verbatim) rendering of both, real for this
+# flow:
+#
+#   geom.rpt, the all-clear case:
+#     No DRC violations <word> found
+#
+#   conn.rpt: a header line, then zero or more per-violation lines each
+#   starting with the literal word "Net", then a "<word> Summary" block
+#   ending "End Summary" whose own numbered lines include one of the
+#   shape "<N> total <word>(<word>)<id>".
+#
+# `reports/DRC/`/`reports/LVS/` are deliberately NOT scanned here --
+# confirmed real for this flow that `reports/DRC/` holds unrelated
+# timing/netlist checks and `reports/LVS/` is empty; scanning those
+# with a DRC/LVS-shaped parser risked misreading an unrelated report as
+# a real check result. Calibre's own `calibre/<stage>/{drc,lvs,fill}`
+# is a known, confirmed-real second source this does not cover yet --
+# its own file names inside those folders aren't known, so nothing is
+# guessed there.
+_GEOM_CLEAN_LINE = re.compile(r"^\s*No\s+DRC\s+violations\b", re.IGNORECASE)
+# Unconfirmed: no real nonzero geom.rpt has been seen, only the
+# all-clear case above. This is a best-effort guess at the nonzero
+# shape, pending real confirmation via the self-check tool.
+_GEOM_COUNT_LINE = re.compile(r"^\s*(\d+)\s+DRC\s+violations?\b", re.IGNORECASE)
+_CONN_NET_LINE = re.compile(r"^\s*Net\b")
+_CONN_TOTAL_LINE = re.compile(r"^\s*(\d+)\s+total\b", re.IGNORECASE)
+
+
+def _parse_geom_report(path: Path) -> Optional[dict[str, Any]]:
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        if _GEOM_CLEAN_LINE.match(line):
+            return {"status": "pass", "violations": 0}
+        count_match = _GEOM_COUNT_LINE.match(line)
+        if count_match:
+            count = int(count_match.group(1))
+            return {"status": "pass" if count == 0 else "fail", "violations": count}
+    return None
+
+
+def _parse_conn_report(path: Path) -> Optional[dict[str, Any]]:
+    net_violation_lines = 0
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        total_match = _CONN_TOTAL_LINE.match(line)
+        if total_match:
+            count = int(total_match.group(1))
+            return {"status": "pass" if count == 0 else "fail", "violations": count}
+        if _CONN_NET_LINE.match(line):
+            net_violation_lines += 1
+    if net_violation_lines:
+        # No authoritative "<N> total ..." summary line found, but real
+        # per-violation "Net ..." lines were -- a weaker, but still
+        # real, count.
+        return {"status": "fail", "violations": net_violation_lines}
+    return None
+
+
+def genus_run_checks(run_directory: Path) -> dict[str, dict[str, Any]]:
+    """DRC/LVS pass/fail and violation count, from Innovus's own
+    verifyGeometry (`*.geom.rpt`)/verifyConnectivity (`*.conn.rpt`)
+    reports in the run directory -- see the parsers above for exactly
+    what shape is confirmed real versus still a best-effort guess."""
+    result: dict[str, dict[str, Any]] = {}
+    for kind, root_glob, parser in (
+        ("drc", "*.geom.rpt", _parse_geom_report), ("lvs", "*.conn.rpt", _parse_conn_report),
+    ):
+        try:
+            candidates = sorted(run_directory.glob(root_glob))
+        except OSError:
+            continue
+        for candidate in candidates:
+            parsed = _cached_qor_parse(candidate, parser)
+            if parsed is not None:
+                result[kind] = parsed
+                break
     return result
 
 

@@ -3813,14 +3813,16 @@ class GenusRunQorTests(unittest.TestCase):
         result = genus_run_qor(self.run_directory)
         self.assertEqual(set(result["syn_map"]), {"area"})
 
-    def test_only_synthesis_stages_are_scanned_for_now(self):
-        """Not yet scanning floorplan/route's own report files -- a
-        later extension, not guessed ahead of real evidence (DRC/LVS
-        reports don't exist until those stages actually run)."""
+    def test_implementation_stages_are_scanned_too(self):
+        """Same flow_report_name mechanism, same per-stage folder
+        convention, same parsers -- floorplan/route/postroute reports
+        are scanned exactly like a synthesis stage's own."""
         from wolf.backend.cadence_genus import genus_run_qor
         stage_directory = self._stage_reports_directory("floorplan")
         (stage_directory / "area.floorplan.rpt").write_text(_REAL_AREA_REPORT, encoding="utf-8")
-        self.assertEqual(genus_run_qor(self.run_directory), {})
+        result = genus_run_qor(self.run_directory)
+        self.assertEqual(set(result), {"floorplan"})
+        self.assertEqual(result["floorplan"]["area"]["total_area_um2"], 24486055.365)
 
     def test_a_reparsed_report_is_served_from_cache_until_its_mtime_changes(self):
         from wolf.backend.cadence_genus import genus_run_qor
