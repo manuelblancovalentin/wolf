@@ -3,7 +3,23 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from wolf.backend.cadence_genus import genus_run_checks, stage_attempt_counts
+from wolf.backend.cadence_genus import STAGE_ORDER, genus_run_checks, genus_run_qor, stage_attempt_counts
+from wolf.context import ResolvedContext, ResolvedTechnology
+from wolf.digest import DIGEST_SCHEMA, _SIZE_CAP_BYTES, build_digest, write_digest
+
+
+def _context(root: Path, **overrides) -> ResolvedContext:
+    technology = ResolvedTechnology(
+        package="pdk/demo", revision="rev1", name="demo", root=root, metal_stack="M9",
+    )
+    fields = dict(
+        state_root=root, environment_name="demo", environment_directory=root,
+        workspace_root=root, design_name="demo_design", process="demo_process",
+        backend="cadence-flowtool", run_tag="demo_design.3", run_directory=root / "run",
+        values={}, technology=technology,
+    )
+    fields.update(overrides)
+    return ResolvedContext(**fields)
 
 
 def _write(path: Path, text: str) -> None:
@@ -128,6 +144,175 @@ class CheckReportParsingTests(unittest.TestCase):
         self.assertEqual(result, {"lvs": {"status": "fail", "violations": 1}})
         self.assertNotIn("LIBRARYNET_42", json.dumps(result))
         self.assertNotIn("/asic/Library", json.dumps(result))
+
+
+class BuildDigestTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory(prefix="wolf-digest-")
+        self.root = Path(self.temporary.name)
+        self.run_directory = self.root / "run"
+        self.run_directory.mkdir()
+        manifest = {
+            "backend": {"name": "cadence-flowtool"},
+            "environment": "demo",
+        }
+        (self.run_directory / "wolf.resolved.yaml").write_text(
+            json.dumps(manifest), encoding="utf-8",
+        )
+
+    def tearDown(self):
+        self.temporary.cleanup()
+
+    def test_schema_and_identity_fields(self):
+        context = _context(self.root, run_directory=self.run_directory)
+        digest = build_digest(context, self.run_directory, run_number="3")
+        self.assertEqual(digest["schema"], DIGEST_SCHEMA)
+        self.assertEqual(digest["design"], "demo_design")
+        self.assertEqual(digest["process"], "demo_process")
+        self.assertEqual(digest["metal_stack"], "M9")
+        self.assertEqual(digest["run_number"], "3")
+
+    def test_every_stage_in_order_with_zero_attempts_when_never_reached(self):
+        context = _context(self.root, run_directory=self.run_directory)
+        digest = build_digest(context, self.run_directory, run_number="3")
+        names = [stage["name"] for stage in digest["stages"]]
+        self.assertEqual(tuple(names), STAGE_ORDER)
+        for stage in digest["stages"]:
+            self.assertEqual(stage["status"], "pending")
+            self.assertEqual(stage["attempts"], 0)
+
+    def test_a_retried_stage_reports_its_real_attempt_count(self):
+        status_directory = self.run_directory / "flow.status.d"
+        status_directory.mkdir()
+        for name in ("postroute", "postroute_1", "postroute_2"):
+            (status_directory / name).write_text("", encoding="utf-8")
+        # genus_run_status with no flow.status file at all reports no
+        # states, so the stage still shows "pending" overall -- attempts
+        # are independent of whether flow.status itself has caught up.
+        context = _context(self.root, run_directory=self.run_directory)
+        digest = build_digest(context, self.run_directory, run_number="3")
+        postroute = next(stage for stage in digest["stages"] if stage["name"] == "postroute")
+        self.assertEqual(postroute["attempts"], 3)
+
+    def test_an_older_flow_revisions_status_is_marked_inferred_in_the_digest(self):
+        (self.run_directory / "flow.status").write_text(
+            "{status success time 1700000000 errors {} "
+            "steps_run {str some.older.postroute.weird_leaf_name}}\n",
+            encoding="utf-8",
+        )
+        context = _context(self.root, run_directory=self.run_directory)
+        digest = build_digest(context, self.run_directory, run_number="3")
+        postroute = next(stage for stage in digest["stages"] if stage["name"] == "postroute")
+        self.assertEqual(postroute["status"], "succeeded")
+        self.assertTrue(postroute["inferred"])
+        other = next(stage for stage in digest["stages"] if stage["name"] == "syn_generic")
+        self.assertFalse(other["inferred"])
+
+    def test_a_failed_stage_with_no_attempt_file_still_counts_as_one_attempt(self):
+        # infer_stage_results/genus_run_status is the source of "failed"
+        # here, not flow.status.d -- a backend too old to write
+        # flow.status.d at all must not report zero attempts on a stage
+        # that visibly ran.
+        from wolf.backend import cadence_flowtool
+
+        original = cadence_flowtool.genus_run_status
+        cadence_flowtool.genus_run_status = lambda run_directory: ("", {"block.implementation.postroute.block_start": "failed"})
+        try:
+            context = _context(self.root, run_directory=self.run_directory)
+            digest = build_digest(context, self.run_directory, run_number="3")
+        finally:
+            cadence_flowtool.genus_run_status = original
+        postroute = next(stage for stage in digest["stages"] if stage["name"] == "postroute")
+        self.assertEqual(postroute["status"], "failed")
+        self.assertEqual(postroute["attempts"], 1)
+
+    def test_a_run_in_progress_has_no_ended_at(self):
+        context = _context(self.root, run_directory=self.run_directory)
+        digest = build_digest(context, self.run_directory, run_number="3", started_at="2026-01-01T00:00:00Z")
+        self.assertEqual(digest["started_at"], "2026-01-01T00:00:00Z")
+        self.assertIsNone(digest["ended_at"])
+
+    def test_qor_metrics_are_tagged_with_their_stage(self):
+        _write(
+            self.run_directory / "reports" / "postroute" / "area.postroute.rpt",
+            "---\ntop_module          10  100.0  50.0  150.0\n",
+        )
+        context = _context(self.root, run_directory=self.run_directory)
+        digest = build_digest(context, self.run_directory, run_number="3")
+        area_metrics = [m for m in digest["metrics"] if m["name"] == "total_area_um2"]
+        self.assertEqual(len(area_metrics), 1)
+        self.assertEqual(area_metrics[0]["stage"], "postroute")
+        self.assertEqual(area_metrics[0]["unit"], "um2")
+
+    def test_drc_and_lvs_checks_are_included(self):
+        _write(self.run_directory / "mydesign.geom.rpt", "No DRC violations were found\n")
+        _write(
+            self.run_directory / "mydesign.conn.rpt",
+            "Net A1 no driver\nNet A2 no driver\n\nSummary\n    2 total violation(s)\nEnd Summary\n",
+        )
+        context = _context(self.root, run_directory=self.run_directory)
+        digest = build_digest(context, self.run_directory, run_number="3")
+        self.assertEqual(digest["checks"]["drc"], {"status": "pass", "violations": 0})
+        self.assertEqual(digest["checks"]["lvs"], {"status": "fail", "violations": 2})
+
+    def test_a_library_looking_string_never_reaches_the_digest(self):
+        _write(
+            self.run_directory / "mydesign.conn.rpt",
+            "Net LIBRARYNET_99 driven from /asic/Library/foo\n\nSummary\n    1 total violation(s)\nEnd Summary\n",
+        )
+        context = _context(self.root, run_directory=self.run_directory)
+        digest = build_digest(context, self.run_directory, run_number="3")
+        rendered = json.dumps(digest)
+        self.assertNotIn("LIBRARYNET_99", rendered)
+        self.assertNotIn("/asic/Library", rendered)
+
+    def test_digest_never_exceeds_the_size_cap(self):
+        context = _context(self.root, run_directory=self.run_directory)
+        digest = build_digest(context, self.run_directory, run_number="3")
+        digest["metrics"] = [
+            {"name": "total_area_um2", "value": float(i), "unit": "um2", "stage": "postroute"}
+            for i in range(5000)
+        ]
+        from wolf.digest import _trim_to_size_cap
+
+        trimmed = _trim_to_size_cap(digest)
+        self.assertLessEqual(len(json.dumps(trimmed, sort_keys=True).encode("utf-8")), _SIZE_CAP_BYTES)
+
+
+class WriteDigestTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory(prefix="wolf-digest-")
+        self.root = Path(self.temporary.name)
+
+    def tearDown(self):
+        self.temporary.cleanup()
+
+    def test_writes_atomically_into_the_run_directory(self):
+        run_directory = self.root / "run"
+        run_directory.mkdir()
+        write_digest(run_directory, {"schema": DIGEST_SCHEMA}, design_name="demo")
+        self.assertTrue((run_directory / "wolf.digest.json").is_file())
+        # No stray temp file left behind.
+        leftovers = [p for p in run_directory.iterdir() if p.name.startswith(".wolf.digest.json.")]
+        self.assertEqual(leftovers, [])
+
+    def test_writes_a_second_real_file_under_the_project_shared_folder(self):
+        run_directory = self.root / "run"
+        run_directory.mkdir()
+        project_root = self.root / "project"
+        write_digest(
+            run_directory, {"schema": DIGEST_SCHEMA, "run_number": "7"},
+            project_root=project_root, design_name="demo_design",
+        )
+        shared_path = project_root / "shared" / "wolf-digests" / "demo_design.7.json"
+        self.assertTrue(shared_path.is_file())
+        self.assertFalse(shared_path.is_symlink())
+
+    def test_no_project_root_skips_the_shared_copy_cleanly(self):
+        run_directory = self.root / "run"
+        run_directory.mkdir()
+        write_digest(run_directory, {"schema": DIGEST_SCHEMA}, design_name="demo")
+        self.assertFalse((self.root / "shared").exists())
 
 
 if __name__ == "__main__":

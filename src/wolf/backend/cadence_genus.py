@@ -2845,6 +2845,37 @@ def run_genus(
     for command in commands:
         result = subprocess.run(command, cwd=inputs.directory, check=False)
         returncode = result.returncode
+        _update_run_digest(context, run_directory, run_tag)  # stage end
         if returncode != 0:
             break  # Matches the legacy runner: stop the sequence at the first failing stage.
+    _update_run_digest(context, run_directory, run_tag, ended=True)  # run end
     return returncode, run_directory
+
+
+def _update_run_digest(context: ResolvedContext, run_directory: Path, run_tag: str, *, ended: bool = False) -> None:
+    """Refresh `wolf.digest.json` (and its `shared/wolf-digests/` copy,
+    when the environment has a known project root) after every stage --
+    best-effort: a digest failure must never fail a real Flowtool run,
+    so any exception here is swallowed, not raised."""
+    try:
+        from wolf.digest import build_digest, now_iso, write_digest
+
+        run_number = run_tag.rsplit(".", 1)[-1] if "." in run_tag else run_tag
+        existing_started_at = None
+        existing_path = run_directory / "wolf.digest.json"
+        if existing_path.is_file():
+            try:
+                existing_started_at = json.loads(existing_path.read_text(encoding="utf-8")).get("started_at")
+            except (OSError, ValueError):
+                existing_started_at = None
+        digest = build_digest(
+            context, run_directory, run_number=run_number,
+            started_at=existing_started_at or now_iso(),
+            ended_at=now_iso() if ended else None,
+        )
+        write_digest(
+            run_directory, digest,
+            project_root=context.project_root, design_name=context.design_name,
+        )
+    except Exception:
+        pass

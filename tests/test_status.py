@@ -108,6 +108,18 @@ class StatusTests(unittest.TestCase):
         self.assertEqual(command_status(args), 0)
         self.assertEqual((self.run / "wolf.resolved.yaml").read_bytes(), before)
 
+    def test_backend_hint_is_used_only_when_the_manifest_has_none(self):
+        from wolf.status import load_status
+
+        no_manifest_run = self.root / "workspace" / "nomanifest" / "nomanifest.p" / "nomanifest.1"
+        no_manifest_run.mkdir(parents=True)
+        status = load_status(no_manifest_run, backend_hint="orfs")
+        self.assertEqual(status.backend, "orfs")
+        # A run with its own real manifest is unaffected by a hint that
+        # disagrees with it.
+        status = load_status(self.run, backend_hint="cadence-flowtool")
+        self.assertEqual(status.backend, "orfs")
+
     def test_status_command_is_registered(self):
         parser = build_parser()
         args = parser.parse_args(["status", "--run", str(self.run), "--json"])

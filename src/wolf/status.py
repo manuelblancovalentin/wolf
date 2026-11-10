@@ -96,12 +96,18 @@ def select_run(environment: str | None = None, selector: str | None = None) -> P
     return _latest_for_environment(environment)
 
 
-def load_status(run_directory: Path) -> RunStatus:
+def load_status(run_directory: Path, *, backend_hint: str | None = None) -> RunStatus:
+    """`backend_hint` is for a caller that already knows the backend by
+    other means -- a run too old to have its own `wolf.resolved.yaml`
+    manifest (see `wolf.digest`'s backfill tool) -- and is used only
+    when the manifest itself has no usable backend name; a run with its
+    own real manifest is unaffected."""
     run = run_directory.expanduser().resolve()
     manifest = _manifest(run)
     environment = manifest.get("environment")
     backend_data = manifest.get("backend", {})
-    backend = backend_data.get("name", "unknown") if isinstance(backend_data, dict) else "unknown"
+    backend = backend_data.get("name") if isinstance(backend_data, dict) else None
+    backend = backend or backend_hint or "unknown"
     expected = []
     try:
         expected = list(get_backend(backend).stages())
