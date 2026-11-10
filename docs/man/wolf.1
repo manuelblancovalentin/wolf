@@ -130,6 +130,24 @@ an error.
 .I name
 defaults to the active environment when omitted.
 .TP
+.BI "wolf env describe " "[name] [--file wolf.yaml] [--json]"
+Print a sanitized, website-safe description of an environment: design,
+process, metal stack, each variable passed through a safety filter (a
+library/PDK path becomes
+.BR <library> ,
+an absolute in-project path becomes project-relative, anything else not
+matching a short identifier pattern becomes
+.BR hidden ),
+and the literal activation command lines. With
+.B --json
+emits
+.I wolf.describe/v1
+JSON instead of a human-readable summary. See
+.I docs/DIGEST.md
+for the schema.
+.I name
+defaults to the active environment when omitted.
+.TP
 .BI "wolf env auto-setup " "[name]"
 Scaffold a declarative-v1 environment's
 .B project.root

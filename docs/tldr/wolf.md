@@ -56,6 +56,10 @@
 
 `wolf env unset {{environment}} {{KEY}}`
 
+- Print a sanitized, website-safe description of an environment as JSON:
+
+`wolf env describe {{environment}} --json`
+
 - Activate an environment, then omit its name on later commands:
 
 `wolf activate {{environment}} && wolf info && wolf run --plan`

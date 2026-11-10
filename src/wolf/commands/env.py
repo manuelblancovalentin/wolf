@@ -9,6 +9,7 @@ import re
 import shlex
 import shutil
 import tempfile
+from typing import Optional
 
 import yaml
 
@@ -173,6 +174,31 @@ def _sync_reproducibility_link(manifest: Path, name: str) -> None:
     except ValueError:
         return
     link_environment_file(project_root, design_name, name, manifest)
+    _sync_description_file(manifest, name, project_root, design_name)
+
+
+def _sync_description_file(manifest: Path, name: str, project_root: Path, design_name: str) -> None:
+    """Refresh this environment's sanitized description (a real file,
+    never a link -- see `wolf.env_describe`) next to its definition in
+    the project, same trigger as the reproducibility link above. A
+    description-building failure must never fail a `wolf env set`/
+    `unset`; this is best-effort bookkeeping, not the operation itself."""
+    try:
+        from wolf.env_describe import build_description, write_description
+
+        profile = load_environment(manifest, expected_name=name)
+        semantics = profile_semantics(profile)
+        variables = dict(profile.env_vars or {})
+        description = build_description(
+            name, variables,
+            design_name=semantics.get("design"),
+            process=semantics.get("technology"),
+            metal_stack=profile.technology.metal_stack if profile.technology else None,
+            project_root=project_root,
+        )
+        write_description(project_root, design_name, name, description)
+    except Exception:
+        pass
 
 
 def command_set(args: argparse.Namespace) -> int:
@@ -384,6 +410,76 @@ def command_auto_setup(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_describe(args: argparse.Namespace) -> int:
+    from wolf.env_describe import build_description, write_description
+
+    write_target: Optional[tuple[Path, str]] = None  # (project_root, design_name)
+
+    if args.file:
+        manifest = Path(args.file).expanduser().resolve()
+        name = resolve_environment_name(args.name) if args.name else manifest.stem
+        profile = load_environment(manifest, expected_name=name)
+        semantics = profile_semantics(profile)
+        variables = dict(profile.env_vars or {})
+        project_root = (
+            resolve_stored_path(profile.project_root, profile.path.parent)
+            if profile.project_root else None
+        )
+        design_name = semantics.get("design")
+        process = semantics.get("technology")
+        metal_stack = profile.technology.metal_stack if profile.technology else None
+    else:
+        name = resolve_environment_name(args.name)
+        path = _existing_environment(name)
+        manifest = path / ENVIRONMENT_FILENAME
+        if manifest.is_file():
+            profile = load_environment(manifest, expected_name=name)
+            semantics = profile_semantics(profile)
+            variables = dict(profile.env_vars or {})
+            project_root = (
+                resolve_stored_path(profile.project_root, profile.path.parent)
+                if profile.project_root else None
+            )
+            metal_stack = profile.technology.metal_stack if profile.technology else None
+            design_name = semantics.get("design")
+            process = semantics.get("technology")
+        else:
+            values = dict(_read_variables(path))
+            variables = {
+                key: value for key, value in values.items()
+                if key not in {"DESIGN_NAME", "PROCESS", "METAL_STACK", "PROJ_DIR"}
+            }
+            project_root = Path(values["PROJ_DIR"]).expanduser() if values.get("PROJ_DIR") else None
+            metal_stack = values.get("METAL_STACK")
+            design_name = values.get("DESIGN_NAME")
+            process = values.get("PROCESS")
+        if project_root and design_name:
+            write_target = (project_root, design_name)
+
+    description = build_description(
+        name, variables, design_name=design_name, process=process,
+        metal_stack=metal_stack, project_root=project_root,
+    )
+    if write_target:
+        write_description(write_target[0], write_target[1], name, description)
+
+    if args.json:
+        import json
+        print(json.dumps(description, sort_keys=True, indent=2))
+        return 0
+    ui.key_value("Environment", description["environment"])
+    ui.key_value("Design", description["design"] or "unknown")
+    ui.key_value("Process", description["process"] or "unknown")
+    ui.key_value("Metal stack", description["metal_stack"] or "unknown")
+    ui.key_value("Variables", "")
+    for key, value in sorted(description["variables"].items()):
+        ui.key_value(f"  {key}", value if value is not None else "<unset>")
+    ui.key_value("Activate and work with this design", "")
+    for line in description["activation_commands"]:
+        ui.info(f"    {line}")
+    return 0
+
+
 def register(subparsers: argparse._SubParsersAction) -> None:
     parser = subparsers.add_parser("env", help="manage WOLF environments")
     commands = parser.add_subparsers(dest="env_command", required=True)
@@ -456,4 +552,16 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         handler=command_auto_setup,
         ui_kind="env",
         ui_section="Project directory structure",
+    )
+
+    describe_parser = commands.add_parser(
+        "describe", help="print a sanitized, website-safe description of an environment",
+    )
+    describe_parser.add_argument("name", nargs="?", help="defaults to the active environment")
+    describe_parser.add_argument("--file", help="describe a wolf.yaml file directly, not a stored environment")
+    describe_parser.add_argument("--json", action="store_true", help="emit wolf.describe/v1 JSON")
+    describe_parser.set_defaults(
+        handler=command_describe,
+        ui_kind="env",
+        ui_section="Environment description",
     )
