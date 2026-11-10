@@ -403,6 +403,19 @@ yet installed.
 Report the WOLF and Python versions, operating system, state root, Git
 availability, package-store writability, and optional Docker and Podman availability. EDA tools are not
 global WOLF requirements and are not checked here.
+.TP
+.B wolf catalog
+Print a short summary of WOLF's canonical-concepts catalog: variables,
+processes, flow stages, and commands, generated from WOLF's own code and
+documentation.
+.TP
+.B wolf catalog --json
+Emit the same catalog as machine-readable
+.I wolf.catalog/v1
+JSON, for another tool (for example a website) to read instead of
+hand-copying WOLF's concepts. See
+.I docs/CATALOG.md
+for the schema.
 .SH ENVIRONMENT
 .TP
 .B WOLF_HOME

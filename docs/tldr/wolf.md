@@ -164,6 +164,10 @@
 
 `wolf doctor`
 
+- Print WOLF's canonical-concepts catalog (variables, processes, flow stages, commands) as machine-readable JSON:
+
+`wolf catalog --json`
+
 - Inspect or update persistent installation settings:
 
 `wolf config list`
