@@ -2069,8 +2069,25 @@ def _rollup_one_state(known: dict[str, str], descendant_count: int) -> str:
     return "pending"
 
 
+def _rollup_one_state_tolerant(known: dict[str, str]) -> str:
+    """Same precedence as `_rollup_one_state`, but with no exact
+    descendant count to compare against -- the tolerant fallback below
+    has no reliable total for an older flow revision's own step count,
+    so "complete" here means every path this fallback actually found
+    says complete, not that every path there ever was does."""
+    values = list(known.values())
+    if "failed" in values:
+        return "failed"
+    if "running" in values:
+        return "running"
+    if all(value == "complete" for value in values):
+        return "complete"
+    return "running"
+
+
 def rollup_stage_states(
     states: dict[str, str], stages: tuple[str, ...] = STAGE_ORDER,
+    *, inferred: Optional[set[str]] = None,
 ) -> dict[str, str]:
     """Fill in a state for every name in `stages` from the real,
     canonical-path-keyed detail `genus_run_status` reads out of
@@ -2082,10 +2099,22 @@ def rollup_stage_states(
     real dotted paths (block.synthesis.syn_generic.block_start, not the
     bare "block_start" every other synthesis stage also happens to
     list), so a stage's rollup only ever counts its *own* steps, never
-    an unrelated stage's run of a same-named one. A stage with no state
-    at all for any of its canonical paths (nothing recognized yet) is
-    simply left absent -- `wolf status`'s own existing fallback
-    ("unknown"/"pending") already handles that.
+    an unrelated stage's run of a same-named one.
+
+    A stage with no state at all for any of its *current* canonical
+    paths falls back to a tolerant match: any path in `states` that
+    still names the stage as one of its own dot-separated components,
+    wherever it falls -- confirmed real need, not a hypothetical: a run
+    with no `wolf.resolved.yaml` (pre-dates the Python backend, so an
+    older flow Tcl revision) whose `flow.status` has hundreds of real
+    per-step states, none matching today's bundled membership tree
+    exactly, every one of them silently dropped before this existed.
+    `inferred`, when given, gets the name of every stage resolved this
+    tolerant way added to it -- the caller's signal to mark that
+    stage's status as inferred rather than exact, e.g. in a digest. A
+    stage matched by neither path is simply left absent -- `wolf
+    status`'s own existing fallback ("unknown"/"pending") already
+    handles that.
 
     Returns a new dict with every original canonical-path-keyed entry
     preserved alongside the stage-level rollup, for a future renderer
@@ -2099,9 +2128,15 @@ def rollup_stage_states(
             continue
         canonical_paths = stage_canonical_paths(stage, membership)
         known = {path: states[path] for path in canonical_paths if path in states}
-        if not known:
+        if known:
+            rolled[stage] = _rollup_one_state(known, len(canonical_paths))
             continue
-        rolled[stage] = _rollup_one_state(known, len(canonical_paths))
+        tolerant = {path: value for path, value in states.items() if stage in path.split(".")}
+        if not tolerant:
+            continue
+        rolled[stage] = _rollup_one_state_tolerant(tolerant)
+        if inferred is not None:
+            inferred.add(stage)
     return rolled
 
 

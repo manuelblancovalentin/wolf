@@ -3302,6 +3302,52 @@ class RollupStageStatesTests(unittest.TestCase):
         result = rollup_stage_states(states, stages=("syn_generic",))
         self.assertEqual(result[paths[0]], "complete")
 
+    def test_an_older_flow_revisions_unrecognized_path_still_rolls_up_by_stage_name(self):
+        """Confirmed real need: a run with no wolf.resolved.yaml (an
+        older flow Tcl revision) whose flow.status real per-step states
+        don't match today's bundled membership tree at all -- the stage
+        name still showing up as one of the path's own dotted
+        components is real evidence the stage ran."""
+        from wolf.backend.cadence_genus import rollup_stage_states
+        states = {"some.older.postroute.weird_leaf_name": "complete"}
+        result = rollup_stage_states(states, stages=("postroute",))
+        self.assertEqual(result["postroute"], "complete")
+
+    def test_the_tolerant_fallback_marks_the_stage_as_inferred(self):
+        from wolf.backend.cadence_genus import rollup_stage_states
+        inferred: set = set()
+        rollup_stage_states(
+            {"some.older.postroute.weird_leaf_name": "complete"},
+            stages=("postroute",), inferred=inferred,
+        )
+        self.assertEqual(inferred, {"postroute"})
+
+    def test_an_exact_canonical_match_is_never_marked_inferred(self):
+        from wolf.backend.cadence_genus import rollup_stage_states, stage_canonical_paths
+        paths = stage_canonical_paths("syn_generic")
+        inferred: set = set()
+        rollup_stage_states(
+            {path: "complete" for path in paths}, stages=("syn_generic",), inferred=inferred,
+        )
+        self.assertEqual(inferred, set())
+
+    def test_the_tolerant_fallback_still_respects_failed_over_complete(self):
+        from wolf.backend.cadence_genus import rollup_stage_states
+        states = {
+            "old.postroute.step_a": "complete",
+            "old.postroute.step_b": "failed",
+        }
+        result = rollup_stage_states(states, stages=("postroute",))
+        self.assertEqual(result["postroute"], "failed")
+
+    def test_the_tolerant_fallback_never_matches_a_stage_name_as_a_substring(self):
+        """"postcts" must not be matched by a path component that only
+        contains it as a substring, like "postcts_extra"."""
+        from wolf.backend.cadence_genus import rollup_stage_states
+        states = {"old.postcts_extra.step": "complete"}
+        result = rollup_stage_states(states, stages=("postcts",))
+        self.assertNotIn("postcts", result)
+
 
 class StageCanonicalPathsTests(unittest.TestCase):
     """stage_canonical_paths computes the real dotted path flow.status
