@@ -1,8 +1,14 @@
 import json
 import re
+import subprocess
+import sys
 import unittest
+from pathlib import Path
 
 from wolf.catalog import build_catalog
+from wolf.cli import build_parser
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 # Paths/hosts that must never appear anywhere in the catalog. Anchored to
 # the start so prose that merely contains a slash (e.g. "Genus/Innovus")
@@ -65,6 +71,19 @@ class CatalogContentTests(unittest.TestCase):
             self.assertEqual(_REQUIRED_COMMAND_KEYS, set(command))
             self.assertTrue(command["command"].startswith("wolf "))
 
+    def test_commands_match_the_real_parser(self):
+        parser = build_parser()
+        top_level = {
+            name for name in parser._subparsers._group_actions[0].choices
+            if not name.startswith("_")
+        }
+        catalog_top_level = {
+            entry["command"].split()[1]
+            for entry in self.catalog["commands"]
+            if len(entry["command"].split()) == 2
+        }
+        self.assertEqual(top_level, catalog_top_level)
+
     def test_metal_stack_and_vth_choices_stay_out_of_the_public_bible(self):
         # These names are internal-site-only by rule; the public section
         # (top-level "choices") must not carry real stack/vth value lists
@@ -100,6 +119,16 @@ class CatalogJsonTests(unittest.TestCase):
         data = build_catalog()
         reparsed = json.loads(json.dumps(data))
         self.assertEqual(data, reparsed)
+
+    def test_cli_json_flag_prints_the_same_catalog(self):
+        result = subprocess.run(
+            [sys.executable, "-m", "wolf.cli", "catalog", "--json"],
+            cwd=REPO_ROOT, env={"PYTHONPATH": str(REPO_ROOT / "src")},
+            text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        data = json.loads(result.stdout)
+        self.assertEqual(data["schema"], "wolf.catalog/v1")
 
 
 if __name__ == "__main__":
