@@ -16,7 +16,7 @@ section); `--json` is the form meant for another tool to read.
 ```json
 {
   "schema": "wolf.catalog/v1",
-  "wolf_version": "0.1.0.dev1",
+  "wolf_version": "0.1.0",
   "variables": [...],
   "processes": [...],
   "choices": {"metal_stack": [...], "vth": [...]},

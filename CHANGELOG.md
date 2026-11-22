@@ -3,7 +3,7 @@
 All notable user-visible changes to the installed `wolf` CLI and its bundled
 shell/flow files are listed here, newest first.
 
-## 0.1.0.dev1 (unreleased)
+## 0.1.0
 
 Changes since the previously installed build (`0.1.0.dev0`):
 
@@ -22,6 +22,26 @@ Changes since the previously installed build (`0.1.0.dev0`):
   with optional SPEF), including a fix to the exported GDS's merge/unit
   handling and moving `gds_layermap` to the PDK-package level. These affect
   `wolf run` and `wolf run --plan` for the `cadence-flowtool` backend only.
+- `wolf catalog [--json]`: prints WOLF's canonical-concepts catalog
+  (variables, processes, flow stages, commands), generated from WOLF's own
+  code and documentation each time it runs.
+- `wolf env describe [NAME] [--json]`: prints a sanitized, website-safe
+  description of an environment (schema `wolf.describe/v1`); refreshed
+  automatically on `wolf env set`/`unset`.
+- A run now gets its own small `wolf.digest.json` (schema `wolf.digest/v1`),
+  written into the run directory after every stage attempt and once more at
+  run end: per-stage status/attempts/elapsed, a closed metric vocabulary,
+  and DRC/LVS checks. QoR reports are now scanned for every implementation
+  stage, not just synthesis, for the `cadence-flowtool` backend.
+- `wolf status`/`wolf monitor`: a stage recorded "running" with no process
+  actually still working in its run directory now reports as `stalled`
+  instead of a misleading "running", and both commands show a `Processes`
+  section (PID, elapsed, memory) for whatever is genuinely still running.
+- Added `skills/`: short, tested usage guides (`SKILL.md` + `smoke.sh` +
+  `golden.jsonl`) for running a flow, browsing environments, creating or
+  adapting one, troubleshooting common failures, pre-flight tool checks, and
+  monitoring a run -- bundled with the installed package under
+  `share/wolf/skills/`.
 
 ## 0.1.0.dev0
 

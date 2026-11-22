@@ -15,7 +15,7 @@ most 64 KB.
 ```json
 {
   "schema": "wolf.digest/v1",
-  "wolf_version": "0.1.0.dev1",
+  "wolf_version": "0.1.0",
   "design": "bin_to_therm_dec",
   "process": "gf22",
   "metal_stack": "M9",
