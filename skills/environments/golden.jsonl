@@ -1,0 +1,5 @@
+{"id": "skill-environments-list", "cat": "skills", "q": "How do I list the WOLF environments that exist?", "facts": ["wolf env list"], "pages": ["skills/environments"]}
+{"id": "skill-environments-describe", "cat": "skills", "q": "How do I see what a WOLF environment is set up to do without running it?", "facts": ["wolf info"], "pages": ["skills/environments"]}
+{"id": "skill-environments-sanitized", "cat": "skills", "q": "How do I get a sanitized, shareable description of a WOLF environment?", "facts": ["wolf env describe", "<library>"], "pages": ["skills/environments"]}
+{"id": "skill-environments-backends", "cat": "skills", "q": "What backends does WOLF support for running a flow?", "facts": ["cadence-flowtool", "orfs"], "pages": ["skills/environments"]}
+{"id": "skill-environments-proj", "cat": "skills", "q": "How does a WOLF environment relate to a project's proj environment?", "facts": ["proj", "WOLF_ACTIVE_ENV"], "pages": ["skills/environments"]}

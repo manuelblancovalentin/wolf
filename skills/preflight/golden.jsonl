@@ -1,0 +1,4 @@
+{"id": "skill-preflight-doctor", "cat": "skills", "q": "How do I check WOLF itself is configured correctly before running a flow?", "facts": ["wolf doctor"], "pages": ["skills/preflight"]}
+{"id": "skill-preflight-backend", "cat": "skills", "q": "How do I check a WOLF environment's backend tools are reachable before running it?", "facts": ["wolf backend info"], "pages": ["skills/preflight"]}
+{"id": "skill-preflight-why", "cat": "skills", "q": "Why should I check WOLF's backend before running instead of just running it?", "facts": ["flowtool", "resolving anything further"], "pages": ["skills/preflight"]}
+{"id": "skill-preflight-vendor-version", "cat": "skills", "q": "Does wolf backend info tell me which version of the vendor tool is installed?", "facts": ["resolves", "never which version"], "pages": ["skills/preflight"]}

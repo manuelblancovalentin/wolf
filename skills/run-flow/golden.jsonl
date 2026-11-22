@@ -1,0 +1,5 @@
+{"id": "skill-run-flow-plan", "cat": "skills", "q": "How do I see what a WOLF run would do without actually starting it?", "facts": ["--plan"], "pages": ["skills/run-flow"]}
+{"id": "skill-run-flow-stages", "cat": "skills", "q": "What are the nine WOLF flow stages, in order?", "facts": ["syn_generic", "syn_map", "syn_opt", "floorplan", "prects", "cts", "postcts", "route", "postroute"], "pages": ["skills/run-flow"]}
+{"id": "skill-run-flow-run-dir", "cat": "skills", "q": "Where does a WOLF run's output directory live?", "facts": ["workspace", "design", "process"], "pages": ["skills/run-flow"]}
+{"id": "skill-run-flow-rerun", "cat": "skills", "q": "How do I rerun a WOLF flow starting from one specific stage?", "facts": ["-from"], "pages": ["skills/run-flow"]}
+{"id": "skill-run-flow-status", "cat": "skills", "q": "How do I check whether a WOLF run succeeded or failed?", "facts": ["wolf status", "Failed stage"], "pages": ["skills/run-flow"]}
