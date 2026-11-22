@@ -1,18 +1,18 @@
 ---
-name: run-flow
+name: wolf-run-flow
 description: Use when you need to run a WOLF flow -- the whole thing or a range of steps -- on a design, and want the exact command, where logs and results land, and how to tell whether it worked.
 ---
 
 # Running a flow with WOLF
 
-Verified 2026-11-22 with WOLF 0.1.0.dev1. Anything not listed here is not
+Verified 2026-11-22 with WOLF 0.1.0. Anything not listed here is not
 verified. How your site makes the `wolf` command available (a module, a
 shared install, a container) is its own configuration; check with `wolf
 --version` and `command -v wolf`. This skill covers the `wolf run`/`wolf
 status` commands themselves; actually launching a real vendor tool needs that
-tool's own licence and skill (for example `skills/genus`) -- running one was
-out of scope for verifying this skill, so the parts that start a real tool
-are read from WOLF's own source, not watched live.
+tool's own licence and documentation -- running one was out of scope for
+verifying this skill, so the parts that start a real tool are read from
+WOLF's own source, not watched live.
 
 ## How do I run the whole flow?
 Activate the environment once, then run:
@@ -89,10 +89,10 @@ A stage that already finished is not redone unless you name it as the
 
 ## What does this skill not cover?
 The vendor tool's own start-up, licence and display behaviour (see that
-tool's own skill, for example `skills/genus`); what each of the nine stages
+tool's own documentation); what each of the nine stages
 actually does inside a design (that is flow methodology, not WOLF); the
-common failure messages of a run (`skills/run-failures`); creating or editing
-an environment in the first place (`skills/new-environment`).
+common failure messages of a run (`skills/wolf-run-failures`); creating or editing
+an environment in the first place (`skills/wolf-new-environment`).
 
 ## Commands in this skill
 * `wolf activate <environment>` -- read-only (selects configuration for the

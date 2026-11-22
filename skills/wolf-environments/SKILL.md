@@ -1,11 +1,11 @@
 ---
-name: environments
+name: wolf-environments
 description: Use when you need to see what WOLF environments and flows exist, read what one environment does without running it, or understand how an environment relates to a project's `proj` environment, if your site uses one.
 ---
 
 # Browsing WOLF environments and flows
 
-Verified 2026-11-22 with WOLF 0.1.0.dev1.
+Verified 2026-11-22 with WOLF 0.1.0.
 
 ## How do I see what environments exist?
 ```bash
@@ -78,9 +78,9 @@ cuts a versioned, inspectable copy under
 `<project root>/inputs/flows/<design>/`.
 
 ## What does this skill not cover?
-Creating or editing an environment (`skills/new-environment`); running a
-flow (`skills/run-flow`); the vendor tool behind a backend (its own skill,
-for example `skills/genus`).
+Creating or editing an environment (`skills/wolf-new-environment`); running a
+flow (`skills/wolf-run-flow`); the vendor tool behind a backend (its own
+documentation).
 
 ## Commands in this skill
 * `wolf env list` -- read-only.

@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Smoke test of skills/run-flow/SKILL.md: builds a throwaway local-path PDK
+# Smoke test of skills/wolf-run-flow/SKILL.md: builds a throwaway local-path PDK
 # package and a declarative environment in a scratch WOLF_HOME, then checks
 # the plan/status commands and claims of the skill. Never starts a real
 # vendor tool (no licence needed) -- only `wolf run --plan` (static
 # resolution) and `wolf status` against a synthetic run directory. Writes
 # only inside the scratch folder. Takes a few seconds.
-#   bash skills/run-flow/smoke.sh
+#   bash skills/wolf-run-flow/smoke.sh
 set -u
 S=$(mktemp -d)
 trap 'rm -rf "$S"' EXIT

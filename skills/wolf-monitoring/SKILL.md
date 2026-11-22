@@ -1,11 +1,11 @@
 ---
-name: monitoring
+name: wolf-monitoring
 description: Use when you need to watch a WOLF run while it is going, or tell whether a stage that still says "running" is actually dead.
 ---
 
 # Monitoring a WOLF run
 
-Verified 2026-11-22 with WOLF 0.1.0.dev1. The `stalled` status and the
+Verified 2026-11-22 with WOLF 0.1.0. The `stalled` status and the
 process line below were added to WOLF itself on this date -- use these
 commands rather than writing your own process-liveness check against
 `/proc`.
@@ -47,13 +47,13 @@ under it is flagged `ORPHAN: run directory deleted` right there, instead
 of silently vanishing from the view.
 
 ## How do I rerun once I've confirmed a stage stalled?
-Exactly like a clean failure -- see `skills/run-failures` and
-`skills/run-flow`'s "How do I rerun from a failed step?": `wolf run
+Exactly like a clean failure -- see `skills/wolf-run-failures` and
+`skills/wolf-run-flow`'s "How do I rerun from a failed step?": `wolf run
 --environment <environment> -from <stalled stage>`.
 
 ## What does this skill not cover?
-Reading a *failure* message (`skills/run-failures`); running the flow in
-the first place (`skills/run-flow`); a dashboard across many unrelated
+Reading a *failure* message (`skills/wolf-run-failures`); running the flow in
+the first place (`skills/wolf-run-flow`); a dashboard across many unrelated
 projects' own simulation/synthesis jobs -- that is project-specific
 tooling outside WOLF, not something this skill, or WOLF's own monitor,
 tries to be.
@@ -63,4 +63,4 @@ tries to be.
   -- read-only.
 * `wolf monitor [--environment <name> | --run <path>]` -- read-only.
 * `wolf run --environment <name> -from <stage>` -- not read-only; reruns
-  from the named stage (see `skills/run-flow`).
+  from the named stage (see `skills/wolf-run-flow`).

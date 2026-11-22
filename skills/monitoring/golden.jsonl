@@ -1,5 +1,0 @@
-{"id": "skill-monitoring-watch", "cat": "skills", "q": "How do I watch a WOLF run update live in the terminal?", "facts": ["wolf status", "--watch"], "pages": ["skills/monitoring"]}
-{"id": "skill-monitoring-stalled", "cat": "skills", "q": "A WOLF stage says running but I suspect the tool process died: how does WOLF tell me?", "facts": ["stalled", "process"], "pages": ["skills/monitoring"]}
-{"id": "skill-monitoring-processes", "cat": "skills", "q": "How do I see which real process is working on a WOLF run and how much memory it is using?", "facts": ["Processes", "PID", "GiB"], "pages": ["skills/monitoring"]}
-{"id": "skill-monitoring-orphan", "cat": "skills", "q": "What does ORPHAN mean next to a process in WOLF's run status?", "facts": ["run directory deleted"], "pages": ["skills/monitoring"]}
-{"id": "skill-monitoring-fuller-view", "cat": "skills", "q": "Is there a fuller view of a WOLF run than wolf status?", "facts": ["wolf monitor"], "pages": ["skills/monitoring"]}

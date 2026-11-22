@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Smoke test of skills/run-failures/SKILL.md: provokes each failure the
+# Smoke test of skills/wolf-run-failures/SKILL.md: provokes each failure the
 # skill documents against a throwaway environment in a scratch WOLF_HOME
 # and checks the exact message. Writes only inside the scratch folder.
 # Takes a few seconds.
-#   bash skills/run-failures/smoke.sh
+#   bash skills/wolf-run-failures/smoke.sh
 set -u
 S=$(mktemp -d)
 trap 'rm -rf "$S"' EXIT

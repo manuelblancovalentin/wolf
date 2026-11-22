@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Smoke test of skills/preflight/SKILL.md: checks wolf doctor and wolf
+# Smoke test of skills/wolf-preflight/SKILL.md: checks wolf doctor and wolf
 # backend info in a scratch WOLF_HOME. Writes only inside the scratch
 # folder. Takes a few seconds.
-#   bash skills/preflight/smoke.sh
+#   bash skills/wolf-preflight/smoke.sh
 set -u
 S=$(mktemp -d)
 trap 'rm -rf "$S"' EXIT

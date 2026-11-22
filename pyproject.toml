@@ -65,21 +65,21 @@ where = ["src"]
 "share/wolf/registry/rtl" = ["registry/rtl/ibex.yaml", "registry/rtl/aes.yaml", "registry/rtl/ibex-fabulous-mvp.yaml"]
 "share/wolf/registry/pdk" = ["registry/pdk/asap7.yaml"]
 "share/wolf/registry/flow" = ["registry/flow/orfs.yaml"]
-"share/wolf/skills/run-flow" = [
-  "skills/run-flow/SKILL.md", "skills/run-flow/smoke.sh", "skills/run-flow/golden.jsonl",
+"share/wolf/skills/wolf-run-flow" = [
+  "skills/wolf-run-flow/SKILL.md", "skills/wolf-run-flow/smoke.sh", "skills/wolf-run-flow/golden.jsonl",
 ]
-"share/wolf/skills/environments" = [
-  "skills/environments/SKILL.md", "skills/environments/smoke.sh", "skills/environments/golden.jsonl",
+"share/wolf/skills/wolf-environments" = [
+  "skills/wolf-environments/SKILL.md", "skills/wolf-environments/smoke.sh", "skills/wolf-environments/golden.jsonl",
 ]
-"share/wolf/skills/new-environment" = [
-  "skills/new-environment/SKILL.md", "skills/new-environment/smoke.sh", "skills/new-environment/golden.jsonl",
+"share/wolf/skills/wolf-new-environment" = [
+  "skills/wolf-new-environment/SKILL.md", "skills/wolf-new-environment/smoke.sh", "skills/wolf-new-environment/golden.jsonl",
 ]
-"share/wolf/skills/run-failures" = [
-  "skills/run-failures/SKILL.md", "skills/run-failures/smoke.sh", "skills/run-failures/golden.jsonl",
+"share/wolf/skills/wolf-run-failures" = [
+  "skills/wolf-run-failures/SKILL.md", "skills/wolf-run-failures/smoke.sh", "skills/wolf-run-failures/golden.jsonl",
 ]
-"share/wolf/skills/preflight" = [
-  "skills/preflight/SKILL.md", "skills/preflight/smoke.sh", "skills/preflight/golden.jsonl",
+"share/wolf/skills/wolf-preflight" = [
+  "skills/wolf-preflight/SKILL.md", "skills/wolf-preflight/smoke.sh", "skills/wolf-preflight/golden.jsonl",
 ]
-"share/wolf/skills/monitoring" = [
-  "skills/monitoring/SKILL.md", "skills/monitoring/smoke.sh", "skills/monitoring/golden.jsonl",
+"share/wolf/skills/wolf-monitoring" = [
+  "skills/wolf-monitoring/SKILL.md", "skills/wolf-monitoring/smoke.sh", "skills/wolf-monitoring/golden.jsonl",
 ]

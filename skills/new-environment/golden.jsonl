@@ -1,5 +1,0 @@
-{"id": "skill-new-environment-create", "cat": "skills", "q": "How do I create a new WOLF environment from a YAML file?", "facts": ["wolf env create", "--from"], "pages": ["skills/new-environment"]}
-{"id": "skill-new-environment-clone", "cat": "skills", "q": "How do I adapt an existing WOLF environment instead of starting from scratch?", "facts": ["wolf env clone"], "pages": ["skills/new-environment"]}
-{"id": "skill-new-environment-set", "cat": "skills", "q": "How do I change one design-level setting of a WOLF environment?", "facts": ["wolf env set"], "pages": ["skills/new-environment"]}
-{"id": "skill-new-environment-scaffold", "cat": "skills", "q": "How do I scaffold a project's folders for a new WOLF environment?", "facts": ["wolf env auto-setup"], "pages": ["skills/new-environment"]}
-{"id": "skill-new-environment-library", "cat": "skills", "q": "How is the process library referenced when creating a WOLF environment?", "facts": ["bundle", "pdk/"], "pages": ["skills/new-environment"]}

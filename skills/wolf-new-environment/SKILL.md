@@ -1,11 +1,11 @@
 ---
-name: new-environment
+name: wolf-new-environment
 description: Use when you need to create a new WOLF environment for a project, or adapt an existing one -- what commands to run and which files a person edits.
 ---
 
 # Creating or adapting a WOLF environment
 
-Verified 2026-11-22 with WOLF 0.1.0.dev1.
+Verified 2026-11-22 with WOLF 0.1.0.
 
 ## How do I create a new environment?
 Write a small YAML file and import it (invented names below; use your own
@@ -74,8 +74,8 @@ Anything already there is reported "already present", not overwritten.
 ## What does this skill not cover?
 Making the `pdk/<name>` package manifest itself, or the library/kit content
 behind it (the project owner's job, in `wolf pdk menu`); running the
-environment once it exists (`skills/run-flow`); listing or describing
-environments that already exist (`skills/environments`).
+environment once it exists (`skills/wolf-run-flow`); listing or describing
+environments that already exist (`skills/wolf-environments`).
 
 ## Commands in this skill
 * `wolf env create <name> --from <file>` -- not read-only (writes under

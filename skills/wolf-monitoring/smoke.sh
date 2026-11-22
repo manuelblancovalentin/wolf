@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Smoke test of skills/monitoring/SKILL.md: checks the stalled-stage
+# Smoke test of skills/wolf-monitoring/SKILL.md: checks the stalled-stage
 # detection and the live-process line against a synthetic run directory
 # (wolf's own flow.status format, never a real tool's report) and a real
 # short-lived subprocess. Writes only inside the scratch folder. Takes a
 # few seconds.
-#   bash skills/monitoring/smoke.sh
+#   bash skills/wolf-monitoring/smoke.sh
 set -u
 S=$(mktemp -d)
 trap 'rm -rf "$S"' EXIT

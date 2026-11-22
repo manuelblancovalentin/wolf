@@ -1,11 +1,11 @@
 ---
-name: preflight
+name: wolf-preflight
 description: Use before running a WOLF flow, to check which tools and versions it assumes are actually reachable -- so a run fails in seconds on a missing tool, not minutes in.
 ---
 
 # Checking a WOLF flow's tool assumptions before you run it
 
-Verified 2026-11-22 with WOLF 0.1.0.dev1.
+Verified 2026-11-22 with WOLF 0.1.0.
 
 ## What does my environment assume?
 ```bash
@@ -39,15 +39,15 @@ Nothing here checks a vendor EDA tool itself; that is backend-specific, see
 above.
 
 ## How do I check the vendor tool's own version?
-That is outside WOLF -- see the tool's own skill (for example
-`skills/genus`, `genus -version`). `wolf backend info` only confirms the
+That is outside WOLF -- see the tool's own documentation (for example
+`genus -version`). `wolf backend info` only confirms the
 *executable* resolves, never which version it is or whether its licence
 will actually check out.
 
 ## What does this skill not cover?
 Licence checkout and display behaviour (the vendor tool's own skill); what
 a specific run failure means once you are already mid-run
-(`skills/run-failures`).
+(`skills/wolf-run-failures`).
 
 ## Commands in this skill
 * `wolf info [<environment>]` -- read-only.
