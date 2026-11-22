@@ -416,6 +416,21 @@ JSON, for another tool (for example a website) to read instead of
 hand-copying WOLF's concepts. See
 .I docs/CATALOG.md
 for the schema.
+.TP
+.B wolf upgrade --check
+Report whether a newer WOLF release exists on GitHub, without installing
+anything.
+.TP
+.BI "wolf upgrade " "[-y]"
+Download the latest release's wheel from GitHub and
+.B pip install
+it into the same Python environment this
+.B wolf
+is already running from, prompting first unless
+.B -y
+is given. For anyone who installed WOLF from a built wheel rather than
+through the owner's own
+.BR rebuild-wolf .
 .SH ENVIRONMENT
 .TP
 .B WOLF_HOME

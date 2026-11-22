@@ -168,6 +168,14 @@
 
 `wolf catalog --json`
 
+- Check whether a newer wolf release is available, without installing it:
+
+`wolf upgrade --check`
+
+- Install the latest wolf release from GitHub (prompts first):
+
+`wolf upgrade`
+
 - Inspect or update persistent installation settings:
 
 `wolf config list`
