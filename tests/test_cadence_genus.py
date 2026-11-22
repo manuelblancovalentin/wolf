@@ -3098,10 +3098,29 @@ class GenusRunStatusTests(unittest.TestCase):
         self.assertEqual(states, {
             "block.synthesis.syn_generic.block_start": "complete",
             "block.synthesis.syn_generic.read_hdl": "running",
-            # A populated errors list overrides a literal "success" status word.
-            "block.synthesis.syn_generic.elaborate": "failed",
+            # Confirmed real on a finished run: Innovus attaches
+            # error-severity messages to steps that still succeeded, so
+            # a success status word wins over a populated errors list.
+            "block.synthesis.syn_generic.elaborate": "complete",
         })
         self.assertIn("block_start", raw)
+
+    def test_a_non_empty_errors_list_only_fails_a_step_with_no_recognized_status_word(self):
+        """Confirmed real: Innovus attaches error-severity messages
+        (IMPOAX-8053, IMPSYT-6245, TECHLIB-1173/1256, CHKCTS-*, CHKPLC-*)
+        to steps that succeeded. A populated errors list still catches a
+        real failure recorded under a status word this module doesn't
+        otherwise recognize."""
+        from wolf.backend.cadence_genus import genus_run_status
+        self._write_status(
+            "{status success time 1700000000 errors {{{count 1 id IMPOAX-8053}}} "
+            "steps_run {str block.implementation.floorplan.init_innovus}}\n"
+            "{status weird_word time 1700000001 errors {bad thing} "
+            "steps_run {str block.implementation.floorplan.save_design}}\n"
+        )
+        _, states = genus_run_status(self.run_directory)
+        self.assertEqual(states["block.implementation.floorplan.init_innovus"], "complete")
+        self.assertEqual(states["block.implementation.floorplan.save_design"], "failed")
 
     def test_a_later_record_for_the_same_path_overwrites_an_earlier_one(self):
         from wolf.backend.cadence_genus import genus_run_status

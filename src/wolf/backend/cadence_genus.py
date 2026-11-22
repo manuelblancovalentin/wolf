@@ -1223,19 +1223,27 @@ def genus_run_status(run_directory: Path) -> tuple[str, dict[str, str]]:
         status = record.get("status", "").lower()
         if not path or not status:
             continue
-        # A non-empty "errors" list on the record overrides the literal
-        # status word -- the exact failure status string isn't confirmed
-        # from a real failure yet, but a populated errors list is a
-        # reliable signal regardless of what that word turns out to be.
+        # A success status word always wins, whatever "errors" holds --
+        # confirmed real on a finished Cadence run: Innovus attaches
+        # every error-severity message a step printed to its own
+        # "errors" list even when the step itself succeeded (an
+        # OpenAccess library failing to load, a best-case library
+        # missing an attribute, a check_design warning, ...), so a
+        # non-empty "errors" list is not on its own reliable evidence
+        # of failure. It still catches a real failure recorded under a
+        # status word this module doesn't otherwise recognize: only
+        # when the word is neither a known success nor a known failure
+        # word does a non-empty "errors" list mark the step failed.
         errors = record.get("errors", "")
-        if errors and errors not in ("{}", ""):
-            states[path] = "failed"
+        has_errors = bool(errors) and errors not in ("{}", "")
+        if status in _FLOW_STATUS_SUCCESS_STATES:
+            states[path] = "complete"
         elif status in _FLOW_STATUS_FAILED_STATES:
             states[path] = "failed"
-        elif status in _FLOW_STATUS_SUCCESS_STATES:
-            states[path] = "complete"
         elif status in _FLOW_STATUS_RUNNING_STATES:
             states[path] = "running"
+        elif has_errors:
+            states[path] = "failed"
         last_update_index[path] = index
     if last_invocation is not None:
         invocation_index, from_stage, to_stage = last_invocation
