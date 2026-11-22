@@ -172,6 +172,11 @@ class MonitorApp(App[None]):
             lines.append(kv("Elapsed", _format_elapsed(total_elapsed)))
         if status.failed_stage:
             lines.append(kv("Failed stage", status.failed_stage))
+        if status.stalled_stage:
+            lines.append(kv(
+                "Stalled stage",
+                f"{status.stalled_stage} (no process is working in the run directory anymore)",
+            ))
         current_activity = status.metrics.get("cadence.current_activity")
         if current_activity:
             lines.append(kv("Activity", current_activity))

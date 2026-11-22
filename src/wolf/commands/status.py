@@ -53,13 +53,18 @@ def _watch(run) -> int:
     try:
         status, renderable = _live_frame(run)
         with Live(renderable, console=ui.console, refresh_per_second=_WATCH_REFRESH_PER_SECOND) as live:
-            while status.state not in ("completed", "failed"):
+            while status.state not in ("completed", "failed", "stalled"):
                 time.sleep(_WATCH_POLL_SECONDS)
                 status, renderable = _live_frame(run)
                 live.update(renderable)
     except KeyboardInterrupt:
         return 0
-    ui.success("Run completed.") if status.state == "completed" else ui.error("Run failed.")
+    if status.state == "completed":
+        ui.success("Run completed.")
+    elif status.state == "stalled":
+        ui.error(f"Run stalled: {status.stalled_stage} is no longer worked on by any process.")
+    else:
+        ui.error("Run failed.")
     return 0 if status.state == "completed" else 1
 
 

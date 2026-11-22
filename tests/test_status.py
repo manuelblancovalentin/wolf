@@ -256,5 +256,80 @@ class StatusTests(unittest.TestCase):
         self.assertEqual(synth.elapsed_seconds, 34.0)
 
 
+class StalledStatusTests(unittest.TestCase):
+    """A stage recorded "running" whose own tool process is no longer
+    working in the run directory (killed, OOM-killed, a crashed licence
+    daemon) is reported "stalled", not "running" -- see
+    wolf.process_watch. These tests never start a real tool; the run
+    directory is always empty of any real process of this test's own
+    except where one is spawned on purpose."""
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory(prefix="wolf-stalled-")
+        self.root = Path(self.temporary.name)
+        self.run = self.root / "workspace" / "demo" / "demo.asap7" / "demo.1"
+        self.run.mkdir(parents=True)
+        (self.run / "wolf.resolved.yaml").write_text(
+            "schema: wolf.resolved-run/v1\nenvironment: golden\n"
+            "backend:\n  name: orfs\n", encoding="utf-8",
+        )
+
+    def tearDown(self):
+        self.temporary.cleanup()
+
+    def test_a_running_stage_with_no_process_is_reported_stalled(self):
+        (self.run / "wolf.stage-results").write_text("synth|running|12\n", encoding="utf-8")
+        status = load_status(self.run)
+        synth = next(stage for stage in status.stages if stage.name == "synth")
+        self.assertEqual(synth.status, "stalled")
+        self.assertEqual(status.state, "stalled")
+        self.assertEqual(status.stalled_stage, "synth")
+
+    def test_a_running_stage_with_a_real_process_in_the_run_directory_stays_running(self):
+        import subprocess
+
+        (self.run / "wolf.stage-results").write_text("synth|running|12\n", encoding="utf-8")
+        process = subprocess.Popen(["sleep", "5"], cwd=str(self.run))
+        try:
+            import time
+
+            deadline = time.time() + 2
+            status = load_status(self.run)
+            while status.stages[0].status != "running" and time.time() < deadline:
+                time.sleep(0.05)
+                status = load_status(self.run)
+            synth = next(stage for stage in status.stages if stage.name == "synth")
+            self.assertEqual(synth.status, "running")
+            self.assertIsNone(status.stalled_stage)
+        finally:
+            process.terminate()
+            process.wait()
+
+    def test_a_completed_run_is_never_marked_stalled(self):
+        (self.run / "wolf.stage-results").write_text("synth|complete|12\n", encoding="utf-8")
+        status = load_status(self.run)
+        self.assertIsNone(status.stalled_stage)
+        self.assertNotEqual(status.state, "stalled")
+
+    def test_stalled_state_is_present_in_the_json_output(self):
+        (self.run / "wolf.stage-results").write_text("synth|running|12\n", encoding="utf-8")
+        status = load_status(self.run)
+        payload = status.as_dict()
+        self.assertEqual(payload["run"]["status"], "stalled")
+        self.assertEqual(payload["run"]["stalled_stage"], "synth")
+
+    def test_the_watch_loop_stops_on_a_stalled_run(self):
+        from wolf.commands import status as status_module
+
+        statuses = [mock.Mock(state="stalled", stalled_stage="synth", stages=[], backend="orfs")]
+        with mock.patch.object(status_module, "load_status", side_effect=statuses), \
+             mock.patch.object(status_module, "render_live", return_value=object()), \
+             mock.patch.object(status_module.time, "sleep") as sleep_mock, \
+             mock.patch("rich.live.Live"):
+            result = status_module._watch(self.run)
+        self.assertEqual(result, 1)
+        sleep_mock.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

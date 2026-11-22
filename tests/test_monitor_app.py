@@ -1,5 +1,6 @@
 import asyncio
 from pathlib import Path
+import subprocess
 import tempfile
 import unittest
 
@@ -28,6 +29,17 @@ class MonitorAppTests(unittest.TestCase):
             "schema: wolf.resolved-run/v1\nenvironment: demo-env\n"
             "backend:\n  name: cadence-flowtool\n", encoding="utf-8",
         )
+        # A real placeholder process working in the run directory: a
+        # "running" stage is now cross-checked against the real process
+        # table (see wolf.process_watch), so a fixture that wants a
+        # stage to actually show as running, not "stalled", needs one.
+        self._worker = subprocess.Popen(["sleep", "30"], cwd=str(self.run_directory))
+
+        def _stop_worker():
+            self._worker.kill()
+            self._worker.wait()
+
+        self.addCleanup(_stop_worker)
 
     def tearDown(self):
         self.temporary.cleanup()

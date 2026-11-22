@@ -43,6 +43,7 @@ class RunStatus:
     metrics: dict[str, Any]
     failed_stage: str | None = None
     exit_code: int | None = None
+    stalled_stage: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         run = {
@@ -57,6 +58,8 @@ class RunStatus:
             run["failed_stage"] = self.failed_stage
         if self.exit_code is not None:
             run["exit_code"] = self.exit_code
+        if self.stalled_stage:
+            run["stalled_stage"] = self.stalled_stage
         return {"schema": STATUS_SCHEMA, "run": run,
                 "stages": [stage.as_dict() for stage in self.stages],
                 "metrics": self.metrics}
@@ -161,10 +164,34 @@ def load_status(run_directory: Path, *, backend_hint: str | None = None) -> RunS
     stages = tuple(_stage_result(name) for name in expected)
     if not expected:
         stages = tuple(recorded.values())
+
+    # A stage recorded as "running" whose own tool process is no longer
+    # working in this run directory (killed, OOM-killed, a crashed
+    # licence daemon -- anything that stopped updating flow.status
+    # without ever writing a clean "failed") is "stalled", not
+    # "running": nothing will ever move it forward again on its own.
+    # See wolf.process_watch -- no tool name is assumed, so this is the
+    # same check for every backend.
+    if any(stage.status == "running" for stage in stages):
+        from wolf.process_watch import run_is_alive
+
+        try:
+            alive = run_is_alive(run)
+        except OSError:
+            alive = True  # Unable to tell: never claim "stalled" on a guess.
+        if not alive:
+            stages = tuple(
+                StageResult(stage.name, "stalled", stage.elapsed_seconds, stage.exit_code)
+                if stage.status == "running" else stage
+                for stage in stages
+            )
+
     if not stages:
         state = "not started"
     elif any(stage.status == "failed" for stage in stages):
         state = "failed"
+    elif any(stage.status == "stalled" for stage in stages):
+        state = "stalled"
     elif all(stage.status == "complete" for stage in stages):
         state = "completed"
     elif any(stage.status in {"complete", "running"} for stage in stages):
@@ -174,7 +201,8 @@ def load_status(run_directory: Path, *, backend_hint: str | None = None) -> RunS
     else:
         state = "not started"
     failed = next((stage.name for stage in stages if stage.status == "failed"), None)
-    return RunStatus(run, environment, run.name, backend, state, stages, metrics, failed)
+    stalled = next((stage.name for stage in stages if stage.status == "stalled"), None)
+    return RunStatus(run, environment, run.name, backend, state, stages, metrics, failed, stalled_stage=stalled)
 
 
 def _format_elapsed(value: float | None) -> str:
@@ -192,8 +220,8 @@ def _format_elapsed(value: float | None) -> str:
     return f"{prefix}{hours:02d}:{minutes:02d}:{seconds:02d}"
 
 
-_STATE_STYLES = {"complete": "green", "running": "yellow", "failed": "red"}
-_STATE_MARKERS = {"complete": "●", "running": "●", "failed": "●"}
+_STATE_STYLES = {"complete": "green", "running": "yellow", "failed": "red", "stalled": "yellow"}
+_STATE_MARKERS = {"complete": "●", "running": "●", "failed": "●", "stalled": "⚠"}
 
 
 def _status_cell(value: str, *, spin: bool = False):
@@ -209,6 +237,47 @@ def _status_cell(value: str, *, spin: bool = False):
         return Spinner("dots", text=Text(f" {value}", style=style), style=style)
     marker = _STATE_MARKERS.get(value, "○")
     return Text(f"{marker} {value}", style=style)
+
+
+def _process_lines(status: RunStatus):
+    """One line per live process this user has working in the run
+    directory (PID, elapsed, memory, command) -- see
+    `wolf.process_watch`. Shown whenever a stage is still "running" or
+    "stalled"; a finished run (nothing left to watch) omits the
+    section entirely rather than printing an empty one. An orphaned
+    process (the run directory itself was removed while it kept
+    working there) is flagged in the line itself, not hidden."""
+    from rich.text import Text
+
+    if status.state not in ("running", "partial/incomplete", "stalled"):
+        return []
+    from wolf.process_watch import run_processes
+
+    try:
+        processes = run_processes(status.run_directory)
+    except OSError:
+        return []
+    if not processes:
+        if status.state == "stalled":
+            line = Text("  ")
+            line.append("No process", style="bold blue")
+            line.append(": nothing of yours is working in the run directory anymore.")
+            return [line]
+        return []
+    import time
+
+    now = time.time()
+    lines = []
+    for process in processes:
+        line = Text("  ")
+        line.append(f"pid {process.pid}", style="bold blue")
+        line.append(f"  {_format_elapsed(now - process.start)}")
+        line.append(f"  {process.rss_gib:.1f} GiB")
+        line.append(f"  {process.command[:80]}")
+        if process.orphaned:
+            line.append("  ORPHAN: run directory deleted", style="bold red")
+        lines.append(line)
+    return lines
 
 
 def _stages_table(
@@ -294,6 +363,8 @@ def _build_renderable(status: RunStatus):
         failed_result = next((stage for stage in status.stages if stage.name == status.failed_stage), None)
         if failed_result and failed_result.exit_code is not None:
             kv("Exit code", failed_result.exit_code)
+    if status.stalled_stage:
+        kv("Stalled stage", f"{status.stalled_stage} (no process is working in the run directory anymore)")
     kv("Run directory", status.run_directory)
     current_activity = status.metrics.get("cadence.current_activity")
     if current_activity:
@@ -303,6 +374,11 @@ def _build_renderable(status: RunStatus):
     if status.stages:
         renderables.append(Text("\nStages"))
         renderables.append(_stages_table(status))
+
+    process_lines = _process_lines(status)
+    if process_lines:
+        renderables.append(Text("\nProcesses"))
+        renderables.extend(process_lines)
 
     # label, formatter -- a formatter takes the raw metric value and
     # returns display text; plain str() is the default when a key has
@@ -391,6 +467,8 @@ def render_live(
         kv("Elapsed", _format_elapsed(total_elapsed))
     if status.failed_stage:
         kv("Failed stage", status.failed_stage)
+    if status.stalled_stage:
+        kv("Stalled stage", f"{status.stalled_stage} (no process is working in the run directory anymore)")
     current_activity = status.metrics.get("cadence.current_activity")
     if current_activity:
         kv("Activity", current_activity)
@@ -399,6 +477,11 @@ def render_live(
     if status.stages:
         renderables.append(Text("\nStages"))
         renderables.append(_stages_table(status, spin=True, active_stage_elapsed=active_stage_elapsed))
+
+    process_lines = _process_lines(status)
+    if process_lines:
+        renderables.append(Text("\nProcesses"))
+        renderables.extend(process_lines)
 
     if step_detail:
         running_stage = next((stage.name for stage in status.stages if stage.status == "running"), "running")
