@@ -3,6 +3,17 @@
 All notable user-visible changes to the installed `wolf` CLI and its bundled
 shell/flow files are listed here, newest first.
 
+## 0.1.1
+
+- Cadence Genus backend (`genus_run_status`): a non-empty `errors` list on a
+  `flow.status` record no longer overrides a literal success status word.
+  Innovus attaches every error-severity message a step printed to that
+  step's own `errors` list even when the step itself succeeded, so a
+  finished, successful run could be reported `failed` by `wolf status`/
+  `wolf monitor` at its first implementation stage. A known success or
+  failure status word now always wins; a non-empty `errors` list only
+  marks a step failed when the word is neither.
+
 ## 0.1.0
 
 Changes since the previously installed build (`0.1.0.dev0`):
