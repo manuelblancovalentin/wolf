@@ -3256,6 +3256,69 @@ class GenusRunStatusTests(unittest.TestCase):
         _, states = genus_run_status(self.run_directory)
         self.assertNotIn("block.synthesis.syn_opt.run_syn_opt", states)
 
+    def test_a_project_flow_packages_own_paths_fall_back_by_stage_name(self):
+        """Confirmed real: a project flow package (its own top flow
+        name, e.g. "flow_current", and its own step set) records
+        wolf.step-status lines whose canonical path never matches the
+        bundled flow's own "block.<synthesis|implementation>.<stage>."
+        tree at all, by path or by bare name -- so a stage that is
+        genuinely running showed "pending" forever. The real path is
+        kept as its own key (not folded into a bundled canonical one)
+        so rollup_stage_states's own tolerant fallback can roll it up
+        and mark the stage inferred."""
+        from wolf.backend.cadence_genus import genus_run_status
+        self._write_status(
+            "{script flowtool status invoked arguments "
+            "{-from floorplan -to floorplan -interactive}}\n"
+        )
+        self._write_events(
+            "report_area_innovus|starting|1700000500|"
+            "flow_current.implementation.floorplan.report_floorplan.report_area_innovus\n"
+        )
+        _, states = genus_run_status(self.run_directory)
+        self.assertEqual(
+            states["flow_current.implementation.floorplan.report_floorplan.report_area_innovus"],
+            "running",
+        )
+
+    def test_the_project_flow_fallback_still_respects_an_exact_bundled_match_first(self):
+        """When the bundled canonical path DOES get a live match, the
+        fallback scan must not also go hunting for other, unrelated
+        live events that merely happen to name the same stage."""
+        from wolf.backend.cadence_genus import genus_run_status
+        self._write_status(
+            "{script flowtool status invoked arguments "
+            "{-from syn_generic -to syn_generic -interactive}}\n"
+        )
+        self._write_events(
+            "block_start|starting|1700000500\n"
+            "weird_step|starting|1700000500|some.other.syn_generic.weird_step\n"
+        )
+        _, states = genus_run_status(self.run_directory)
+        self.assertEqual(states["block.synthesis.syn_generic.block_start"], "running")
+        self.assertNotIn("some.other.syn_generic.weird_step", states)
+
+    def test_the_project_flow_fallback_rolls_up_through_rollup_stage_states(self):
+        """End to end: a project flow's own live event, with no bundled
+        canonical-path match at all, must still make the stage show
+        "running" (not "pending") once rolled up -- this is the actual
+        symptom: wolf status/wolf monitor showed every stage pending
+        and Status: not started for a run that was genuinely working."""
+        from wolf.backend.cadence_genus import genus_run_status, rollup_stage_states
+        self._write_status(
+            "{script flowtool status invoked arguments "
+            "{-from floorplan -to floorplan -interactive}}\n"
+        )
+        self._write_events(
+            "report_area_innovus|starting|1700000500|"
+            "flow_current.implementation.floorplan.report_floorplan.report_area_innovus\n"
+        )
+        _, states = genus_run_status(self.run_directory)
+        inferred: set = set()
+        rolled = rollup_stage_states(states, inferred=inferred)
+        self.assertEqual(rolled["floorplan"], "running")
+        self.assertIn("floorplan", inferred)
+
 
 class RollupStageStatesTests(unittest.TestCase):
     """rollup_stage_states fills in a STAGE_ORDER-level state from the

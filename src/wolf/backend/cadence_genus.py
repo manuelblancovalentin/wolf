@@ -1253,7 +1253,9 @@ def genus_run_status(run_directory: Path) -> tuple[str, dict[str, str]]:
             membership = flow_membership()
             live_events = genus_run_step_events(run_directory)
             for stage in STAGE_ORDER[start:end + 1]:
-                for path in stage_canonical_paths(stage, membership):
+                canonical_paths = stage_canonical_paths(stage, membership)
+                matched = False
+                for path in canonical_paths:
                     bare_name = path.rsplit(".", 1)[-1]
                     # Exact canonical-path match first (unambiguous,
                     # the real fix for a bare name reused more than
@@ -1267,11 +1269,32 @@ def genus_run_status(run_directory: Path) -> tuple[str, dict[str, str]]:
                         # promoting a path flow.status never mentioned
                         # at all or correcting a stale one.
                         states[path] = live_event[0]
+                        matched = True
                     elif (
                         states.get(path) == "failed"
                         and last_update_index.get(path, -1) < invocation_index
                     ):
                         states[path] = "running"
+                if not matched:
+                    # The run's own flow package doesn't share a single
+                    # bundled canonical path with this stage at all --
+                    # confirmed real for a project flow package with its
+                    # own top flow name and step set (e.g.
+                    # "flow_current.implementation.floorplan.<step>"
+                    # instead of "block.implementation.floorplan.
+                    # <step>"), where wolf.step-status's own real paths
+                    # never match flow_membership()'s bundled tree by
+                    # path or by bare name. Fall back to any live event
+                    # whose own real path still names this stage as one
+                    # of its own dotted components, inserted under that
+                    # real path (not a bundled canonical one) rather
+                    # than dropped -- rollup_stage_states's own tolerant
+                    # fallback (see its docstring) picks these up the
+                    # same way it already does for flow.status records,
+                    # and marks the stage inferred.
+                    for key, (status, _) in live_events.items():
+                        if stage in key.split("."):
+                            states[key] = status
     return raw, states
 
 

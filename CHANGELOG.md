@@ -3,6 +3,22 @@
 All notable user-visible changes to the installed `wolf` CLI and its bundled
 shell/flow files are listed here, newest first.
 
+## 0.1.2
+
+- Cadence Genus backend (`genus_run_status`): a project flow package with
+  its own top flow name and step set (e.g. `flow_current.implementation.
+  floorplan.<step>` instead of the bundled flow's `block.implementation.
+  floorplan.<step>`) kept every stage showing `pending`/`not started` in
+  `wolf status`/`wolf monitor`, even while the run was genuinely working --
+  `wolf.step-status`'s own live events never matched the bundled flow's
+  canonical paths, by path or by bare name. A live event whose own real
+  path still names the stage as one of its own dotted components is now
+  picked up by `rollup_stage_states`'s existing tolerant fallback, marking
+  the stage `running` (and `inferred`) instead of leaving it stuck. The
+  stage's own expanded step list in `wolf monitor` still reflects the
+  bundled flow's steps, not the project flow's real ones -- a separate,
+  not-yet-fixed limitation.
+
 ## 0.1.1
 
 - Cadence Genus backend (`genus_run_status`): a non-empty `errors` list on a
