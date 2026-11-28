@@ -3,6 +3,27 @@
 All notable user-visible changes to the installed `wolf` CLI and its bundled
 shell/flow files are listed here, newest first.
 
+## 0.1.4
+
+- `setup.<design>.yaml` (a design's own Cadence Flowtool tuning knobs) is
+  now generated as a fully commented template -- every accepted key, with
+  its description, value shape, WOLF's own default, and a commented
+  example (never a real cell name) -- the first time a design-setup key
+  is set, or `wolf env create --from` resolves one. A project's own flow
+  package can add its own per-design keys by declaring
+  `metadata.flow.scripts.design_setup_template` (or shipping a
+  `design_setup.template.yaml` by convention in its own scripts root);
+  its section is appended under its own header, and its keys become
+  usable the same way as WOLF's own. `DESIGN_SETUP_TEMPLATE`, an ordinary
+  environment variable, overrides which template that section comes
+  from; `wolf env menu` shows the resolved path and where it came from
+  (set/package/convention/none). `wolf env set`/`unset`/`menu` now edit
+  the file's text in place -- only the one key's own stanza changes,
+  never the rest of the file, so a user's own comments survive. Setting
+  a key's value also runs the same shape/choice validator a run's own
+  render would, immediately, instead of only the next time a run
+  actually renders setup.yaml.
+
 ## 0.1.3
 
 - `wolf run -from/-to`, `wolf status`/`wolf monitor`, `wolf run --plan`, and

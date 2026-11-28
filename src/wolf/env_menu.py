@@ -1719,6 +1719,14 @@ class EnvWizardApp(App[None]):
             options.append(Option(
                 "CTS / tie-off / routing cells...", id="cadence_cells", disabled=gated,
             ))
+            template_path, template_source = resolve_flow_design_setup_template(
+                self.flow_package, override=self.env_vars.get("DESIGN_SETUP_TEMPLATE"),
+            )
+            template_label = f"{template_path} ({template_source})" if template_path else "none"
+            options.append(Option(
+                f"Design-setup template: {template_label}",
+                id="design_setup_template", disabled=gated,
+            ))
         return options
 
     def _refresh(self) -> None:
@@ -1758,6 +1766,8 @@ class EnvWizardApp(App[None]):
             self._edit_power_ground_nets()
         elif choice == "cadence_cells":
             self.run_worker(self._edit_cadence_cts_tieoffs_routing())
+        elif choice == "design_setup_template":
+            self._edit_design_setup_template()
         elif choice == "project":
             self._edit_project_root()
         elif choice == "workspace":
@@ -1895,6 +1905,29 @@ class EnvWizardApp(App[None]):
         self._edit_directory_field(
             "Workspace root (optional -- defaults to project root / workspace)",
             self.workspace_root or self.project_root, on_set,
+        )
+
+    def _edit_design_setup_template(self) -> None:
+        """DESIGN_SETUP_TEMPLATE -- an ordinary env var, not a
+        dedicated field (see resolve_flow_design_setup_template):
+        which extra, flow-declared section to append to this design's
+        generated setup.<design>.yaml. Blank clears the override and
+        falls back to the flow package's own declared/by-convention
+        template, if any."""
+        def handle_path(value: Optional[str]) -> None:
+            if value is None:
+                return
+            if value:
+                self.env_vars["DESIGN_SETUP_TEMPLATE"] = _absolute(value)
+            else:
+                self.env_vars.pop("DESIGN_SETUP_TEMPLATE", None)
+            self._refresh()
+        current = self.env_vars.get("DESIGN_SETUP_TEMPLATE", "")
+        self.push_screen(
+            _TextScreen(
+                "Design-setup template path (blank = the flow package's own, if any)", current,
+            ),
+            handle_path,
         )
 
     def _resolved_technology(self):

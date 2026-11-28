@@ -60,7 +60,41 @@ key that is environment-level instead (for example `constraints.clocks.0.
 period_ps`) is written into the environment's own `wolf.yaml` -- `wolf env
 set` decides which file by the key itself, you do not pick. `wolf env menu`
 opens the same editing interactively if you would rather not hand-write a
-key path.
+key path. Editing a key leaves every other comment in the file alone, in
+place -- uncommenting and setting just that one key, or commenting it back
+out on `unset`, never a full rewrite.
+
+## What is setup.<design>.yaml, and where do its keys come from?
+The first time any design-level key is set (or `wolf env create --from`
+with a project root/design already resolvable), WOLF writes a fully
+commented `setup.<design>.yaml` -- every key it accepts, each with a
+one-line description, its value shape, WOLF's own default, and a commented
+example. Nothing is ever a real cell name (the file is tracked in git);
+where a choice is a view, corner, or routing layer your technology package
+actually declares, the example cites the real name. Uncomment a key there
+by hand, or just `wolf env set`/`menu` it -- either way the comments stay.
+
+A project's own Cadence Flowtool flow package can add its own per-design
+keys the same way (efforts, a floorplan script, hard-macro names, ...): its
+manifest declares `metadata.flow.scripts.design_setup_template: <file>`
+(relative to the flow package's own scripts, like `flow_template`), or just
+ships a `design_setup.template.yaml` by convention in that same place --
+either way its own commented section is appended under its own header, and
+its keys become usable with `wolf env set`/`unset`/`menu` exactly like
+WOLF's own. `DESIGN_SETUP_TEMPLATE` (an ordinary environment variable,
+`wolf env set <name> env.DESIGN_SETUP_TEMPLATE <path>`) overrides which
+template file that section comes from; `wolf env menu` shows the resolved
+path and whether it came from "set" (the variable), "package" (the flow's
+own declaration), "convention" (found by the default file name), or "none".
+Setting a design-level key for the first time, or changing
+`DESIGN_SETUP_TEMPLATE` itself, refreshes the file -- any key the template
+newly makes available is appended, commented out; nothing already set or
+already commented is ever touched.
+
+A value's shape is checked immediately on `wolf env set`, not only the
+next time a run renders setup.yaml -- an unknown choice (an undeclared
+active-analysis-view name, more than two tie-off cells, ...) fails right
+away, naming the real choices where WOLF knows them.
 
 ## How do I scaffold the project's folders for it?
 ```bash

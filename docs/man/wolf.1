@@ -68,8 +68,12 @@ run commonly mixes more than one vth's library set in the same synthesis
 (
 .B technology.vth
 accepts a list as well as one name), and metal stack only offers stacks
-declared for every selected vth. Quitting with unsaved changes asks for
-confirmation, defaulting to No.
+declared for every selected vth. For a Cadence Flowtool backend, a
+Design-setup template entry shows the resolved
+.B DESIGN_SETUP_TEMPLATE
+path and whether it came from the variable itself, the flow package's
+own declaration, the by-convention file name, or none. Quitting with
+unsaved changes asks for confirmation, defaulting to No.
 .I name
 defaults to the active environment when omitted, so the normal flow is
 .BR "wolf env create" ", " "wolf activate" ", " "wolf env menu" " (no argument), "
@@ -116,6 +120,22 @@ under
 .IB project.root /inputs/env/ design /
 (see the Cadence Genus backend documentation), not
 .BR wolf.yaml .
+The same key or design
+set for the first time generates that file in full, fully commented
+(every accepted key, its shape, WOLF's own default, and a commented
+example -- never a real cell name), including any extra key a project
+flow package's own
+.B metadata.flow.scripts.design_setup_template
+declares; the value's shape is validated immediately, the same check a
+run's own render would make. The file is edited in place -- only the
+one key's own stanza changes, so other comments survive. The template
+section a flow contributes is chosen by the
+.B DESIGN_SETUP_TEMPLATE
+environment variable (an ordinary
+.B env.*
+key; see
+.BR "wolf env menu" ),
+falling back to the flow package's own declared or by-convention file.
 .I name
 defaults to the active environment when omitted.
 .TP

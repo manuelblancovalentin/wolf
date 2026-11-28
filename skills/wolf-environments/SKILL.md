@@ -64,10 +64,12 @@ wolf backend info cadence-flowtool   # or: orfs
 ```
 `wolf backend info` shows, for the backend an environment actually uses,
 which local tools it found (`flowtool`, or the container runtime and image
-for `orfs`) and whether each one validated. A flow is always the same nine
-stages in order -- `syn_generic`, `syn_map`, `syn_opt`, `floorplan`,
-`prects`, `cts`, `postcts`, `route`, `postroute` -- regardless of backend;
-what differs per backend is which real tool runs each one.
+for `orfs`) and whether each one validated. For Cadence Flowtool, the
+stages themselves come from the active environment's own flow (the
+bundled nine by default -- `syn_generic`, `syn_map`, `syn_opt`,
+`floorplan`, `prects`, `cts`, `postcts`, `route`, `postroute` -- or more,
+if a project flow package declares them); `wolf run --plan` lists the
+exact names for an environment (see `skills/wolf-run-flow`).
 
 To see the exact flow scripts one environment's run would use (not edit
 them):
@@ -76,6 +78,13 @@ wolf flow snapshot <environment>
 ```
 cuts a versioned, inspectable copy under
 `<project root>/inputs/flows/<design>/`.
+
+## Where do a design's own tunable keys live?
+`<project root>/inputs/env/<design>/setup.<design>.yaml` -- a fully
+commented file WOLF generates and keeps updated (see
+`skills/wolf-new-environment` for how it's written, refreshed, and
+extended by a project's own flow package). `wolf info`/`env describe`
+don't show its contents; read the file itself, or `wolf env menu`.
 
 ## What does this skill not cover?
 Creating or editing an environment (`skills/wolf-new-environment`); running a

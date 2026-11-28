@@ -56,6 +56,10 @@
 
 `wolf env unset {{environment}} {{KEY}}`
 
+- Point a design at a different flow-declared design-setup template section:
+
+`wolf env set {{environment}} env.DESIGN_SETUP_TEMPLATE {{/path/to/design_setup.template.yaml}}`
+
 - Print a sanitized, website-safe description of an environment as JSON:
 
 `wolf env describe {{environment}} --json`
