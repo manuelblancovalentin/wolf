@@ -4,7 +4,7 @@ import unittest
 
 from wolf.backend.cadence_genus_setup import (
     design_setup_path, flow_design_setup_keys, load_design_setup, set_design_setup_value,
-    write_design_setup,
+    set_design_setup_value_preserving_comments, write_design_setup,
 )
 
 
@@ -177,10 +177,139 @@ class FlowDesignSetupKeysTests(unittest.TestCase):
             flow_design_setup_keys(self.path), frozenset({"design_flow_effort", "project_macros"}),
         )
 
-    def test_an_uncommented_line_is_not_treated_as_a_declared_key(self):
-        """Only commented `# key: ...` lines count -- this function
-        only ever reads a flow's own pristine template (always fully
-        commented), never a generated setup.<design>.yaml that may
-        have live, uncommented keys of its own."""
+    def test_a_top_level_key_is_recognized_whether_commented_or_not(self):
+        """The same depth-aware top-level-key pattern
+        `_stanza_bounds` relies on (so a key's declaration is
+        recognized consistently everywhere) -- in practice a flow's
+        own template is always fully commented, but a live key line
+        is still a real top-level key declaration, not a continuation
+        line, and must not be missed."""
         self.path.write_text("design_flow_effort: extreme\n", encoding="utf-8")
-        self.assertEqual(flow_design_setup_keys(self.path), frozenset())
+        self.assertEqual(flow_design_setup_keys(self.path), frozenset({"design_flow_effort"}))
+
+    def test_a_deeply_indented_commented_line_is_not_a_top_level_key(self):
+        """Two or more spaces between a leading `#` and the key name
+        (or any indentation at all with no `#`) is a nested/
+        continuation line, never another top-level key -- confirmed
+        real need: a mapping-valued key's own commented example
+        (`clock_routing_width_multiplier`'s layer-range sub-key) must
+        not be mistaken for a second top-level key."""
+        self.path.write_text(
+            "# clock_routing_width_multiplier:\n"
+            "#  M4:M3: 2.0\n",
+            encoding="utf-8",
+        )
+        self.assertEqual(
+            flow_design_setup_keys(self.path), frozenset({"clock_routing_width_multiplier"}),
+        )
+
+
+class SetDesignSetupValuePreservingCommentsTests(unittest.TestCase):
+    """set_design_setup_value_preserving_comments -- the same set/unset
+    semantics as set_design_setup_value, but editing the file's own
+    text in place: only the one key's own stanza is ever replaced,
+    every other line (including a user's own added comments) stays
+    byte-for-byte untouched, in its original order."""
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory(prefix="wolf-design-setup-preserve-")
+        self.path = Path(self.temporary.name) / "setup.demo.yaml"
+
+    def tearDown(self):
+        self.temporary.cleanup()
+
+    def test_no_file_at_all_falls_back_to_a_plain_write(self):
+        set_design_setup_value_preserving_comments(self.path, "cts_max_fanout", 16)
+        self.assertEqual(load_design_setup(self.path), {"cts_max_fanout": 16})
+
+    def test_setting_a_commented_key_uncomments_it_in_place(self):
+        self.path.write_text(
+            "# A description of this key.\n"
+            "# integer. Default: unset.\n"
+            "# cts_max_fanout: 16\n"
+            "\n"
+            "# A different key's own description.\n"
+            "# boolean. Default: false.\n"
+            "# export_spef: true\n",
+            encoding="utf-8",
+        )
+        set_design_setup_value_preserving_comments(self.path, "cts_max_fanout", 16)
+        text = self.path.read_text(encoding="utf-8")
+        self.assertIn("# A description of this key.\n", text)
+        self.assertIn("cts_max_fanout: 16\n", text)
+        self.assertNotIn("# cts_max_fanout: 16", text)
+        # The unrelated key's own stanza (and its description) is
+        # completely untouched.
+        self.assertIn("# A different key's own description.\n", text)
+        self.assertIn("# export_spef: true\n", text)
+
+    def test_setting_a_list_valued_key_replaces_only_its_own_continuation_lines(self):
+        self.path.write_text(
+            "# Cell names.\n"
+            "# list. Default: [].\n"
+            "# add_fillers_cells:\n"
+            "#  - <cell_name>\n"
+            "\n"
+            "# Another key.\n"
+            "# export_spef: true\n",
+            encoding="utf-8",
+        )
+        set_design_setup_value_preserving_comments(
+            self.path, "add_fillers_cells", ["FILL1", "FILL2"],
+        )
+        text = self.path.read_text(encoding="utf-8")
+        self.assertEqual(
+            load_design_setup(self.path)["add_fillers_cells"], ["FILL1", "FILL2"],
+        )
+        self.assertIn("# Another key.\n", text)
+        self.assertIn("# export_spef: true\n", text)
+
+    def test_unsetting_recomments_the_live_stanza_instead_of_deleting_it(self):
+        self.path.write_text("cts_max_fanout: 16\nexport_spef: true\n", encoding="utf-8")
+        set_design_setup_value_preserving_comments(self.path, "cts_max_fanout", None)
+        text = self.path.read_text(encoding="utf-8")
+        self.assertIn("# cts_max_fanout: 16", text)
+        self.assertIn("export_spef: true", text)
+        self.assertEqual(load_design_setup(self.path), {"export_spef": True})
+
+    def test_unsetting_a_nested_sub_key_keeps_the_sibling_live(self):
+        self.path.write_text(
+            "active_views:\n  setup:\n  - wcl\n  hold:\n  - bc\n", encoding="utf-8",
+        )
+        set_design_setup_value_preserving_comments(self.path, "active_views.setup", None)
+        self.assertEqual(load_design_setup(self.path), {"active_views": {"hold": ["bc"]}})
+
+    def test_a_key_with_no_stanza_at_all_is_appended(self):
+        self.path.write_text("export_spef: true\n", encoding="utf-8")
+        set_design_setup_value_preserving_comments(self.path, "cts_max_fanout", 16)
+        text = self.path.read_text(encoding="utf-8")
+        self.assertIn("export_spef: true", text)
+        self.assertEqual(load_design_setup(self.path)["cts_max_fanout"], 16)
+
+    def test_a_hand_added_comment_elsewhere_in_the_file_survives(self):
+        self.path.write_text(
+            "# My own note about this design.\n"
+            "cts_max_fanout: 16\n"
+            "# Another note.\n"
+            "export_spef: true\n",
+            encoding="utf-8",
+        )
+        set_design_setup_value_preserving_comments(self.path, "cts_max_fanout", 32)
+        text = self.path.read_text(encoding="utf-8")
+        self.assertIn("# My own note about this design.\n", text)
+        self.assertIn("# Another note.\n", text)
+        self.assertEqual(load_design_setup(self.path)["cts_max_fanout"], 32)
+
+    def test_a_flow_declared_extra_key_round_trips(self):
+        set_design_setup_value_preserving_comments(
+            self.path, "design_flow_effort", "extreme",
+            extra_keys=frozenset({"design_flow_effort"}),
+        )
+        self.assertEqual(
+            load_design_setup(self.path, extra_keys=frozenset({"design_flow_effort"})),
+            {"design_flow_effort": "extreme"},
+        )
+
+    def test_an_unsupported_key_is_still_rejected(self):
+        with self.assertRaisesRegex(ValueError, "unsupported setup.yaml key: 'bogus'"):
+            set_design_setup_value_preserving_comments(self.path, "bogus", 1)

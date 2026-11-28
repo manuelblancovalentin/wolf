@@ -41,7 +41,8 @@ _RTL_SUFFIXES = (".v", ".sv", ".vhd", ".vhdl")
 
 from wolf.backend import backend_names
 from wolf.backend.cadence_genus_setup import (
-    design_setup_path, flow_design_setup_keys, load_design_setup, write_design_setup,
+    design_setup_path, flow_design_setup_keys, load_design_setup,
+    set_design_setup_value_preserving_comments,
 )
 from wolf.cell_browser import (
     analysis_view_names_for_technology, cells_for_technology, routing_layers_for_technology,
@@ -2394,10 +2395,24 @@ class EnvWizardApp(App[None]):
             load_environment(temporary, expected_name=self._name)
             temporary.replace(target)
             if self.project_root and self.design_name:
-                write_design_setup(
-                    design_setup_path(Path(self.project_root), self.design_name), self.design_setup,
-                    extra_keys=self._extra_design_setup_keys(self.env_vars),
+                setup_path = design_setup_path(Path(self.project_root), self.design_name)
+                extra_keys = self._extra_design_setup_keys(self.env_vars)
+                existing_keys = (
+                    set(load_design_setup(setup_path, extra_keys=extra_keys))
+                    if setup_path.is_file() else set()
                 )
+                # Every key this session's design_setup dict holds, plus
+                # every key the file already has (so a key the wizard
+                # itself never edited this session, including a flow's
+                # own, round-trips through unchanged rather than being
+                # dropped) -- each stanza-replaced individually, so an
+                # unrelated key's own comments are left alone (an
+                # unchanged key's own freshly-dumped stanza is
+                # byte-identical to what was already there).
+                for key in sorted(set(self.design_setup) | existing_keys):
+                    set_design_setup_value_preserving_comments(
+                        setup_path, key, self.design_setup.get(key), extra_keys=extra_keys,
+                    )
         except Exception as error:
             self.notify(f"Could not save environment: {error}", severity="error")
             return

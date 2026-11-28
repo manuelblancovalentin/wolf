@@ -54,7 +54,8 @@ def design_setup_path(project_root: Path, design_name: str) -> Path:
     return Path(project_root) / "inputs" / "env" / design_name / f"setup.{design_name}.yaml"
 
 
-_FLOW_DESIGN_SETUP_KEY_RE = re.compile(r"^#\s*([A-Za-z_][A-Za-z0-9_]*):(\s|$)")
+_TOP_LEVEL_KEY_RE = re.compile(r"^#?( )?([A-Za-z_][A-Za-z0-9_]*):(\s|$)")
+_SECTION_HEADER_RE = re.compile(r"^#[-=]{3,}\s*$")
 
 
 def flow_design_setup_keys(template_path: Optional[Path]) -> frozenset[str]:
@@ -63,15 +64,19 @@ def flow_design_setup_keys(template_path: Optional[Path]) -> frozenset[str]:
     column 0, not a YAML parse (the template also has plain prose
     description lines that aren't valid YAML once merely uncommented,
     so parsing the whole file is the wrong tool here; only the key
-    *names* are needed, not their example values). Returns an empty
-    set for no template at all."""
+    *names* are needed, not their example values). Matches a top-level
+    key line only -- at most one space between a leading `#` (if any)
+    and the key name; two or more spaces (or any indentation with no
+    `#` at all) is a nested/continuation line, not another top-level
+    key, the same distinction `_stanza_bounds` relies on. Returns an
+    empty set for no template at all."""
     if template_path is None or not template_path.is_file():
         return frozenset()
     keys: set[str] = set()
     for line in template_path.read_text(encoding="utf-8").splitlines():
-        match = _FLOW_DESIGN_SETUP_KEY_RE.match(line)
+        match = _TOP_LEVEL_KEY_RE.match(line)
         if match:
-            keys.add(match.group(1))
+            keys.add(match.group(2))
     return frozenset(keys)
 
 
@@ -123,28 +128,140 @@ def _prune(data: dict, parts: list[str]) -> None:
                 parent.pop(parts[index - 1], None)
 
 
-def set_design_setup_value(
-    path: Path, dotted_key: str, value: Any, *, extra_keys: frozenset[str] = frozenset(),
-) -> None:
-    """Set (or, when value is None, remove and prune now-empty parents of)
-    one dotted key in the design setup file -- the one real mutator both
-    `wolf env set`/`wolf env unset` and `wolf env menu` call. Mirrors
-    env_menu.py's own _override_set pruning, generalized to an arbitrary
-    dotted path instead of the fixed backend.cadence-flowtool.* one it
-    replaces."""
+def _split_and_check(dotted_key: str, extra_keys: frozenset[str]) -> list[str]:
     parts = dotted_key.split(".")
     if not parts or not all(parts):
         raise ValueError(f"invalid setup key: {dotted_key!r}")
     if parts[0] not in DESIGN_SETUP_ALLOWED_KEYS and parts[0] not in extra_keys:
         raise ValueError(f"unsupported setup.yaml key: {parts[0]!r}")
-    data = load_design_setup(path, extra_keys=extra_keys)
+    return parts
+
+
+def _apply_dotted_value(data: dict, dotted_key: str, parts: list[str], value: Any) -> None:
     if value is None:
         _prune(data, parts)
-    else:
-        node = data
-        for part in parts[:-1]:
-            node = node.setdefault(part, {})
-            if not isinstance(node, dict):
-                raise ValueError(f"setup key parent is not a mapping: {dotted_key}")
-        node[parts[-1]] = value
+        return
+    node = data
+    for part in parts[:-1]:
+        node = node.setdefault(part, {})
+        if not isinstance(node, dict):
+            raise ValueError(f"setup key parent is not a mapping: {dotted_key}")
+    node[parts[-1]] = value
+
+
+def set_design_setup_value(
+    path: Path, dotted_key: str, value: Any, *, extra_keys: frozenset[str] = frozenset(),
+) -> None:
+    """Set (or, when value is None, remove and prune now-empty parents of)
+    one dotted key in the design setup file -- rewrites the whole file
+    via `write_design_setup` (plain `yaml.safe_dump`), dropping any
+    comments the file had. `wolf env menu` still uses this for its own
+    whole-dict save; `wolf env set`/`unset` use
+    `set_design_setup_value_preserving_comments` instead."""
+    parts = _split_and_check(dotted_key, extra_keys)
+    data = load_design_setup(path, extra_keys=extra_keys)
+    _apply_dotted_value(data, dotted_key, parts, value)
     write_design_setup(path, data, extra_keys=extra_keys)
+
+
+def _comment_out_line(line: str) -> str:
+    """Prefix one live line with `# `, preserving whatever indentation
+    it already had -- a top-level line (no leading whitespace) becomes
+    `# key: ...`; an indented continuation line (e.g. a dumped list's
+    `- item`) becomes `#  - item`, matching the one-space-after-#-for-
+    top-level, two-or-more-for-continuation convention
+    `_TOP_LEVEL_KEY_RE` itself relies on."""
+    if line.lstrip().startswith("#"):
+        return line
+    if line.startswith(" "):
+        return "#" + line
+    return "# " + line
+
+
+def _stanza_bounds(lines: list[str], key: str) -> Optional[tuple[int, int]]:
+    """The [start, end) line range -- the key's own declaration line
+    (commented or not) through every immediately-following line that
+    isn't blank, a `#---`/`#===` section header, or another top-level
+    key's own declaration -- i.e. exactly its value and any YAML
+    continuation lines, never the description/shape/default comment
+    lines a WOLF-documented key has above it (those stay untouched
+    regardless of the key's current value). A continuation line must
+    also share the key line's own commented-ness (both commented, or
+    both live) -- confirmed real need: a freestanding comment (a
+    user's own note, or the next key's own description) sitting right
+    after a *live* key with no blank line between them must stop the
+    scan, not be swallowed as if it were part of that key's value."""
+    for index, line in enumerate(lines):
+        match = _TOP_LEVEL_KEY_RE.match(line)
+        if match and match.group(2) == key:
+            commented = line.lstrip().startswith("#")
+            end = index + 1
+            while end < len(lines):
+                candidate = lines[end]
+                if not candidate.strip() or _SECTION_HEADER_RE.match(candidate):
+                    break
+                if _TOP_LEVEL_KEY_RE.match(candidate):
+                    break
+                if candidate.lstrip().startswith("#") != commented:
+                    break
+                end += 1
+            return index, end
+    return None
+
+
+def set_design_setup_value_preserving_comments(
+    path: Path, dotted_key: str, value: Any, *, extra_keys: frozenset[str] = frozenset(),
+) -> None:
+    """Same set/unset semantics as `set_design_setup_value` (value=None
+    removes and prunes now-empty parents), but edits the file's own
+    text in place -- only the one top-level key's own stanza (its
+    `key: value` line and any continuation lines, found by
+    `_stanza_bounds`) is replaced; every other line, including a
+    user's own added comments, is left byte-for-byte untouched, never
+    reordered.
+
+    A key still present after the update is written live (uncommented,
+    a fresh `yaml.safe_dump` of just that one key); a key pruned away
+    entirely has its existing stanza re-commented in place (prefixed
+    with `# `) rather than deleted -- "comment it back out", not erase.
+    A key with no existing stanza at all (an older file, or a key the
+    template never got to generate yet) gets one appended at the end.
+
+    No file yet at all: falls back to `write_design_setup` (nothing to
+    preserve)."""
+    parts = _split_and_check(dotted_key, extra_keys)
+    key_root = parts[0]
+    data = load_design_setup(path, extra_keys=extra_keys)
+    _apply_dotted_value(data, dotted_key, parts, value)
+    unknown = set(data) - DESIGN_SETUP_ALLOWED_KEYS - extra_keys
+    if unknown:
+        raise ValueError(f"unsupported setup.yaml key: {sorted(unknown)[0]}")
+
+    if not path.is_file():
+        write_design_setup(path, data, extra_keys=extra_keys)
+        return
+
+    text = path.read_text(encoding="utf-8")
+    lines = text.splitlines()
+    bounds = _stanza_bounds(lines, key_root)
+    if key_root in data:
+        replacement = yaml.safe_dump(
+            {key_root: data[key_root]}, sort_keys=False,
+        ).rstrip("\n").splitlines()
+    elif bounds is not None:
+        replacement = [_comment_out_line(line) for line in lines[bounds[0]:bounds[1]]]
+    else:
+        replacement = [f"# {key_root}:"]
+
+    if bounds is None:
+        new_lines = list(lines)
+        if new_lines and new_lines[-1].strip():
+            new_lines.append("")
+        new_lines.extend(replacement)
+    else:
+        start, end = bounds
+        new_lines = lines[:start] + replacement + lines[end:]
+    new_text = "\n".join(new_lines)
+    if text.endswith("\n"):
+        new_text += "\n"
+    path.write_text(new_text, encoding="utf-8")

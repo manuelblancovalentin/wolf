@@ -209,6 +209,23 @@ class EnvSetUnsetFlowDesignSetupKeysTests(unittest.TestCase):
         setup = yaml.safe_load(self.setup_path.read_text(encoding="utf-8")) or {}
         self.assertEqual(setup, {})
 
+    def test_setting_a_design_level_key_generates_then_preserves_the_template(self):
+        """Even a brand-new environment that never had the file at
+        all gets the full commented scaffold the first time any
+        design-setup key is set, and that scaffold's comments survive
+        the set itself -- only the one key's own stanza is uncommented."""
+        result = self.wolf("env", "set", "demo-env", "cts_max_fanout", "16")
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        text = self.setup_path.read_text(encoding="utf-8")
+        self.assertIn("# active_views:", text)
+        self.assertIn("demoflow", text)
+        self.assertIn("# design_flow_effort: standard", text)
+        self.assertIn("cts_max_fanout: 16", text)
+        self.assertNotIn("# cts_max_fanout: 16", text)
+        setup = yaml.safe_load(text)
+        self.assertEqual(setup.get("cts_max_fanout"), 16)
+        self.assertNotIn("active_views", setup)
+
     def test_env_create_from_generates_the_template(self):
         from_file = self.root / "source.yaml"
         from_file.write_text(yaml.safe_dump({

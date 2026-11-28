@@ -14,7 +14,8 @@ from typing import Optional
 import yaml
 
 from wolf.backend.cadence_genus_setup import (
-    DESIGN_SETUP_ALLOWED_KEYS, design_setup_path, flow_design_setup_keys, set_design_setup_value,
+    DESIGN_SETUP_ALLOWED_KEYS, design_setup_path, flow_design_setup_keys,
+    set_design_setup_value_preserving_comments,
 )
 from wolf.commands.common import resolve_environment_name
 from wolf.environment import (
@@ -263,7 +264,7 @@ def command_set(args: argparse.Namespace) -> int:
         if key_root in DESIGN_SETUP_ALLOWED_KEYS or key_root in extra_keys:
             _generate_or_refresh_design_setup(manifest, name)
             setup_path = _design_setup_path_for_environment(manifest, name)
-            set_design_setup_value(
+            set_design_setup_value_preserving_comments(
                 setup_path, args.key, yaml.safe_load(args.value), extra_keys=extra_keys,
             )
             _sync_reproducibility_link(manifest, name)
@@ -391,7 +392,7 @@ def command_unset(args: argparse.Namespace) -> int:
     if key_root in DESIGN_SETUP_ALLOWED_KEYS or key_root in extra_keys:
         _generate_or_refresh_design_setup(manifest, name)
         setup_path = _design_setup_path_for_environment(manifest, name)
-        set_design_setup_value(setup_path, args.key, None, extra_keys=extra_keys)
+        set_design_setup_value_preserving_comments(setup_path, args.key, None, extra_keys=extra_keys)
         _sync_reproducibility_link(manifest, name)
         ui.success(f"Unset {args.key} in {setup_path}")
         return 0
