@@ -14,12 +14,12 @@ from typing import Optional
 import yaml
 
 from wolf.backend.cadence_genus_setup import (
-    DESIGN_SETUP_ALLOWED_KEYS, design_setup_path, set_design_setup_value,
+    DESIGN_SETUP_ALLOWED_KEYS, design_setup_path, flow_design_setup_keys, set_design_setup_value,
 )
 from wolf.commands.common import resolve_environment_name
 from wolf.environment import (
     ENVIRONMENT_FILENAME, environment_manifest, load_environment, normalize_environment,
-    profile_semantics, resolve_stored_path,
+    profile_semantics, resolve_flow_design_setup_template, resolve_stored_path,
 )
 from wolf.legacy import LegacyCommandError, run_env
 from wolf.paths import environments_dir
@@ -163,6 +163,23 @@ def _design_setup_path_for_environment(manifest: Path, name: str) -> Path:
     return design_setup_path(project_root, design_name)
 
 
+def _extra_design_setup_keys(manifest: Path, name: str) -> frozenset[str]:
+    """This environment's flow package's own declared design-setup
+    keys, if any -- best-effort: a flow package that isn't resolvable
+    yet (not installed, no flow selected) simply contributes no extra
+    keys, the same as `_sync_reproducibility_link`'s own tolerance for
+    "not resolvable yet, not an error"."""
+    try:
+        profile = load_environment(manifest, expected_name=name)
+        flow_package = profile.flow.package if profile.flow else None
+        template_path, _source = resolve_flow_design_setup_template(
+            flow_package, override=profile.env_vars.get("DESIGN_SETUP_TEMPLATE"),
+        )
+        return flow_design_setup_keys(template_path)
+    except Exception:
+        return frozenset()
+
+
 def _sync_reproducibility_link(manifest: Path, name: str) -> None:
     """Keep inputs/env/<design>/wolf.<name>.yaml pointed at this
     environment's own wolf.yaml after any `wolf env set`/`unset` -- same
@@ -207,9 +224,12 @@ def command_set(args: argparse.Namespace) -> int:
     manifest = path / ENVIRONMENT_FILENAME
     if manifest.is_file():
         key_root = args.key.split(".", 1)[0]
-        if key_root in DESIGN_SETUP_ALLOWED_KEYS:
+        extra_keys = _extra_design_setup_keys(manifest, name)
+        if key_root in DESIGN_SETUP_ALLOWED_KEYS or key_root in extra_keys:
             setup_path = _design_setup_path_for_environment(manifest, name)
-            set_design_setup_value(setup_path, args.key, yaml.safe_load(args.value))
+            set_design_setup_value(
+                setup_path, args.key, yaml.safe_load(args.value), extra_keys=extra_keys,
+            )
             _sync_reproducibility_link(manifest, name)
             ui.success(f"Set {args.key} in {setup_path}")
             return 0
@@ -329,9 +349,10 @@ def command_unset(args: argparse.Namespace) -> int:
             "edit the legacy vars.env file directly to remove a legacy variable"
         )
     key_root = args.key.split(".", 1)[0]
-    if key_root in DESIGN_SETUP_ALLOWED_KEYS:
+    extra_keys = _extra_design_setup_keys(manifest, name)
+    if key_root in DESIGN_SETUP_ALLOWED_KEYS or key_root in extra_keys:
         setup_path = _design_setup_path_for_environment(manifest, name)
-        set_design_setup_value(setup_path, args.key, None)
+        set_design_setup_value(setup_path, args.key, None, extra_keys=extra_keys)
         _sync_reproducibility_link(manifest, name)
         ui.success(f"Unset {args.key} in {setup_path}")
         return 0

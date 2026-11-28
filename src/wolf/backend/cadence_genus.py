@@ -21,7 +21,9 @@ from typing import Any, Mapping, NamedTuple, Optional, Union
 
 import yaml
 
-from wolf.backend.cadence_genus_setup import design_setup_path, load_design_setup
+from wolf.backend.cadence_genus_setup import (
+    design_setup_path, flow_design_setup_keys, load_design_setup,
+)
 from wolf.context import ResolvedContext, ResolvedTechnology
 from wolf import flow_snapshot
 from wolf.paths import builtin_flow_root
@@ -437,7 +439,10 @@ def _design_setup(context: ResolvedContext) -> Mapping[str, Any]:
     docstring for why)."""
     if context.project_root is None or not context.design_name:
         return {}
-    return load_design_setup(design_setup_path(context.project_root, context.design_name))
+    extra_keys = flow_design_setup_keys(context.design_setup_template)
+    return load_design_setup(
+        design_setup_path(context.project_root, context.design_name), extra_keys=extra_keys,
+    )
 
 
 def _genus_set_db_overrides(context: ResolvedContext) -> tuple[tuple[str, Any], ...]:

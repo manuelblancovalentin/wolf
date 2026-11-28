@@ -3,7 +3,8 @@ import tempfile
 import unittest
 
 from wolf.backend.cadence_genus_setup import (
-    design_setup_path, load_design_setup, set_design_setup_value, write_design_setup,
+    design_setup_path, flow_design_setup_keys, load_design_setup, set_design_setup_value,
+    write_design_setup,
 )
 
 
@@ -41,6 +42,18 @@ class LoadDesignSetupTests(unittest.TestCase):
         self.assertEqual(
             load_design_setup(self.path), {"add_tieoffs_cells": ["TIEHIX1", "TIELOX1"]},
         )
+
+    def test_a_flow_declared_extra_key_is_accepted_when_passed(self):
+        self.path.write_text("design_flow_effort: extreme\n", encoding="utf-8")
+        self.assertEqual(
+            load_design_setup(self.path, extra_keys=frozenset({"design_flow_effort"})),
+            {"design_flow_effort": "extreme"},
+        )
+
+    def test_a_flow_declared_extra_key_is_still_rejected_without_it(self):
+        self.path.write_text("design_flow_effort: extreme\n", encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "unsupported setup.yaml key: design_flow_effort"):
+            load_design_setup(self.path)
 
 
 class WriteDesignSetupTests(unittest.TestCase):
@@ -109,3 +122,65 @@ class SetDesignSetupValueTests(unittest.TestCase):
     def test_empty_key_segment_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "invalid setup key"):
             set_design_setup_value(self.path, "active_views.", 1)
+
+    def test_a_flow_declared_extra_key_is_accepted_when_passed(self):
+        set_design_setup_value(
+            self.path, "design_flow_effort", "extreme",
+            extra_keys=frozenset({"design_flow_effort"}),
+        )
+        self.assertEqual(
+            load_design_setup(self.path, extra_keys=frozenset({"design_flow_effort"})),
+            {"design_flow_effort": "extreme"},
+        )
+
+    def test_a_flow_declared_extra_key_is_rejected_without_it(self):
+        with self.assertRaisesRegex(ValueError, "unsupported setup.yaml key: 'design_flow_effort'"):
+            set_design_setup_value(self.path, "design_flow_effort", "extreme")
+
+
+class FlowDesignSetupKeysTests(unittest.TestCase):
+    """flow_design_setup_keys -- extracting a flow's own extra
+    design-setup key names from its commented template, by a narrow
+    regex over `# key: ...` lines, never a full YAML parse (the
+    template also has plain prose description lines that aren't valid
+    YAML once merely uncommented)."""
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory(prefix="wolf-flow-design-setup-")
+        self.path = Path(self.temporary.name) / "design_setup.template.yaml"
+
+    def tearDown(self):
+        self.temporary.cleanup()
+
+    def test_no_path_at_all_returns_empty(self):
+        self.assertEqual(flow_design_setup_keys(None), frozenset())
+
+    def test_a_missing_file_returns_empty(self):
+        self.assertEqual(flow_design_setup_keys(self.path), frozenset())
+
+    def test_commented_keys_are_extracted_ignoring_prose_and_examples(self):
+        self.path.write_text(
+            "#========================================\n"
+            "# Design setup template header prose, not a key at all.\n"
+            "#========================================\n"
+            "# Optimisation effort of synthesis and implementation.\n"
+            "# scalar, one of: express | standard | extreme. Default: standard.\n"
+            "# design_flow_effort: standard\n"
+            "\n"
+            "# Hard macros of the project, by name.\n"
+            "# list of names. Default: [] (none).\n"
+            "# project_macros:\n"
+            "#   - <macro_name>\n",
+            encoding="utf-8",
+        )
+        self.assertEqual(
+            flow_design_setup_keys(self.path), frozenset({"design_flow_effort", "project_macros"}),
+        )
+
+    def test_an_uncommented_line_is_not_treated_as_a_declared_key(self):
+        """Only commented `# key: ...` lines count -- this function
+        only ever reads a flow's own pristine template (always fully
+        commented), never a generated setup.<design>.yaml that may
+        have live, uncommented keys of its own."""
+        self.path.write_text("design_flow_effort: extreme\n", encoding="utf-8")
+        self.assertEqual(flow_design_setup_keys(self.path), frozenset())

@@ -41,14 +41,14 @@ _RTL_SUFFIXES = (".v", ".sv", ".vhd", ".vhdl")
 
 from wolf.backend import backend_names
 from wolf.backend.cadence_genus_setup import (
-    design_setup_path, load_design_setup, write_design_setup,
+    design_setup_path, flow_design_setup_keys, load_design_setup, write_design_setup,
 )
 from wolf.cell_browser import (
     analysis_view_names_for_technology, cells_for_technology, routing_layers_for_technology,
 )
 from wolf.environment import (
     ENVIRONMENT_FILENAME, ENVIRONMENT_SCHEMA, inspect_manifest_toml, load_environment,
-    resolve_technology_reference,
+    resolve_flow_design_setup_template, resolve_technology_reference,
 )
 from wolf.flow_inspect import FlowStructure, parse_flow_directory
 from wolf.package.installer import PackageInstaller
@@ -1641,7 +1641,8 @@ class EnvWizardApp(App[None]):
             self.backend_overrides = dict(profile.backend_overrides)
             if self.project_root and self.design_name:
                 self.design_setup = load_design_setup(
-                    design_setup_path(Path(self.project_root), self.design_name)
+                    design_setup_path(Path(self.project_root), self.design_name),
+                    extra_keys=self._extra_design_setup_keys(profile.env_vars),
                 )
             self.env_vars = dict(profile.env_vars)
         self.sub_title = self._name
@@ -1906,6 +1907,19 @@ class EnvWizardApp(App[None]):
             self.technology_package, self.technology_track, self.technology_vths,
             self.technology_metal_stack,
         )
+
+    def _extra_design_setup_keys(self, env_vars) -> frozenset[str]:
+        """This session's flow package's own declared design-setup
+        keys, if any -- best-effort, same tolerance as
+        `commands/env.py`'s own `_extra_design_setup_keys`: a flow
+        package that isn't resolvable yet simply contributes none."""
+        try:
+            template_path, _source = resolve_flow_design_setup_template(
+                self.flow_package, override=(env_vars or {}).get("DESIGN_SETUP_TEMPLATE"),
+            )
+            return flow_design_setup_keys(template_path)
+        except Exception:
+            return frozenset()
 
     def _override_get(self, *path: str, default=None):
         node = self.design_setup
@@ -2382,6 +2396,7 @@ class EnvWizardApp(App[None]):
             if self.project_root and self.design_name:
                 write_design_setup(
                     design_setup_path(Path(self.project_root), self.design_name), self.design_setup,
+                    extra_keys=self._extra_design_setup_keys(self.env_vars),
                 )
         except Exception as error:
             self.notify(f"Could not save environment: {error}", severity="error")

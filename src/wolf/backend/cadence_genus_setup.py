@@ -24,7 +24,8 @@ the backend) needs to agree on.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Mapping
+import re
+from typing import Any, Mapping, Optional
 
 import yaml
 
@@ -53,24 +54,50 @@ def design_setup_path(project_root: Path, design_name: str) -> Path:
     return Path(project_root) / "inputs" / "env" / design_name / f"setup.{design_name}.yaml"
 
 
-def load_design_setup(path: Path) -> dict[str, Any]:
+_FLOW_DESIGN_SETUP_KEY_RE = re.compile(r"^#\s*([A-Za-z_][A-Za-z0-9_]*):(\s|$)")
+
+
+def flow_design_setup_keys(template_path: Optional[Path]) -> frozenset[str]:
+    """Every top-level key name a flow's own design-setup template
+    declares -- a narrow regex over commented `# key: ...` lines at
+    column 0, not a YAML parse (the template also has plain prose
+    description lines that aren't valid YAML once merely uncommented,
+    so parsing the whole file is the wrong tool here; only the key
+    *names* are needed, not their example values). Returns an empty
+    set for no template at all."""
+    if template_path is None or not template_path.is_file():
+        return frozenset()
+    keys: set[str] = set()
+    for line in template_path.read_text(encoding="utf-8").splitlines():
+        match = _FLOW_DESIGN_SETUP_KEY_RE.match(line)
+        if match:
+            keys.add(match.group(1))
+    return frozenset(keys)
+
+
+def load_design_setup(path: Path, *, extra_keys: frozenset[str] = frozenset()) -> dict[str, Any]:
     """The raw, validated top-level mapping -- {} if the file doesn't exist
     yet, so every design-level knob falls back to its documented default,
     same as an absent backend.cadence-flowtool key did before this file
-    existed."""
+    existed. `extra_keys` -- a flow package's own declared design-setup
+    keys for this environment (see flow_design_setup_keys) -- are allowed
+    alongside WOLF's own `DESIGN_SETUP_ALLOWED_KEYS`, never written back
+    into that shared, process-global set itself."""
     if not path.is_file():
         return {}
     data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     if not isinstance(data, Mapping):
         raise ValueError(f"{path}: must be a YAML mapping")
-    unknown = set(data) - DESIGN_SETUP_ALLOWED_KEYS
+    unknown = set(data) - DESIGN_SETUP_ALLOWED_KEYS - extra_keys
     if unknown:
         raise ValueError(f"{path}: unsupported setup.yaml key: {sorted(unknown)[0]}")
     return dict(data)
 
 
-def write_design_setup(path: Path, data: Mapping[str, Any]) -> None:
-    unknown = set(data) - DESIGN_SETUP_ALLOWED_KEYS
+def write_design_setup(
+    path: Path, data: Mapping[str, Any], *, extra_keys: frozenset[str] = frozenset(),
+) -> None:
+    unknown = set(data) - DESIGN_SETUP_ALLOWED_KEYS - extra_keys
     if unknown:
         raise ValueError(f"unsupported setup.yaml key: {sorted(unknown)[0]}")
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -96,7 +123,9 @@ def _prune(data: dict, parts: list[str]) -> None:
                 parent.pop(parts[index - 1], None)
 
 
-def set_design_setup_value(path: Path, dotted_key: str, value: Any) -> None:
+def set_design_setup_value(
+    path: Path, dotted_key: str, value: Any, *, extra_keys: frozenset[str] = frozenset(),
+) -> None:
     """Set (or, when value is None, remove and prune now-empty parents of)
     one dotted key in the design setup file -- the one real mutator both
     `wolf env set`/`wolf env unset` and `wolf env menu` call. Mirrors
@@ -106,9 +135,9 @@ def set_design_setup_value(path: Path, dotted_key: str, value: Any) -> None:
     parts = dotted_key.split(".")
     if not parts or not all(parts):
         raise ValueError(f"invalid setup key: {dotted_key!r}")
-    if parts[0] not in DESIGN_SETUP_ALLOWED_KEYS:
+    if parts[0] not in DESIGN_SETUP_ALLOWED_KEYS and parts[0] not in extra_keys:
         raise ValueError(f"unsupported setup.yaml key: {parts[0]!r}")
-    data = load_design_setup(path)
+    data = load_design_setup(path, extra_keys=extra_keys)
     if value is None:
         _prune(data, parts)
     else:
@@ -118,4 +147,4 @@ def set_design_setup_value(path: Path, dotted_key: str, value: Any) -> None:
             if not isinstance(node, dict):
                 raise ValueError(f"setup key parent is not a mapping: {dotted_key}")
         node[parts[-1]] = value
-    write_design_setup(path, data)
+    write_design_setup(path, data, extra_keys=extra_keys)

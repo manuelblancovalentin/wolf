@@ -123,3 +123,87 @@ class EnvSetUnsetDesignSetupRoutingTests(unittest.TestCase):
         result = self.wolf("env", "set", "no-project", "add_tieoffs_cells", "[]")
         self.assertEqual(result.returncode, 2)
         self.assertIn("project.root", result.stderr)
+
+
+class EnvSetUnsetFlowDesignSetupKeysTests(unittest.TestCase):
+    """A flow package's own declared design-setup keys (handoff:
+    workspace/handoff/wolf-agent-design-setup-template.md) are routed
+    to setup.<design>.yaml the same way WOLF's own 26 keys are."""
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory(prefix="wolf-env-flow-design-setup-")
+        self.root = Path(self.temporary.name)
+        self.project_root = self.root / "project"
+        self.environment_directory = self.root / "wolf-home" / "envs" / "demo-env"
+        self.environment_directory.mkdir(parents=True)
+        registry = self.root / "registry"
+        (registry / "flow").mkdir(parents=True)
+        (registry / "flow" / "demoflow.yaml").write_text(yaml.safe_dump({
+            "schema_version": 1, "kind": "flow", "name": "demoflow", "description": "demoflow",
+            "source": {"type": "git", "url": "https://example.test/demoflow", "revision": "rev"},
+            "validation": {"required_paths": []},
+            "metadata": {"flow": {
+                "name": "demoflow", "backend": "cadence-flowtool",
+                "scripts": {"design_setup_template": "design_setup.template.yaml"},
+            }},
+        }), encoding="utf-8")
+        installation = self.root / "wolf-home" / "packages" / "flow" / "demoflow" / "rev"
+        content = installation / "source"
+        content.mkdir(parents=True)
+        (content / "design_setup.template.yaml").write_text(
+            "# Description of a flow-only knob.\n"
+            "# scalar. Default: standard.\n"
+            "# design_flow_effort: standard\n",
+            encoding="utf-8",
+        )
+        (installation / "installed.yaml").write_text(yaml.safe_dump({
+            "package": "flow/demoflow", "revision": "rev", "source_revision": "rev",
+            "content_path": "source", "installed_at": "2026-09-02T00:00:00Z",
+        }), encoding="utf-8")
+        (self.environment_directory / "wolf.yaml").write_text(
+            yaml.safe_dump({
+                "schema": "wolf.environment/v1",
+                "name": "demo-env",
+                "design": {"name": "demo-design"},
+                "technology": {"name": "demo-tech"},
+                "flow": {"package": "flow/demoflow"},
+                "project": {"root": str(self.project_root)},
+                "workspace": {"root": str(self.project_root / "workspace")},
+            }),
+            encoding="utf-8",
+        )
+        self.environment = os.environ.copy()
+        self.environment.update({
+            "WOLF_HOME": str(self.root / "wolf-home"),
+            "WOLF_REGISTRY": str(registry),
+            "XDG_CONFIG_HOME": str(self.root / "config"),
+            "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src"),
+        })
+        self.setup_path = design_setup_path(self.project_root, "demo-design")
+
+    def tearDown(self):
+        self.temporary.cleanup()
+
+    def wolf(self, *arguments):
+        return subprocess.run(
+            [sys.executable, "-m", "wolf.cli", *arguments], cwd="/",
+            env=self.environment, text=True, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, check=False,
+        )
+
+    def test_a_flow_declared_key_is_routed_to_setup_yaml(self):
+        result = self.wolf("env", "set", "demo-env", "design_flow_effort", "extreme")
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        setup = yaml.safe_load(self.setup_path.read_text(encoding="utf-8"))
+        self.assertEqual(setup["design_flow_effort"], "extreme")
+
+    def test_an_unrelated_unknown_key_still_fails(self):
+        result = self.wolf("env", "set", "demo-env", "not_a_real_key", "1")
+        self.assertNotEqual(result.returncode, 0)
+
+    def test_unset_a_flow_declared_key(self):
+        self.wolf("env", "set", "demo-env", "design_flow_effort", "extreme")
+        result = self.wolf("env", "unset", "demo-env", "design_flow_effort")
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        setup = yaml.safe_load(self.setup_path.read_text(encoding="utf-8")) or {}
+        self.assertEqual(setup, {})
