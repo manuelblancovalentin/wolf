@@ -169,6 +169,7 @@ class EnvSetUnsetFlowDesignSetupKeysTests(unittest.TestCase):
                 "flow": {"package": "flow/demoflow"},
                 "project": {"root": str(self.project_root)},
                 "workspace": {"root": str(self.project_root / "workspace")},
+                "env": {},
             }),
             encoding="utf-8",
         )
@@ -207,3 +208,48 @@ class EnvSetUnsetFlowDesignSetupKeysTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, msg=result.stderr)
         setup = yaml.safe_load(self.setup_path.read_text(encoding="utf-8")) or {}
         self.assertEqual(setup, {})
+
+    def test_env_create_from_generates_the_template(self):
+        from_file = self.root / "source.yaml"
+        from_file.write_text(yaml.safe_dump({
+            "schema": "wolf.environment/v1",
+            "name": "created-env",
+            "design": {"name": "demo-design"},
+            "technology": {"name": "demo-tech"},
+            "flow": {"package": "flow/demoflow"},
+            "project": {"root": str(self.project_root)},
+            "workspace": {"root": str(self.project_root / "workspace")},
+        }), encoding="utf-8")
+        result = self.wolf("env", "create", "created-env", "--from", str(from_file))
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        text = self.setup_path.read_text(encoding="utf-8")
+        self.assertIn("# active_views:", text)
+        self.assertIn("demoflow", text)
+
+    def test_env_create_from_with_no_project_root_does_not_fail(self):
+        from_file = self.root / "source2.yaml"
+        from_file.write_text(yaml.safe_dump({
+            "schema": "wolf.environment/v1",
+            "name": "no-project-env",
+            "design": {"name": "demo-design"},
+            "flow": {"backend": "cadence-flowtool"},
+            "workspace": {"root": str(self.root / "workspace")},
+        }), encoding="utf-8")
+        result = self.wolf("env", "create", "no-project-env", "--from", str(from_file))
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+
+    def test_setting_design_setup_template_regenerates_the_flow_section(self):
+        other_template = self.root / "other-template.yaml"
+        other_template.write_text(
+            "# A different flow-only knob.\n"
+            "# scalar. Default: y.\n"
+            "# other_flow_key: y\n",
+            encoding="utf-8",
+        )
+        self.wolf("env", "set", "demo-env", "cts_max_fanout", "16")
+        result = self.wolf(
+            "env", "set", "demo-env", "env.DESIGN_SETUP_TEMPLATE", str(other_template),
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        text = self.setup_path.read_text(encoding="utf-8")
+        self.assertIn("other_flow_key", text)

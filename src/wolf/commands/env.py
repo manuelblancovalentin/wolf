@@ -100,6 +100,7 @@ def command_create(args: argparse.Namespace) -> int:
         except Exception:
             shutil.rmtree(staging, ignore_errors=True)
             raise
+        _generate_or_refresh_design_setup(path / ENVIRONMENT_FILENAME, args.name)
         ui.success(f"Created declarative WOLF environment {args.name!r} at {path}")
         return 0
     run_env(["create", "--name", args.name])
@@ -180,6 +181,40 @@ def _extra_design_setup_keys(manifest: Path, name: str) -> frozenset[str]:
         return frozenset()
 
 
+def _generate_or_refresh_design_setup(manifest: Path, name: str) -> None:
+    """Write (or refresh) this environment's setup.<design>.yaml from
+    WOLF's own template plus its flow package's own section, if any --
+    the trigger is `wolf env create --from`, `wolf env set`/`unset` of
+    any design-setup key, and setting DESIGN_SETUP_TEMPLATE itself.
+    Best-effort throughout, same tolerance as
+    `_sync_reproducibility_link`: a project.root/design/flow/technology
+    that isn't resolvable yet just means there is nothing to generate
+    yet, never a failed `env create`/`set`/`unset`."""
+    try:
+        from wolf.backend.design_setup_template import generate_or_refresh
+        from wolf.environment import resolve_technology_reference
+
+        project_root, design_name = _project_root_and_design_name(manifest, name)
+        profile = load_environment(manifest, expected_name=name)
+        flow_package = profile.flow.package if profile.flow else None
+        template_path, _source = resolve_flow_design_setup_template(
+            flow_package, override=profile.env_vars.get("DESIGN_SETUP_TEMPLATE"),
+        )
+        technology = None
+        if profile.technology:
+            technology = resolve_technology_reference(
+                profile.technology.package, profile.technology.track,
+                profile.technology.vths, profile.technology.metal_stack,
+            )
+        generate_or_refresh(
+            design_setup_path(project_root, design_name),
+            technology=technology, flow_template_path=template_path,
+            flow_name=(profile.flow.name if profile.flow else None) or flow_package,
+        )
+    except Exception:
+        pass
+
+
 def _sync_reproducibility_link(manifest: Path, name: str) -> None:
     """Keep inputs/env/<design>/wolf.<name>.yaml pointed at this
     environment's own wolf.yaml after any `wolf env set`/`unset` -- same
@@ -226,6 +261,7 @@ def command_set(args: argparse.Namespace) -> int:
         key_root = args.key.split(".", 1)[0]
         extra_keys = _extra_design_setup_keys(manifest, name)
         if key_root in DESIGN_SETUP_ALLOWED_KEYS or key_root in extra_keys:
+            _generate_or_refresh_design_setup(manifest, name)
             setup_path = _design_setup_path_for_environment(manifest, name)
             set_design_setup_value(
                 setup_path, args.key, yaml.safe_load(args.value), extra_keys=extra_keys,
@@ -234,6 +270,8 @@ def command_set(args: argparse.Namespace) -> int:
             ui.success(f"Set {args.key} in {setup_path}")
             return 0
         _set_declarative_value(manifest, args.key, args.value, name)
+        if args.key == "env.DESIGN_SETUP_TEMPLATE":
+            _generate_or_refresh_design_setup(manifest, name)
         _sync_reproducibility_link(manifest, name)
         ui.success(f"Set {args.key} in WOLF environment {name!r}")
         return 0
@@ -351,12 +389,15 @@ def command_unset(args: argparse.Namespace) -> int:
     key_root = args.key.split(".", 1)[0]
     extra_keys = _extra_design_setup_keys(manifest, name)
     if key_root in DESIGN_SETUP_ALLOWED_KEYS or key_root in extra_keys:
+        _generate_or_refresh_design_setup(manifest, name)
         setup_path = _design_setup_path_for_environment(manifest, name)
         set_design_setup_value(setup_path, args.key, None, extra_keys=extra_keys)
         _sync_reproducibility_link(manifest, name)
         ui.success(f"Unset {args.key} in {setup_path}")
         return 0
     _unset_declarative_value(manifest, args.key, name)
+    if args.key == "env.DESIGN_SETUP_TEMPLATE":
+        _generate_or_refresh_design_setup(manifest, name)
     _sync_reproducibility_link(manifest, name)
     ui.success(f"Unset {args.key} in WOLF environment {name!r}")
     return 0
