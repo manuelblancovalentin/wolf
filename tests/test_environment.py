@@ -7,7 +7,8 @@ from unittest.mock import patch
 import yaml
 
 from wolf.environment import (
-    load_environment, resolve_declarative_environment, resolve_technology_reference,
+    load_environment, resolve_declarative_environment, resolve_flow_design_setup_template,
+    resolve_technology_reference,
 )
 
 
@@ -1352,6 +1353,78 @@ class ResolveTechnologyReferenceTests(DeclarativeEnvironmentTests):
         technology = resolve_technology_reference("pdk/asap7")
         self.assertIsNotNone(technology)
         self.assertEqual(technology.name, "asap7")
+
+
+class ResolveFlowDesignSetupTemplateTests(DeclarativeEnvironmentTests):
+    """resolve_flow_design_setup_template -- which design_setup.template.yaml
+    (if any) a flow package contributes, and where that choice came
+    from (set/package/convention/none), resolvable standalone (no
+    design/workspace/technology needed), the same as
+    resolve_technology_reference."""
+
+    def _flow_content_path(self, name: str, revision: str = "flow-rev") -> Path:
+        path = self.state / "packages" / "flow" / name / revision / "source"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def test_no_package_selected_returns_none(self):
+        path, source = resolve_flow_design_setup_template(None)
+        self.assertIsNone(path)
+        self.assertEqual(source, "none")
+
+    def test_an_unknown_package_returns_none_not_an_error(self):
+        path, source = resolve_flow_design_setup_template("flow/does-not-exist")
+        self.assertIsNone(path)
+        self.assertEqual(source, "none")
+
+    def test_a_package_with_no_template_at_all_returns_none(self):
+        path, source = resolve_flow_design_setup_template("flow/orfs")
+        self.assertIsNone(path)
+        self.assertEqual(source, "none")
+
+    def test_a_declared_template_is_resolved_relative_to_the_scripts_root(self):
+        self._package("flow", "declared", "flow-rev", {"flow": {
+            "name": "declared", "backend": "cadence-flowtool",
+            "scripts": {"design_setup_template": "design_setup.template.yaml"},
+        }})
+        content = self._flow_content_path("declared")
+        (content / "design_setup.template.yaml").write_text("# a_key: 1\n", encoding="utf-8")
+        path, source = resolve_flow_design_setup_template("flow/declared")
+        self.assertEqual(path, content / "design_setup.template.yaml")
+        self.assertEqual(source, "package")
+
+    def test_a_template_present_by_convention_is_used_when_nothing_is_declared(self):
+        self._package("flow", "conventional", "flow-rev", {"flow": {
+            "name": "conventional", "backend": "cadence-flowtool",
+        }})
+        content = self._flow_content_path("conventional")
+        (content / "design_setup.template.yaml").write_text("# a_key: 1\n", encoding="utf-8")
+        path, source = resolve_flow_design_setup_template("flow/conventional")
+        self.assertEqual(path, content / "design_setup.template.yaml")
+        self.assertEqual(source, "convention")
+
+    def test_an_explicit_override_wins_over_either(self):
+        self._package("flow", "declared2", "flow-rev", {"flow": {
+            "name": "declared2", "backend": "cadence-flowtool",
+            "scripts": {"design_setup_template": "design_setup.template.yaml"},
+        }})
+        content = self._flow_content_path("declared2")
+        (content / "design_setup.template.yaml").write_text("# a_key: 1\n", encoding="utf-8")
+        override = self.root / "override.yaml"
+        override.write_text("# other_key: 2\n", encoding="utf-8")
+        path, source = resolve_flow_design_setup_template("flow/declared2", override=str(override))
+        self.assertEqual(path, override)
+        self.assertEqual(source, "set")
+
+    def test_a_declared_path_that_does_not_exist_falls_back_to_none(self):
+        self._package("flow", "missingfile", "flow-rev", {"flow": {
+            "name": "missingfile", "backend": "cadence-flowtool",
+            "scripts": {"design_setup_template": "nowhere.yaml"},
+        }})
+        self._flow_content_path("missingfile")
+        path, source = resolve_flow_design_setup_template("flow/missingfile")
+        self.assertIsNone(path)
+        self.assertEqual(source, "none")
 
 
 if __name__ == "__main__":

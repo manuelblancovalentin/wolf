@@ -266,6 +266,8 @@ class ResolvedContext:
     threads: Optional[int] = None
     backend_overrides: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
     env_vars: Mapping[str, str] = field(default_factory=dict)
+    design_setup_template: Optional[Path] = None
+    design_setup_template_source: str = "none"
 
 
 def resolve_context(

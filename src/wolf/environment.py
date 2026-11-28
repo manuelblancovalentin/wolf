@@ -1020,6 +1020,56 @@ def resolve_technology_reference(
     return _technology_inputs(manifest, installed, reference)
 
 
+_DESIGN_SETUP_TEMPLATE_CONVENTION_NAME = "design_setup.template.yaml"
+
+
+def resolve_design_setup_template(
+    manifest: Any, installed: Any, *, override: Optional[str] = None,
+) -> tuple[Optional[Path], str]:
+    """The design-setup template file to append a flow's own extra
+    per-design keys from, and where that choice came from -- "set"
+    (DESIGN_SETUP_TEMPLATE), "package" (the flow's own declared path),
+    "convention" (design_setup.template.yaml found by convention in
+    the flow's own scripts root), or "none" (no flow package, or
+    neither declared nor by-convention file exists)."""
+    if override:
+        path = Path(override).expanduser()
+        return (path if path.is_file() else None), "set"
+    if manifest is None or installed is None:
+        return None, "none"
+    root = installed.content_path.resolve()
+    scripts = manifest.metadata.get("flow", {}).get("scripts", {}) if isinstance(manifest.metadata.get("flow"), dict) else {}
+    declared = scripts.get("design_setup_template") if isinstance(scripts, dict) else None
+    if isinstance(declared, str) and declared:
+        candidate = root / declared
+        return (candidate, "package") if candidate.is_file() else (None, "none")
+    candidate = root / _DESIGN_SETUP_TEMPLATE_CONVENTION_NAME
+    if candidate.is_file():
+        return candidate, "convention"
+    return None, "none"
+
+
+def resolve_flow_design_setup_template(
+    flow_package: Optional[str], *, override: Optional[str] = None,
+) -> tuple[Optional[Path], str]:
+    """`resolve_design_setup_template`'s standalone form -- resolves the
+    flow package itself first (no design/workspace/technology needed),
+    for a caller (`wolf env create`/`wolf env set`) that has no full
+    `ResolvedContext` yet. Returns ("none") for an unselected or
+    not-yet-installed flow package, never raises."""
+    if override:
+        path = Path(override).expanduser()
+        return (path if path.is_file() else None), "set"
+    if not flow_package:
+        return None, "none"
+    try:
+        manifest = PackageRegistry().get(flow_package)
+    except (ValueError, KeyError):
+        return None, "none"
+    installed = PackageStore().read(manifest)
+    return resolve_design_setup_template(manifest, installed)
+
+
 def _technology_inputs(
     manifest: Any, installed: Any, reference: Optional[ComponentReference] = None,
 ) -> Optional[ResolvedTechnology]:
@@ -1579,6 +1629,10 @@ def resolve_declarative_environment(
         _technology_inputs(manifests.get("technology"), installed.get("technology"), technology)
         if "technology" in manifests else None
     )
+    design_setup_template, design_setup_template_source = resolve_design_setup_template(
+        manifests.get("flow"), installed.get("flow"),
+        override=profile.env_vars.get("DESIGN_SETUP_TEMPLATE"),
+    )
     if profile.design_sources:
         sources, include_directories, defines, vhdl_standard, package_checksums, used = (
             _resolve_source_entries(
@@ -1644,4 +1698,6 @@ def resolve_declarative_environment(
         threads=profile.threads,
         backend_overrides=profile.backend_overrides,
         env_vars=profile.env_vars,
+        design_setup_template=design_setup_template,
+        design_setup_template_source=design_setup_template_source,
     )
