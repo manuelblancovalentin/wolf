@@ -98,23 +98,63 @@ def _positional_count(parser: argparse.ArgumentParser, words: list[str]) -> int:
     return count
 
 
-def _run_stage_names() -> tuple[str, ...]:
-    """The real stage names -from/-to accept -- a fixed, small set
-    (STAGE_ORDER) WOLF's own Cadence Genus backend already validates
-    against regardless of which flow (bundled default or a
-    flow.package) is active, so no flow-Tcl parsing is needed here to
-    offer them as completions."""
+def _typed_environment_name(completed: list[str]) -> Optional[str]:
+    """`--environment NAME` or `--environment=NAME`, if already typed
+    among `completed` -- the same already-typed words `candidates()`
+    has on hand, just scanned for this one option instead of the
+    option currently being completed."""
+    for index, word in enumerate(completed):
+        if word == "--environment" and index + 1 < len(completed):
+            return completed[index + 1]
+        if word.startswith("--environment="):
+            return word.split("=", 1)[1]
+    return None
+
+
+def _run_stage_names(completed: list[str] = ()) -> tuple[str, ...]:
+    """The real stage names -from/-to accept. With a --environment
+    already typed and resolvable to a cadence-flowtool environment,
+    this is that environment's own derived flow vocabulary (see
+    derive_stage_order) -- a project flow's own extra stages included.
+    Falls back to WOLF's bundled STAGE_ORDER with no --environment yet,
+    a non-cadence-flowtool one, or any failure resolving it at all --
+    completion must never hang or crash on a half-typed command line."""
     from wolf.backend.cadence_genus import STAGE_ORDER
-    return STAGE_ORDER
+
+    environment_name = _typed_environment_name(list(completed))
+    if not environment_name:
+        return STAGE_ORDER
+    try:
+        from wolf.backend.cadence_genus import _context_stage_order
+        from wolf.commands.env import _environment_path
+        from wolf.environment import (
+            environment_manifest, load_environment, resolve_declarative_environment,
+        )
+        from wolf.paths import state_root
+
+        environment_directory = _environment_path(environment_name)
+        manifest = environment_manifest(environment_directory)
+        if not manifest:
+            return STAGE_ORDER
+        context = resolve_declarative_environment(
+            load_environment(manifest, expected_name=environment_name),
+            state_root=state_root(), environment_directory=environment_directory,
+        )
+        if context.backend != "cadence-flowtool":
+            return STAGE_ORDER
+        derived = _context_stage_order(context)
+        return tuple(stage.selector() for stage in derived) or STAGE_ORDER
+    except Exception:
+        return STAGE_ORDER
 
 
-def _value_candidates(path: tuple[str, ...], option: str) -> Iterable[str]:
+def _value_candidates(path: tuple[str, ...], option: str, completed: list[str] = ()) -> Iterable[str]:
     if path == ("run",) and option == "--environment":
         return _environment_names()
     if path == ("run",) and option == "--backend":
         return backend_names()
     if path == ("run",) and option in ("-from", "-to"):
-        return _run_stage_names()
+        return _run_stage_names(completed)
     if path == ("status",) and option == "--environment":
         return _environment_names()
     return ()
@@ -128,7 +168,7 @@ def candidates(parser: argparse.ArgumentParser, words: list[str]) -> list[str]:
 
     if completed:
         previous = completed[-1]
-        values = _value_candidates(path, previous)
+        values = _value_candidates(path, previous, completed[:-1])
         if values:
             return sorted(value for value in values if value.startswith(prefix))
 
@@ -138,7 +178,7 @@ def candidates(parser: argparse.ArgumentParser, words: list[str]) -> list[str]:
             value_prefix = prefix[len(assignment):]
             return [
                 assignment + value
-                for value in sorted(_value_candidates(path, option))
+                for value in sorted(_value_candidates(path, option, completed))
                 if value.startswith(value_prefix)
             ]
 

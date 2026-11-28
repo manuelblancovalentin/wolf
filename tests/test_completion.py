@@ -77,6 +77,17 @@ class CompletionProtocolTests(unittest.TestCase):
         ])
         self.assertEqual(candidates(self.parser, ["run", "-to", "syn_"]), ["syn_generic", "syn_map", "syn_opt"])
 
+    def test_stage_names_fall_back_to_the_bundled_set_when_the_environment_cannot_resolve(self):
+        """--environment alpha has no wolf.yaml at all in this fixture
+        -- an unresolvable environment (or any other failure) must
+        degrade to the bundled stage names, never hang or raise."""
+        self.assertEqual(
+            candidates(self.parser, ["run", "--environment", "alpha", "-from", ""]), [
+                "cts", "floorplan", "postcts", "postroute", "prects", "route",
+                "syn_generic", "syn_map", "syn_opt",
+            ],
+        )
+
     def test_package_identifiers_complete_for_info_and_install(self):
         self.assertEqual(candidates(self.parser, ["install", "r"]), ["rtl/aes", "rtl/ibex", "rtl/ibex-fabulous-mvp"])
         self.assertEqual(candidates(self.parser, ["package", "info", "p"]), ["pdk/asap7"])
