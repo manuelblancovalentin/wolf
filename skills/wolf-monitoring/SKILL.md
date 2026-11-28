@@ -46,6 +46,19 @@ process still working in a run directory that was itself deleted out from
 under it is flagged `ORPHAN: run directory deleted` right there, instead
 of silently vanishing from the view.
 
+## What are the stage names, and what does `skipped` mean?
+A Cadence Flowtool environment's stage list comes from that environment's
+own flow (`wolf run --plan` lists it) -- not just the bundled nine. A
+project flow's own extra stages, and a branched section that schedules more
+than one sub-flow at once (e.g. `signoff_checks` running
+`physical_verification`/`extract`/`sta`), each show up as their own row.
+A stage with no evidence it ever ran, while a later one in the same run
+did, shows **`skipped`** instead of `pending` -- most likely a stage a
+feature flag turned off. This is read from the absence of evidence, not
+from the flag itself (WOLF has no visibility into which flag or how it was
+set), so it cannot tell "turned off on purpose" from "something else kept
+it from running" -- treat it as a hint to check, not a verdict.
+
 ## How do I rerun once I've confirmed a stage stalled?
 Exactly like a clean failure -- see `skills/wolf-run-failures` and
 `skills/wolf-run-flow`'s "How do I rerun from a failed step?": `wolf run

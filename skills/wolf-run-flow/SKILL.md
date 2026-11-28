@@ -39,17 +39,33 @@ wolf run --environment demo --plan
 ```
 
 ## How do I run just part of it?
-A flow is nine stages, in order: `syn_generic`, `syn_map`, `syn_opt`,
-`floorplan`, `prects`, `cts`, `postcts`, `route`, `postroute`.
+WOLF's own bundled flow is nine stages, in order: `syn_generic`, `syn_map`,
+`syn_opt`, `floorplan`, `prects`, `cts`, `postcts`, `route`, `postroute`.
 `-from`/`-to` take any of those names:
 
 ```bash
 wolf run --environment demo -from syn_generic -to syn_opt
 ```
 
-Naming a stage that is not one of the nine fails immediately with the exact
-list, before anything runs:
-`unsupported stage '<name>'; expected one of ('syn_generic', 'syn_map', ...)`.
+A project's own Cadence Flowtool flow package may declare more than the
+bundled nine -- its own stages past `postroute`, or separate sections like
+`export`/`signoff_checks`. `--plan` lists the exact names available for your
+environment, in order, before you need to guess:
+
+```bash
+wolf run --environment demo --plan
+```
+
+```bash
+wolf run --environment demo -from design_finishing -to signoff_checks
+```
+
+Naming a stage that is not one of them fails immediately with that
+environment's own real list, before anything runs:
+`unsupported stage '<name>'; expected one of [...]`. If a name is used more
+than once in the flow, the error (and `--plan`) show it as a dotted path
+(e.g. `implementation.design_finishing`) -- pass that exact dotted form to
+`-from`/`-to` to say which one you mean.
 `-c`/`--clean` allocates a brand-new numbered run instead of continuing the
 latest one; without it, a run picks up the same numbered directory (so
 `-from` continues real work, not a fresh one).

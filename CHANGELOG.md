@@ -3,6 +3,24 @@
 All notable user-visible changes to the installed `wolf` CLI and its bundled
 shell/flow files are listed here, newest first.
 
+## 0.1.3
+
+- `wolf run -from/-to`, `wolf status`/`wolf monitor`, `wolf run --plan`, and
+  shell completion now derive their valid Cadence Flowtool stage names from
+  the active environment's own flow instead of a fixed nine-name list. A
+  project flow package declaring more than the bundled nine (its own
+  stages past `postroute`, or separate sections like `export`/
+  `signoff_checks`) can now run and be watched through WOLF the same way
+  the bundled flow always could; an unsupported-stage error now names that
+  environment's own real choices, and a name used more than once in the
+  flow is accepted as a dotted path. `wolf status`/`wolf monitor` also gain
+  a `skipped` stage status -- a stage with no evidence it ever ran, while a
+  later one in the same run did, shows `skipped` instead of a misleading
+  `pending` (a retroactive heuristic, not real feature-flag introspection --
+  WOLF has no visibility into which flag, if any, disabled it). An existing
+  run's own expanded step detail now reflects its own frozen flow snapshot
+  rather than always the bundled flow's steps.
+
 ## 0.1.2
 
 - Cadence Genus backend (`genus_run_status`): a project flow package with

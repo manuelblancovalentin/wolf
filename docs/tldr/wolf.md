@@ -130,6 +130,15 @@
 
 `wolf run --environment {{environment}} --force -from cts -to cts`
 
+- List the stages a Cadence Flowtool environment's own flow declares (the
+  bundled nine, plus any a project's own flow package adds past `postroute`):
+
+`wolf run --environment {{environment}} --plan`
+
+- Run a project flow's own stage past `postroute` (e.g. `design_finishing`):
+
+`wolf run --environment {{environment}} -from design_finishing -to design_finishing`
+
 - Load Bash integration to enable in-place activation and command completion:
 
 `source ./shell/wolf.bash && wolf activate {{environment}}`

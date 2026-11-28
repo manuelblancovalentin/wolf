@@ -292,7 +292,13 @@ checksumming every input file's real content can take a visible moment on
 a library-heavy PDK. A bundled-default Cadence Genus flow (no
 .B flow.package
 set) is identified by a content hash of its own Tcl files, not just the
-literal name "default".
+literal name "default". For a Cadence Flowtool environment, the resolved
+.B -from
+/
+.B -to
+stage range is also listed by name (see
+.B -from
+below).
 .TP
 .BI "wolf run --environment " name
 Resolve a named legacy or declarative environment and invoke the existing runner.
@@ -339,10 +345,24 @@ before overwriting
 so the override stays visible in the run's own provenance afterward.
 .TP
 .BI "wolf run -from " stage " -to " stage
-Cadence Flowtool declarative runs only. Select the
-.IR elaborate ", " syn_generic ", " syn_map ", or " syn_opt
-stage range this invocation executes; earlier stages are skipped by
-resuming an earlier run's checkpoint instead of being re-run.
+Cadence Flowtool declarative runs only. Select the stage range this
+invocation executes; earlier stages are skipped by resuming an earlier
+run's checkpoint instead of being re-run. The bundled flow's own nine
+stages are
+.IR syn_generic ", " syn_map ", " syn_opt ", " floorplan ", " prects ,
+.IR cts ", " postcts ", " route ", and " postroute .
+A project's own flow package may declare more (its own stages past
+.IR postroute ,
+or separate sections like
+.I export
+or
+.IR signoff_checks );
+.B "wolf run --plan"
+lists the exact names available for the active environment, and an
+unsupported name's own error message does the same. A name used more
+than once in the flow is accepted as a dotted path (e.g.
+.IR implementation.design_finishing )
+to say which one.
 .TP
 .BI "wolf activate " name
 With the Bash integration loaded, activate the selected WOLF environment in the
