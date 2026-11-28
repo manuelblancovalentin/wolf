@@ -96,6 +96,7 @@ def _summary(
     *,
     from_stage: str | None = None,
     to_stage: str | None = None,
+    stages: list[str] | None = None,
 ) -> None:
     ui.section("Pre-run summary")
 
@@ -177,6 +178,8 @@ def _summary(
             ui.key_value("From stage", from_stage)
         if to_stage:
             ui.key_value("To stage", to_stage)
+        if stages:
+            ui.key_value("Stages", ", ".join(stages))
 
     ui.section("Execution backend")
     ui.key_value("Backend", context.backend)
@@ -187,23 +190,27 @@ def command_run(args: argparse.Namespace) -> int:
         context = _context(args)
     backend = get_backend(context.backend)
     if context.format == "declarative-v1" and context.backend == "cadence-flowtool":
+        from wolf.backend.cadence_genus import (
+            _requires_physical_views, _resolve_stage_indices, allocate_genus_run,
+        )
+        derived, start, end = _resolve_stage_indices(context, args.from_stage, args.to_stage)
+        resolved_from, resolved_to = derived[start].name, derived[end].name
+        stage_names = [stage.selector() for stage in derived[start:end + 1]]
         if args.plan:
-            from wolf.backend.cadence_genus import (
-                _requires_physical_views, _resolve_stage_range, allocate_genus_run,
-            )
-            resolved_from, resolved_to = _resolve_stage_range(context, args.from_stage, args.to_stage)
             checks = backend.validate_genus(
-                context, physical=_requires_physical_views(resolved_from, resolved_to),
+                context, physical=_requires_physical_views(context, resolved_from, resolved_to),
             )
             failures = [f"{item.name}: {item.detail}" for item in checks if not item.available]
             if failures:
                 raise ValueError("Cadence Genus validation failed: " + "; ".join(failures))
-            _summary(context, from_stage=args.from_stage, to_stage=args.to_stage)
+            _summary(
+                context, from_stage=args.from_stage, to_stage=args.to_stage, stages=stage_names,
+            )
             ui.key_value(
                 "Flowtool run directory", allocate_genus_run(context, clean=getattr(args, "clean", False)),
             )
             return 0
-        _summary(context, from_stage=args.from_stage, to_stage=args.to_stage)
+        _summary(context, from_stage=args.from_stage, to_stage=args.to_stage, stages=stage_names)
         if not ui.confirm(
             f"Proceed with previous configuration and run backend {context.backend}?",
             assume_yes=args.yes,

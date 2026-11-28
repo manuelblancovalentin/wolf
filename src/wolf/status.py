@@ -113,8 +113,8 @@ def load_status(run_directory: Path, *, backend_hint: str | None = None) -> RunS
     backend = backend or backend_hint or "unknown"
     expected = []
     try:
-        expected = list(get_backend(backend).stages())
-    except (ValueError, AttributeError):
+        expected = list(get_backend(backend).stages(run))
+    except (ValueError, AttributeError, TypeError):
         pass
     recorded: dict[str, StageResult] = {}
     timing = run / "wolf.stage-results"
@@ -192,7 +192,7 @@ def load_status(run_directory: Path, *, backend_hint: str | None = None) -> RunS
         state = "failed"
     elif any(stage.status == "stalled" for stage in stages):
         state = "stalled"
-    elif all(stage.status == "complete" for stage in stages):
+    elif all(stage.status in ("complete", "skipped") for stage in stages):
         state = "completed"
     elif any(stage.status in {"complete", "running"} for stage in stages):
         state = "partial/incomplete"
@@ -220,8 +220,11 @@ def _format_elapsed(value: float | None) -> str:
     return f"{prefix}{hours:02d}:{minutes:02d}:{seconds:02d}"
 
 
-_STATE_STYLES = {"complete": "green", "running": "yellow", "failed": "red", "stalled": "yellow"}
-_STATE_MARKERS = {"complete": "●", "running": "●", "failed": "●", "stalled": "⚠"}
+_STATE_STYLES = {
+    "complete": "green", "running": "yellow", "failed": "red", "stalled": "yellow",
+    "skipped": "dim",
+}
+_STATE_MARKERS = {"complete": "●", "running": "●", "failed": "●", "stalled": "⚠", "skipped": "⊘"}
 
 
 def _status_cell(value: str, *, spin: bool = False):

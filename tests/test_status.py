@@ -318,6 +318,18 @@ class StalledStatusTests(unittest.TestCase):
         self.assertEqual(payload["run"]["status"], "stalled")
         self.assertEqual(payload["run"]["stalled_stage"], "synth")
 
+    def test_a_trailing_skipped_stage_still_reports_completed(self):
+        """A feature-gated stage with no evidence it ever ran, rolled
+        up to "skipped" by a backend, must not turn an otherwise fully
+        complete run into "partial/incomplete"."""
+        (self.run / "wolf.stage-results").write_text(
+            "synth|complete|12\nfloorplan|complete|8\nplace|skipped|0\n"
+            "cts|complete|3\nroute|complete|4\nfinish|complete|1\n",
+            encoding="utf-8",
+        )
+        status = load_status(self.run)
+        self.assertEqual(status.state, "completed")
+
     def test_the_watch_loop_stops_on_a_stalled_run(self):
         from wolf.commands import status as status_module
 

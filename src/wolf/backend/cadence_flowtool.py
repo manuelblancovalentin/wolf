@@ -8,9 +8,9 @@ from typing import Mapping, Optional, Sequence
 
 from wolf.backend.base import Backend, ValidationItem
 from wolf.backend.cadence_genus import (
-    STAGE_ORDER, GenusInputs, genus_run_active_elapsed, genus_run_metrics, genus_run_qor,
-    genus_run_status, prepare_genus_inputs, rollup_stage_states, run_genus, stage_step_detail,
-    validate_genus,
+    STAGE_ORDER, GenusInputs, _run_stage_order, genus_run_active_elapsed, genus_run_metrics,
+    genus_run_qor, genus_run_status, prepare_genus_inputs, rollup_stage_states, run_genus,
+    stage_step_detail, validate_genus,
 )
 from wolf.context import ResolvedContext
 
@@ -33,8 +33,17 @@ class CadenceFlowtoolBackend(Backend):
         return run_genus(context, clean=clean, interactive=interactive,
                           from_stage=from_stage, to_stage=to_stage, force=force)
 
-    def stages(self) -> Sequence[str]:
-        return STAGE_ORDER
+    def stages(self, run_directory: Optional[Path] = None) -> Sequence[str]:
+        """The real, selectable stage vocabulary -- WOLF's bundled
+        STAGE_ORDER when no run is given yet (shell completion with no
+        resolvable environment), or an existing run's own frozen flow
+        snapshot (see `_run_stage_order`) once one is -- a project
+        flow's own extra stages (design_finishing, export,
+        signoff_checks, ...) show up here too, not just the bundled
+        nine."""
+        if run_directory is None:
+            return STAGE_ORDER
+        return tuple(stage.name for stage in _run_stage_order(Path(run_directory)))
 
     def infer_stage_results(self, run_directory):
         """`wolf status`'s real backend-local hook -- genus_run_status
@@ -43,13 +52,16 @@ class CadenceFlowtoolBackend(Backend):
         invocation's own stage range -- see its own docstring for why:
         a stage flow.status hasn't logged anything for yet still needs
         to show "running" the moment wolf.step-status does), then rolls
-        per-step detail up to each STAGE_ORDER name via the real
-        create_flow membership tree (rollup_stage_states) -- load_status
-        only ever asks about stages() names, so step-level detail alone
-        would otherwise be silently dropped if neither source reports a
-        line for the stage name itself."""
-        _, states = genus_run_status(Path(run_directory))
-        return rollup_stage_states(states)
+        per-step detail up to each of this run's own real stage names
+        (rollup_stage_states) -- load_status only ever asks about
+        stages() names, so step-level detail alone would otherwise be
+        silently dropped if neither source reports a line for the
+        stage name itself."""
+        run_directory = Path(run_directory)
+        _, states = genus_run_status(run_directory)
+        return rollup_stage_states(
+            states, stages=tuple(self.stages(run_directory)),
+        )
 
     def extract_metrics(self, run_directory):
         """`wolf status`'s real backend-local hook -- parses Flowtool's

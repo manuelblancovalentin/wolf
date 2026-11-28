@@ -116,7 +116,7 @@ class OrfsBackend(Backend):
     adapter_filename = "orfs.sh"
     execution_style = "container (Docker or Podman)"
 
-    def stages(self) -> Sequence[str]:
+    def stages(self, run_directory=None) -> Sequence[str]:
         return ORFS_STAGES
 
     def extract_metrics(self, run_directory):

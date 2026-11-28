@@ -976,6 +976,80 @@ class GenusSynthesisFlowTests(GenusFixtureTestCase):
                 from_stage="syn_map", to_stage="syn_generic",
             )
 
+    def _project_flow_with_extra_stages(self) -> Path:
+        """A project flow package extending `implementation` past
+        `postroute`, real enough to exercise derive_stage_order end to
+        end (through _flow_root/_resolve_stage_range), not WOLF's own
+        bundled flow -- the handoff's own reported shape."""
+        custom = self.root / "project-flow"
+        custom.mkdir(parents=True, exist_ok=True)
+        (custom / "common_flows.tcl").write_text(
+            "create_flow -name syn_generic {block_start}\n"
+            "create_flow -name syn_map {block_start}\n"
+            "create_flow -name syn_opt {block_start}\n"
+            "create_flow -name synthesis -skip_metric {syn_generic syn_map syn_opt}\n"
+            "create_flow -name floorplan {block_start}\n"
+            "create_flow -name prects {block_start}\n"
+            "create_flow -name cts {block_start}\n"
+            "create_flow -name postcts {block_start}\n"
+            "create_flow -name route {block_start}\n"
+            "create_flow -name postroute {block_start}\n"
+            "create_flow -name design_finishing {block_start}\n"
+            "create_flow -name implementation -skip_metric "
+            "{floorplan prects cts postcts route postroute design_finishing}\n"
+            "create_flow -name export {block_start}\n"
+            "create_flow -name block -skip_metric {synthesis implementation export}\n",
+            encoding="utf-8",
+        )
+        for name in _FLOW_SCRIPT_NAMES:
+            if name != "common_flows.tcl":
+                (custom / name).write_text(f"# {name}\n", encoding="utf-8")
+        return custom
+
+    def test_a_project_flows_extra_trailing_stage_is_runnable(self):
+        """The handoff's own reported symptom: design_finishing (past
+        postroute) must be a real, runnable -from/-to stage once the
+        environment's own flow package declares it."""
+        custom = self._project_flow_with_extra_stages()
+        inputs = prepare_genus_inputs(
+            self._context(package_paths={"flow": custom}), self.root / "backend" / "cadence-genus",
+            from_stage="design_finishing", to_stage="design_finishing",
+        )
+        manifest = yaml.safe_load(inputs.manifest.read_text(encoding="utf-8"))
+        self.assertEqual(manifest["from_stage"], "design_finishing")
+        self.assertEqual(manifest["synthesis_stages"], ["design_finishing"])
+
+    def test_a_project_flows_range_can_cross_into_a_later_section(self):
+        custom = self._project_flow_with_extra_stages()
+        inputs = prepare_genus_inputs(
+            self._context(package_paths={"flow": custom}), self.root / "backend" / "cadence-genus",
+            from_stage="postroute", to_stage="export",
+        )
+        manifest = yaml.safe_load(inputs.manifest.read_text(encoding="utf-8"))
+        self.assertEqual(
+            manifest["synthesis_stages"], ["postroute", "design_finishing", "export"],
+        )
+
+    def test_a_project_flows_unsupported_stage_error_names_its_real_stages(self):
+        custom = self._project_flow_with_extra_stages()
+        with self.assertRaisesRegex(ValueError, "design_finishing"):
+            prepare_genus_inputs(
+                self._context(package_paths={"flow": custom}), self.root / "backend" / "cadence-genus",
+                from_stage="not-a-real-stage",
+            )
+
+    def test_a_project_flows_bare_floorplan_default_now_fills_through_its_own_last_stage(self):
+        """A single explicit endpoint still fills the other end with
+        the same section's boundary -- for a project flow extending
+        implementation, that boundary is now design_finishing, not the
+        bundled flow's postroute."""
+        custom = self._project_flow_with_extra_stages()
+        from wolf.backend.cadence_genus import _resolve_stage_range
+        context = self._context(package_paths={"flow": custom})
+        self.assertEqual(
+            _resolve_stage_range(context, "floorplan", None), ("floorplan", "design_finishing"),
+        )
+
     def test_dont_use_cells_are_resolved_into_flow_config(self):
         inputs = prepare_genus_inputs(
             self._context(flow_name=FLOW_GENUS_SYN_GENERIC,
@@ -3360,6 +3434,37 @@ class RollupStageStatesTests(unittest.TestCase):
         result = rollup_stage_states({}, stages=("syn_generic",))
         self.assertNotIn("syn_generic", result)
 
+    def test_a_stage_with_no_evidence_but_a_later_complete_stage_is_skipped(self):
+        """The handoff's own "skipped" requirement: a feature-gated
+        stage (postroute_signoff_opt, off by default) Flowtool itself
+        never invoked -- no evidence at all -- while a later stage in
+        the same run did run."""
+        from wolf.backend.cadence_genus import rollup_stage_states, stage_canonical_paths
+        states = {path: "complete" for path in stage_canonical_paths("postroute")}
+        states["implementation.design_finishing.block_start"] = "complete"
+        result = rollup_stage_states(
+            states, stages=("postroute", "postroute_signoff_opt", "design_finishing"),
+        )
+        self.assertEqual(result["postroute"], "complete")
+        self.assertEqual(result["postroute_signoff_opt"], "skipped")
+        self.assertEqual(result["design_finishing"], "complete")
+
+    def test_a_stage_with_no_evidence_as_the_last_one_stays_pending(self):
+        """Nothing has reached this stage yet at all -- stays "pending"
+        (absent), not "skipped": the heuristic only fires retroactively,
+        never for a stage nobody has gotten to."""
+        from wolf.backend.cadence_genus import rollup_stage_states, stage_canonical_paths
+        paths = stage_canonical_paths("postroute")
+        result = rollup_stage_states(
+            {path: "complete" for path in paths}, stages=("postroute", "postroute_signoff_opt"),
+        )
+        self.assertNotIn("postroute_signoff_opt", result)
+
+    def test_a_middle_stage_followed_only_by_other_pending_stages_stays_pending(self):
+        from wolf.backend.cadence_genus import rollup_stage_states
+        result = rollup_stage_states({}, stages=("syn_generic", "syn_map", "syn_opt"))
+        self.assertEqual(result, {})
+
     def test_a_shared_step_name_alone_does_not_falsely_complete_other_stages(self):
         """Regression: block_start is a real create_flow_step shared by
         syn_generic, syn_map, AND syn_opt -- but flow.status
@@ -4110,6 +4215,37 @@ class CadenceFlowtoolBackendQorTests(unittest.TestCase):
         ), patch("wolf.backend.cadence_flowtool.genus_run_active_elapsed", return_value=None):
             result = CadenceFlowtoolBackend().extract_metrics("/some/run/dir")
         self.assertNotIn("cadence.qor_by_stage", result)
+
+
+class RunPlanStageListTests(GenusFixtureTestCase):
+    """`wolf run --plan` must show the resolved stage list, derived
+    from the environment's own flow -- not just the bare -from/-to
+    endpoints it showed before this existed."""
+
+    def test_the_resolved_stage_list_is_printed(self):
+        import contextlib
+        import io
+
+        from wolf.commands.run import _summary
+
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            _summary(
+                self._context(), from_stage="syn_generic", to_stage="syn_opt",
+                stages=["syn_generic", "syn_map", "syn_opt"],
+            )
+        self.assertIn("syn_generic, syn_map, syn_opt", output.getvalue())
+
+    def test_with_no_stages_given_the_line_is_simply_omitted(self):
+        import contextlib
+        import io
+
+        from wolf.commands.run import _summary
+
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            _summary(self._context(), from_stage="syn_generic", to_stage="syn_opt")
+        self.assertNotIn("Stages", output.getvalue())
 
 
 if __name__ == "__main__":

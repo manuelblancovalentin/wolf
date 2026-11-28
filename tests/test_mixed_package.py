@@ -463,9 +463,10 @@ class MixedLanguagePackageTests(unittest.TestCase):
         )
 
     def test_implementation_stages_require_physical_views(self):
-        self.assertFalse(_requires_physical_views("syn_generic", "syn_opt"))
-        self.assertTrue(_requires_physical_views("floorplan", "floorplan"))
-        self.assertTrue(_requires_physical_views("syn_generic", "postroute"))
+        context = self._context()
+        self.assertFalse(_requires_physical_views(context, "syn_generic", "syn_opt"))
+        self.assertTrue(_requires_physical_views(context, "floorplan", "floorplan"))
+        self.assertTrue(_requires_physical_views(context, "syn_generic", "postroute"))
 
     def test_planning_an_implementation_stage_without_lef_rc_fails_validation(self):
         context = self._context()

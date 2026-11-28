@@ -114,59 +114,195 @@ _SYNTHESIS_STAGE_NETLIST_SUFFIX = {
 }
 
 
+def _context_stage_order(context: ResolvedContext) -> tuple["StageSpec", ...]:
+    """The real, selectable -from/-to vocabulary for this context's own
+    flow (bundled or a project's own) -- see `derive_stage_order`. The
+    top flow's name is read directly from whichever flow_template this
+    context resolves to (`flow_current:`, never a `${TOKEN}`), so this
+    works even before a run exists yet (`wolf run --plan`, shell
+    completion)."""
+    flow_root = _flow_root(context)
+    _, flow_template = _flowtool_templates(context, flow_root)
+    top_flow = flow_current_name(flow_template)
+    return derive_stage_order(flow_root, top_flow) or _bundled_stage_order()
+
+
+def _bundled_stage_order() -> tuple["StageSpec", ...]:
+    """WOLF's fixed STAGE_ORDER/topology, as StageSpecs -- the fallback
+    for a flow_root with no parseable create_flow declarations at all
+    (a minimal fixture exercising something unrelated, a genuinely
+    unparseable custom flow, or a run too old to carry the manifest
+    keys `_run_stage_order` needs), as if this derivation never
+    existed."""
+    return tuple(
+        StageSpec(
+            name=stage, path=f"block.{_STAGE_TOPLEVEL_FLOW[stage]}.{stage}",
+            toplevel=_STAGE_TOPLEVEL_FLOW[stage], ambiguous=False,
+        )
+        for stage in STAGE_ORDER
+    )
+
+
+def _run_stage_order(run_directory: Path) -> tuple["StageSpec", ...]:
+    """The real, selectable stage vocabulary for an *existing* run,
+    derived from its own frozen flow-script snapshot
+    (generated.files.flowtool_scripts_directory in wolf.resolved.yaml)
+    -- not the live project flow package, which may have moved on
+    since this run started. This is the direct fix for the gap
+    `rollup_stage_states`'s own docstring and the CHANGELOG both
+    flagged: a project's own expanded step list used to always reflect
+    the bundled flow's steps, never the run's real ones.
+
+    Degrades to `_bundled_stage_order()` for a run with no manifest,
+    an unreadable one, or one too old to carry these keys -- never
+    raises."""
+    located = _run_flow_root_and_top(run_directory)
+    if located is None:
+        return _bundled_stage_order()
+    flow_root, top_flow = located
+    return derive_stage_order(flow_root, top_flow) or _bundled_stage_order()
+
+
+def _run_flow_root_and_top(run_directory: Path) -> Optional[tuple[Path, str]]:
+    """`_run_stage_order`'s own lookup, factored out so
+    `stage_step_detail` can reuse the exact same frozen flow_root for
+    an extra (non-STAGE_ORDER) stage's own membership tree, instead of
+    the bundled one. Returns None wherever `_run_stage_order` would
+    have degraded to the bundled fallback."""
+    manifest_path = run_directory / "wolf.resolved.yaml"
+    try:
+        manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError):
+        return None
+    if not isinstance(manifest, dict):
+        return None
+    generated = manifest.get("generated")
+    files = generated.get("files") if isinstance(generated, dict) else None
+    scripts_directory = files.get("flowtool_scripts_directory") if isinstance(files, dict) else None
+    design_name = manifest.get("design_name")
+    if not scripts_directory or not design_name:
+        return None
+    flow_yaml = run_directory / f"flow.{design_name}.yaml"
+    try:
+        top_flow = flow_current_name(flow_yaml)
+    except OSError:
+        return None
+    return Path(scripts_directory), top_flow
+
+
+def _resolve_stage_token(derived: tuple["StageSpec", ...], token: str) -> Optional[int]:
+    """The derived-order index `token` selects: an exact dotted path
+    always works (even for a name that's ambiguous elsewhere); a bare
+    name works only when it is unique across the whole derived order."""
+    for index, stage in enumerate(derived):
+        if token == stage.path:
+            return index
+    for index, stage in enumerate(derived):
+        if not stage.ambiguous and token == stage.name:
+            return index
+    return None
+
+
+def _resolve_stage_indices(
+    context: ResolvedContext, from_stage: Optional[str], to_stage: Optional[str],
+) -> tuple[tuple["StageSpec", ...], int, int]:
+    """`_resolve_stage_range`'s real implementation, returning the full
+    derived order plus the resolved (from, to) positions within it --
+    `prepare_genus_inputs` needs the positions themselves to slice the
+    derived order correctly even for an ambiguous name (resolved via its
+    caller-given dotted path, not by re-searching for the bare name
+    afterward, which could land on the wrong one of two same-named
+    stages)."""
+    derived = _context_stage_order(context)
+    choices = [stage.selector() for stage in derived] or list(STAGE_ORDER)
+
+    def group_bounds(toplevel: str) -> tuple[int, int]:
+        indices = [index for index, stage in enumerate(derived) if stage.toplevel == toplevel]
+        return indices[0], indices[-1]
+
+    if from_stage is None and to_stage is None:
+        # `flow.name` is recognized as shorthand for "all stages through
+        # X" only when it's one of the three known genus-syn-*/
+        # FLOW_GENUS_SYN_* values -- `flow.name` is also just a plain
+        # label in every other case (the bundled default flow's own
+        # literal "default", or a real installed flow package's own
+        # manifest name, e.g. "orfs" or an institution's own flow name),
+        # and must never block the sensible default range just because
+        # it doesn't happen to match one of the three shorthands. With
+        # neither given and no recognized shorthand, the default is the
+        # complete synthesis flow (unchanged: a project flow with extra
+        # stages past postroute must not make an existing bare `wolf
+        # run` suddenly run all the way through them).
+        flow_name = context.flow_name or FLOW_GENUS_SYN_OPT
+        default_to = _FLOW_NAME_STAGE_RANGE.get(flow_name, SYNTHESIS_STAGES[-1])
+        start = _resolve_stage_token(derived, STAGE_ORDER[0])
+        end = _resolve_stage_token(derived, default_to)
+        if start is None or end is None:
+            raise ValueError(f"unsupported stage {STAGE_ORDER[0]!r}; expected one of {choices}")
+        return derived, start, end
+
+    # A single explicit endpoint fills the other end with the *same
+    # section's* boundary, not the whole derived order's edge -- `-from
+    # syn_map` alone still means "through syn_opt", and `-from
+    # floorplan` alone means "through this flow's last implementation-
+    # section stage" (postroute for the bundled flow; a project flow
+    # extending implementation past postroute fills through its own
+    # last one instead). Giving both endpoints explicitly may still
+    # cross sections (e.g. `-from syn_generic -to postroute` for the
+    # whole `block`, or crossing from `implementation` into `export`),
+    # matching the reference flow's own `block` flow spanning
+    # `synthesis`+`implementation`.
+    if from_stage is None:
+        to_index = _resolve_stage_token(derived, to_stage)
+        if to_index is None:
+            raise ValueError(f"unsupported stage {to_stage!r}; expected one of {choices}")
+        start, _ = group_bounds(derived[to_index].toplevel)
+        from_stage = derived[start].selector()
+    if to_stage is None:
+        from_index = _resolve_stage_token(derived, from_stage)
+        if from_index is None:
+            raise ValueError(f"unsupported stage {from_stage!r}; expected one of {choices}")
+        _, end = group_bounds(derived[from_index].toplevel)
+        to_stage = derived[end].selector()
+
+    from_index = _resolve_stage_token(derived, from_stage)
+    if from_index is None:
+        raise ValueError(f"unsupported stage {from_stage!r}; expected one of {choices}")
+    to_index = _resolve_stage_token(derived, to_stage)
+    if to_index is None:
+        raise ValueError(f"unsupported stage {to_stage!r}; expected one of {choices}")
+    if from_index > to_index:
+        raise ValueError(f"-from {from_stage!r} comes after -to {to_stage!r}")
+    return derived, from_index, to_index
+
+
 def _resolve_stage_range(
     context: ResolvedContext, from_stage: Optional[str], to_stage: Optional[str]
 ) -> tuple[str, str]:
-    """Return the (from, to) stage names this run should execute.
-
-    An explicit -from/-to pair (checkpoint reuse's real primitive) always
-    wins. Without one, `flow.name` is recognized as shorthand for "all
-    stages through X" only when it's one of the three known
-    genus-syn-*/FLOW_GENUS_SYN_* values -- `flow.name` is also just a
-    plain label in every other case (the bundled default flow's own
-    literal "default", or a real installed flow package's own manifest
-    name, e.g. "orfs" or an institution's own flow name), and must never
-    block the sensible default range just because it doesn't happen to
-    match one of the three shorthands. With neither given and no
-    recognized shorthand, the default is the complete synthesis flow
-    (unchanged: adding IMPLEMENTATION_STAGES to STAGE_ORDER must not make
-    an existing bare `wolf run`/`-from syn_map` suddenly run all the way
-    through postroute).
-
-    A single explicit endpoint fills the other end with the *same
-    section's* boundary, not the global STAGE_ORDER edge -- `-from
-    syn_map` alone still means "through syn_opt", and `-from floorplan`
-    alone means "through postroute", not one default blindly spanning
-    both. Giving both endpoints explicitly may still cross sections (e.g.
-    `-from syn_generic -to postroute` for the whole `block`), matching the
-    reference flow's own `block` flow spanning `synthesis`+`implementation`.
-    """
-    if from_stage is None and to_stage is None:
-        flow_name = context.flow_name or FLOW_GENUS_SYN_OPT
-        return STAGE_ORDER[0], _FLOW_NAME_STAGE_RANGE.get(flow_name, SYNTHESIS_STAGES[-1])
-    if from_stage is None:
-        from_stage = (
-            SYNTHESIS_STAGES[0] if to_stage in SYNTHESIS_STAGES else IMPLEMENTATION_STAGES[0]
-        )
-    if to_stage is None:
-        to_stage = (
-            SYNTHESIS_STAGES[-1] if from_stage in SYNTHESIS_STAGES else IMPLEMENTATION_STAGES[-1]
-        )
-    for stage in (from_stage, to_stage):
-        if stage not in STAGE_ORDER:
-            raise ValueError(f"unsupported stage {stage!r}; expected one of {STAGE_ORDER}")
-    if STAGE_ORDER.index(from_stage) > STAGE_ORDER.index(to_stage):
-        raise ValueError(f"-from {from_stage!r} comes after -to {to_stage!r}")
-    return from_stage, to_stage
+    """Return the (from, to) stage *names* this run should execute --
+    see `_resolve_stage_indices` for the real logic. An explicit
+    -from/-to pair (checkpoint reuse's real primitive) always wins over
+    any default."""
+    derived, start, end = _resolve_stage_indices(context, from_stage, to_stage)
+    return derived[start].name, derived[end].name
 
 
-def _requires_physical_views(from_stage: str, to_stage: str) -> bool:
-    """Any stage from floorplan onward needs LEF/RC before Flowtool is
-    even invoked -- Innovus cannot do anything physical without them,
-    unlike Genus's synthesis stages where physical views are optional."""
-    start = STAGE_ORDER.index(from_stage)
-    end = STAGE_ORDER.index(to_stage)
-    return any(stage in IMPLEMENTATION_STAGES for stage in STAGE_ORDER[start:end + 1])
+def _requires_physical_views(
+    context: ResolvedContext, from_stage: str, to_stage: str,
+) -> bool:
+    """Any stage outside the pure-synthesis section needs LEF/RC before
+    Flowtool is even invoked -- Innovus cannot do anything physical
+    without them, unlike Genus's synthesis stages where physical views
+    are optional. Generalized off this context's own derived stage
+    order: a range is synthesis-only (no physical views needed) only
+    when every stage in it shares the bundled flow's own "synthesis"
+    toplevel; any other toplevel (the bundled "implementation", or any
+    project-declared section like "export"/"signoff_checks") assumes
+    physical views are required -- a safe, imprecise default for an
+    unrecognized toplevel (an unnecessary check costs a validation
+    message, not a broken run)."""
+    derived, start, end = _resolve_stage_indices(context, from_stage, to_stage)
+    return any(stage.toplevel != "synthesis" for stage in derived[start:end + 1])
 
 
 def _tcl_scalar(value: Any) -> str:
@@ -1247,13 +1383,24 @@ def genus_run_status(run_directory: Path) -> tuple[str, dict[str, str]]:
         last_update_index[path] = index
     if last_invocation is not None:
         invocation_index, from_stage, to_stage = last_invocation
-        if from_stage in STAGE_ORDER:
-            start = STAGE_ORDER.index(from_stage)
-            end = STAGE_ORDER.index(to_stage) if to_stage in STAGE_ORDER else start
+        # The run's own real stage vocabulary -- a project flow's extra
+        # stages (past STAGE_ORDER) get this same live-event overlay
+        # too, not just the original nine.
+        stage_names = [stage.name for stage in _run_stage_order(run_directory)]
+        if from_stage in stage_names:
+            start = stage_names.index(from_stage)
+            end = stage_names.index(to_stage) if to_stage in stage_names else start
             membership = flow_membership()
             live_events = genus_run_step_events(run_directory)
-            for stage in STAGE_ORDER[start:end + 1]:
-                canonical_paths = stage_canonical_paths(stage, membership)
+            for stage in stage_names[start:end + 1]:
+                # stage_canonical_paths only knows the bundled
+                # "block.<synthesis|implementation>" prefix table --
+                # a stage outside STAGE_ORDER (a project flow's own
+                # extra stage) has no bundled canonical path at all,
+                # so it goes straight to the tolerant fallback below.
+                canonical_paths = (
+                    stage_canonical_paths(stage, membership) if stage in _STAGE_TOPLEVEL_FLOW else ()
+                )
                 matched = False
                 for path in canonical_paths:
                     bare_name = path.rsplit(".", 1)[-1]
@@ -2081,7 +2228,13 @@ def flow_current_name(flow_template: Path) -> str:
     confirmed real in both the bundled template and every override this
     was built against -- so reading the template directly (not the
     run's own rendered flow.<design>.yaml) is safe even before a run
-    exists yet, which `wolf run --plan` and shell completion both need."""
+    exists yet, which `wolf run --plan` and shell completion both need.
+
+    A template with no readable `flow_current:` at all (a minimal
+    fixture exercising something else entirely, or a genuinely
+    nonstandard override) falls back to WOLF's own bundled top flow
+    name ("block") rather than raising -- the safe default for a
+    template that doesn't otherwise follow this convention."""
     text = flow_template.read_text(encoding="utf-8")
     try:
         document = yaml.safe_load(text)
@@ -2092,7 +2245,7 @@ def flow_current_name(flow_template: Path) -> str:
     match = re.search(r"^flow_current:\s*(\S+)", text, re.MULTILINE)
     if match:
         return match.group(1)
-    raise ValueError(f"{flow_template} has no flow_current: entry")
+    return "block"
 
 
 def derive_stage_order(
@@ -2289,13 +2442,31 @@ def rollup_stage_states(
     preserved alongside the stage-level rollup, for a future renderer
     that wants the full detail, not just the one load_status reads
     today.
+
+    A final pass marks a stage "skipped" instead of leaving it absent
+    (-> "pending") when it has no evidence at all that it ever ran but
+    a LATER stage in `stages` does -- most plausibly a stage Flowtool
+    itself never invoked because a feature flag disabled it (see the
+    handoff this was built for: `postroute_signoff_opt`, off by
+    default). This is a heuristic, not real Tcl feature-flag
+    introspection -- no Python-visible registry of which steps are
+    feature-gated or by what flag exists (gating is opaque per-step
+    `get_flow_config -quiet` conditionals) -- so it cannot tell
+    "skipped by a feature flag" from "skipped for any other reason",
+    and never fires for a stage nobody has reached yet, which still
+    correctly stays "pending".
     """
     rolled = dict(states)
     membership = flow_membership()
     for stage in stages:
         if stage in rolled:
             continue
-        canonical_paths = stage_canonical_paths(stage, membership)
+        # stage_canonical_paths only knows the bundled
+        # "block.<synthesis|implementation>" prefix table -- a stage
+        # outside STAGE_ORDER (a project flow's own extra stage) has
+        # no bundled canonical path at all, so it goes straight to the
+        # tolerant fallback below.
+        canonical_paths = stage_canonical_paths(stage, membership) if stage in _STAGE_TOPLEVEL_FLOW else ()
         known = {path: states[path] for path in canonical_paths if path in states}
         if known:
             rolled[stage] = _rollup_one_state(known, len(canonical_paths))
@@ -2306,6 +2477,13 @@ def rollup_stage_states(
         rolled[stage] = _rollup_one_state_tolerant(tolerant)
         if inferred is not None:
             inferred.add(stage)
+    has_later_evidence = False
+    for stage in reversed(stages):
+        state = rolled.get(stage)
+        if state in ("complete", "running", "failed", "stalled"):
+            has_later_evidence = True
+        elif has_later_evidence and state in (None, "pending"):
+            rolled[stage] = "skipped"
     return rolled
 
 
@@ -2348,14 +2526,34 @@ def stage_step_detail(
     `starting` record for it; a nested sub-flow's own aggregate row
     never gets one either, since there is no single real "start" for
     an aggregate."""
-    if stage not in STAGE_ORDER:
-        return ()
-    membership = membership if membership is not None else flow_membership()
+    run_directory = Path(run_directory)
+    if stage in STAGE_ORDER:
+        prefix = f"block.{_STAGE_TOPLEVEL_FLOW[stage]}.{stage}"
+        if membership is None:
+            membership = flow_membership()
+    else:
+        # A project flow's own extra stage (past STAGE_ORDER) -- its
+        # real membership tree lives in this run's own frozen flow
+        # snapshot, not the bundled one, so its expanded step list
+        # reflects the run's real steps rather than the bundled flow's.
+        located = _run_flow_root_and_top(run_directory)
+        if located is None:
+            return ()
+        flow_root, top_flow = located
+        run_membership = flow_membership(flow_root)
+        spec = next(
+            (s for s in derive_stage_order(flow_root, top_flow, run_membership) if s.name == stage),
+            None,
+        )
+        if spec is None:
+            return ()
+        prefix = spec.path
+        if membership is None:
+            membership = run_membership
     _, states = genus_run_status(run_directory)
     events = genus_run_step_events(run_directory)
     live_elapsed = genus_run_step_elapsed(run_directory)
     flow_status_elapsed = genus_run_status_elapsed(run_directory)
-    prefix = f"block.{_STAGE_TOPLEVEL_FLOW[stage]}.{stage}"
     detail: list[tuple[str, str, Optional[float]]] = []
     for member in membership.get(stage, ()):
         leaf_paths: list[str] = []
@@ -2419,14 +2617,19 @@ def prepare_genus_inputs(
         raise ValueError("Cadence Genus preparation requires ordered resolved sources")
     if not context.design_top:
         raise ValueError("Cadence Genus preparation requires design.top")
-    resolved_from_stage, resolved_to_stage = _resolve_stage_range(context, from_stage, to_stage)
+    derived_stages, _stage_start, _stage_end = _resolve_stage_indices(context, from_stage, to_stage)
     # Kept named synthesis_stages for provenance/manifest compatibility --
     # a frozen wolf.resolved.yaml key -- even though a range reaching into
-    # IMPLEMENTATION_STAGES now legitimately lands non-synthesis stage
-    # names in here too.
-    synthesis_stages = STAGE_ORDER[
-        STAGE_ORDER.index(resolved_from_stage):STAGE_ORDER.index(resolved_to_stage) + 1
-    ]
+    # IMPLEMENTATION_STAGES (or a project flow's own extra stages) now
+    # legitimately lands non-synthesis stage names in here too. Sliced
+    # by position (not by re-searching for the bare name), so a stage
+    # name used more than once in this flow still slices the exact
+    # occurrence the caller's own -from/-to selected.
+    synthesis_stages = tuple(
+        stage.name for stage in derived_stages[_stage_start:_stage_end + 1]
+    )
+    resolved_from_stage = derived_stages[_stage_start].name
+    resolved_to_stage = derived_stages[_stage_end].name
     genus_vhdl_standard = _normalize_vhdl_standard(context.vhdl_standard)
     destination = destination.resolve()
     destination.mkdir(parents=True, exist_ok=True)
@@ -2928,7 +3131,7 @@ def run_genus(
     """
     resolved_from_stage, resolved_to_stage = _resolve_stage_range(context, from_stage, to_stage)
     flowtool = validate_genus_or_raise(
-        context, physical=_requires_physical_views(resolved_from_stage, resolved_to_stage),
+        context, physical=_requires_physical_views(context, resolved_from_stage, resolved_to_stage),
     )
     run_directory = allocate_genus_run(context, clean=clean)
     _update_latest_run_link(context, run_directory)
