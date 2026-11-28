@@ -445,16 +445,22 @@ def _design_setup(context: ResolvedContext) -> Mapping[str, Any]:
     )
 
 
-def _genus_set_db_overrides(context: ResolvedContext) -> tuple[tuple[str, Any], ...]:
+def _genus_set_db_overrides(setup: Mapping[str, Any]) -> tuple[tuple[str, Any], ...]:
     """Return ordered, validated set_db overrides from this design's
-    setup.yaml genus_set_db key."""
-    set_db = _design_setup(context).get("genus_set_db") or {}
+    setup.yaml genus_set_db key. `setup` is this design's own parsed
+    setup.<design>.yaml (see _design_setup) -- passed in directly, not
+    a full ResolvedContext, so `wolf env set` can run this same
+    validation eagerly against just the one key being set, before a
+    run context exists at all."""
+    set_db = setup.get("genus_set_db") or {}
     if not isinstance(set_db, Mapping):
         raise ValueError("genus_set_db must be a mapping")
     return tuple(sorted(set_db.items()))
 
 
-def _active_views_overrides(context: ResolvedContext) -> tuple[tuple[str, ...], tuple[str, ...]]:
+def _active_views_overrides(
+    setup: Mapping[str, Any], technology: Optional[ResolvedTechnology] = None,
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
     """Validate this design's setup.yaml active_views.{setup,hold} -> an
     (setup_views, hold_views) pair, each a tuple of declared analysis-view
     (corner) names -- empty when not overridden, which keeps today's
@@ -473,15 +479,15 @@ def _active_views_overrides(context: ResolvedContext) -> tuple[tuple[str, ...], 
     implementation stage (not yet selectable per stage); narrowing that
     further is a real possible follow-up, not implemented here.
     """
-    active_views = _design_setup(context).get("active_views") or {}
+    active_views = setup.get("active_views") or {}
     if not isinstance(active_views, Mapping):
         raise ValueError("active_views must be a mapping")
     unknown = set(active_views) - _ALLOWED_ACTIVE_VIEWS_KEYS
     if unknown:
         raise ValueError(f"unsupported active_views key: {sorted(unknown)[0]}")
     declared = (
-        {corner.name for corner in context.technology.timing_corners}
-        if context.technology else set()
+        {corner.name for corner in technology.timing_corners}
+        if technology else set()
     )
     result = []
     for key in ("setup", "hold"):
@@ -554,7 +560,7 @@ class CtsOverrides(NamedTuple):
     max_fanout: Optional[int] = None
 
 
-def _cts_overrides(context: ResolvedContext) -> CtsOverrides:
+def _cts_overrides(setup: Mapping[str, Any]) -> CtsOverrides:
     """Validate this design's setup.yaml cts_* keys -> CCOpt cell
     selection and timing targets applied before clock tree synthesis
     (set_cts_config, re-applied at the start of both prects and cts --
@@ -576,7 +582,6 @@ def _cts_overrides(context: ResolvedContext) -> CtsOverrides:
     numeric target or one of "default"/"auto"/"ignore"/"double" (also
     confirmed real, man 20.15) -- see _optional_cts_target.
     """
-    setup = _design_setup(context)
 
     def _cells(key: str) -> tuple[str, ...]:
         # setup.get(key) or [] (not setup.get(key, [])): a commented-out
@@ -612,7 +617,7 @@ class TieoffOverrides(NamedTuple):
     max_distance: Optional[float] = None
 
 
-def _tieoff_overrides(context: ResolvedContext) -> TieoffOverrides:
+def _tieoff_overrides(setup: Mapping[str, Any]) -> TieoffOverrides:
     """Validate this design's setup.yaml add_tieoffs_* keys -> the real
     Innovus add_tieoffs_cells (max two: one tie-high, one tie-low
     driver, man 20.15) and its companion attributes. Left unset (today's
@@ -620,7 +625,6 @@ def _tieoff_overrides(context: ResolvedContext) -> TieoffOverrides:
     ([get_db add_tieoffs_cells] ne "") keeps the step a no-op, same as
     before this existed.
     """
-    setup = _design_setup(context)
     cells = _cell_pattern_list(setup.get("add_tieoffs_cells") or [], "add_tieoffs_cells")
     if len(cells) > 2:
         raise ValueError(
@@ -641,7 +645,7 @@ class FillerOverrides(NamedTuple):
     cells: tuple[str, ...] = ()
 
 
-def _filler_overrides(context: ResolvedContext) -> FillerOverrides:
+def _filler_overrides(setup: Mapping[str, Any]) -> FillerOverrides:
     """Validate this design's setup.yaml add_fillers_cells -> the real
     Innovus add_fillers_cells attribute (man 20.15: exact cell names,
     no pattern expansion documented, unlike cts_buffer_cells/etc).
@@ -654,7 +658,6 @@ def _filler_overrides(context: ResolvedContext) -> FillerOverrides:
     same no-op behavior as before this existed, now at least reachable
     by setup.yaml instead of unreachable entirely.
     """
-    setup = _design_setup(context)
     return FillerOverrides(
         cells=_cell_pattern_list(setup.get("add_fillers_cells") or [], "add_fillers_cells"),
     )
@@ -666,7 +669,7 @@ class RouteDesignOverrides(NamedTuple):
     antenna_cell_name: tuple[str, ...] = ()
 
 
-def _route_design_overrides(context: ResolvedContext) -> RouteDesignOverrides:
+def _route_design_overrides(setup: Mapping[str, Any]) -> RouteDesignOverrides:
     """Validate this design's setup.yaml design_top_routing_layer/
     design_bottom_routing_layer/route_design_antenna_cell_name -> the
     real Innovus design_top_routing_layer/design_bottom_routing_layer/
@@ -674,9 +677,10 @@ def _route_design_overrides(context: ResolvedContext) -> RouteDesignOverrides:
     20.15). Left unset (today's default, both ""): route_design has no
     layer-range constraint at all, which is a real risk -- routing
     into layers outside a project's own signed-off methodology,
-    silently.
+    silently. Layer names are taken as given, not checked against the
+    PDK's own declared layer set -- same as clock_routing_* below,
+    deliberately deferred to Innovus itself (see its docstring).
     """
-    setup = _design_setup(context)
 
     def _layer(key: str) -> Optional[str]:
         value = setup.get(key)
@@ -700,7 +704,7 @@ class ExportOverrides(NamedTuple):
     export_spef: Optional[bool] = None
 
 
-def _export_overrides(context: ResolvedContext) -> ExportOverrides:
+def _export_overrides(setup: Mapping[str, Any]) -> ExportOverrides:
     """Validate this design's setup.yaml gds_layermap/export_spef.
 
     gds_layermap -> write_stream's own -map_file argument (man 20.15).
@@ -716,7 +720,6 @@ def _export_overrides(context: ResolvedContext) -> ExportOverrides:
     writes: extract_rc is a real-time cost on a large design, not a
     cheap write.
     """
-    setup = _design_setup(context)
     gds_layermap = setup.get("gds_layermap")
     if gds_layermap is not None and (not isinstance(gds_layermap, str) or not gds_layermap):
         raise ValueError("gds_layermap must be a nonempty string")
@@ -738,7 +741,7 @@ class ClockRoutingOverrides(NamedTuple):
     types: tuple[tuple[str, ClockRoutingType], ...] = ()
 
 
-def _clock_routing_overrides(context: ResolvedContext) -> ClockRoutingOverrides:
+def _clock_routing_overrides(setup: Mapping[str, Any]) -> ClockRoutingOverrides:
     """Validate this design's setup.yaml clock_routing_* keys -> a
     non-default routing rule (create_route_rule -width_multiplier/
     -spacing_multiplier, confirmed real, man 20.15) and top/trunk/leaf
@@ -752,7 +755,6 @@ def _clock_routing_overrides(context: ResolvedContext) -> ClockRoutingOverrides:
     rather than Python guessing. Left unset (today's default):
     add_clock_route_types stays a no-op.
     """
-    setup = _design_setup(context)
 
     def _multiplier_map(value: Any, field: str) -> tuple[tuple[str, float], ...]:
         if not isinstance(value, Mapping):
@@ -803,7 +805,7 @@ def _clock_routing_overrides(context: ResolvedContext) -> ClockRoutingOverrides:
     return ClockRoutingOverrides(width_multiplier, spacing_multiplier, tuple(types))
 
 
-def _postsyn_netlists(context: ResolvedContext) -> tuple[str, ...]:
+def _postsyn_netlists(setup: Mapping[str, Any]) -> tuple[str, ...]:
     """Pre-synthesized sub-block netlists genus_to_innovus reads by reference.
 
     For hierarchical synthesis of a repeated block (e.g. one eFPGA tile
@@ -811,13 +813,13 @@ def _postsyn_netlists(context: ResolvedContext) -> tuple[str, ...]:
     at that block's own synthesized netlist so the handoff includes it
     directly instead of every instance being re-elaborated and re-optimized.
     """
-    values = _design_setup(context).get("postsyn_netlists") or []
+    values = setup.get("postsyn_netlists") or []
     if not isinstance(values, list) or not all(isinstance(value, str) and value for value in values):
         raise ValueError("postsyn_netlists must be a list of paths")
     return tuple(values)
 
 
-def _inject_snippets(context: ResolvedContext) -> tuple[tuple[str, str, tuple[str, ...]], ...]:
+def _inject_snippets(setup: Mapping[str, Any]) -> tuple[tuple[str, str, tuple[str, ...]], ...]:
     """Validate this design's setup.yaml inject.<step>.<pre|post> ->
     [snippets].
 
@@ -829,7 +831,7 @@ def _inject_snippets(context: ResolvedContext) -> tuple[tuple[str, str, tuple[st
     through setup.yaml's own merged design-setup content, see
     _render_setup_yaml), same as the other _*_overrides functions.
     """
-    inject = _design_setup(context).get("inject") or {}
+    inject = setup.get("inject") or {}
     if not isinstance(inject, Mapping):
         raise ValueError("inject must be a mapping")
     result = []
@@ -2661,20 +2663,21 @@ def prepare_genus_inputs(
         destination / "technology.tcl" if (context.technology and not has_corners) else None
     )
     mmmc_script = destination / "mmmc.tcl" if has_corners else None
-    genus_overrides = _genus_set_db_overrides(context)
+    design_setup = _design_setup(context)
+    genus_overrides = _genus_set_db_overrides(design_setup)
     overrides_script = destination / "overrides.tcl" if genus_overrides else None
     # Only ever consumed as validation now (max two tieoff cells, numeric
     # target types, a view name actually declared by the technology, ...)
     # -- their real values reach Tcl through setup.yaml's own merged
     # design-setup content (_design_setup, see _render_setup_yaml), not a
     # separately-formatted flow-config.tcl rendering of them.
-    _active_views_overrides(context)
-    _cts_overrides(context)
-    _tieoff_overrides(context)
-    _filler_overrides(context)
-    _route_design_overrides(context)
-    _export_overrides(context)
-    _clock_routing_overrides(context)
+    _active_views_overrides(design_setup, context.technology)
+    _cts_overrides(design_setup)
+    _tieoff_overrides(design_setup)
+    _filler_overrides(design_setup)
+    _route_design_overrides(design_setup)
+    _export_overrides(design_setup)
+    _clock_routing_overrides(design_setup)
     flow_config_script = destination / "flow-config.tcl"
     manifest = destination / "genus-inputs.yaml"
     constraints = destination / "constraints.sdc"
@@ -2780,8 +2783,8 @@ def prepare_genus_inputs(
     # Validation only (a real path/non-empty-string list, pre/post are the
     # only phases, ...) -- see the _active_views_overrides/_cts_overrides/
     # etc. comment above for why the actual values aren't used here.
-    _postsyn_netlists(context)
-    _inject_snippets(context)
+    _postsyn_netlists(design_setup)
+    _inject_snippets(design_setup)
 
     # The flow *scripts* -- the real step definitions -- get a deduplicated,
     # numbered snapshot. Their dedup digest covers only these files, so

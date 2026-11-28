@@ -125,6 +125,104 @@ class EnvSetUnsetDesignSetupRoutingTests(unittest.TestCase):
         self.assertIn("project.root", result.stderr)
 
 
+class EnvSetEagerValidationTests(unittest.TestCase):
+    """wolf env set now runs the same cadence_genus.py value-shape
+    validator a render would use, before writing -- a bad value fails
+    immediately (handoff point 7), not only the next time a run
+    renders setup.yaml."""
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory(prefix="wolf-env-eager-validate-")
+        self.root = Path(self.temporary.name)
+        self.project_root = self.root / "project"
+        self.environment_directory = self.root / "wolf-home" / "envs" / "demo-env"
+        self.environment_directory.mkdir(parents=True)
+        registry = self.root / "registry"
+        self._package(registry, "pdk", "demo-tech", "pdk-rev", {"technology": {
+            "name": "demo-tech",
+            "timing": {"corners": {
+                "wcl": {"libraries": ["wcl.lib"]}, "bcl": {"libraries": ["bcl.lib"]},
+            }},
+        }})
+        content = self.root / "wolf-home" / "packages" / "pdk" / "demo-tech" / "pdk-rev" / "source"
+        (content / "wcl.lib").write_text("-- wcl --\n", encoding="utf-8")
+        (content / "bcl.lib").write_text("-- bcl --\n", encoding="utf-8")
+        (self.environment_directory / "wolf.yaml").write_text(
+            yaml.safe_dump({
+                "schema": "wolf.environment/v1",
+                "name": "demo-env",
+                "design": {"name": "demo-design"},
+                "technology": {"package": "pdk/demo-tech"},
+                "flow": {"backend": "cadence-flowtool"},
+                "project": {"root": str(self.project_root)},
+                "workspace": {"root": str(self.project_root / "workspace")},
+            }),
+            encoding="utf-8",
+        )
+        self.environment = os.environ.copy()
+        self.environment.update({
+            "WOLF_HOME": str(self.root / "wolf-home"),
+            "WOLF_REGISTRY": str(registry),
+            "XDG_CONFIG_HOME": str(self.root / "config"),
+            "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src"),
+        })
+        self.setup_path = design_setup_path(self.project_root, "demo-design")
+
+    def tearDown(self):
+        self.temporary.cleanup()
+
+    def _package(self, registry, kind, name, revision, metadata):
+        directory = registry / kind
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / f"{name}.yaml").write_text(yaml.safe_dump({
+            "schema_version": 1, "kind": kind, "name": name, "description": name,
+            "source": {"type": "git", "url": f"https://example.test/{name}", "revision": revision},
+            "validation": {"required_paths": []}, "metadata": metadata,
+        }), encoding="utf-8")
+        installation = self.root / "wolf-home" / "packages" / kind / name / revision
+        (installation / "source").mkdir(parents=True)
+        (installation / "installed.yaml").write_text(yaml.safe_dump({
+            "package": f"{kind}/{name}", "revision": revision, "source_revision": revision,
+            "content_path": "source", "installed_at": "2026-09-02T00:00:00Z",
+        }), encoding="utf-8")
+
+    def wolf(self, *arguments):
+        return subprocess.run(
+            [sys.executable, "-m", "wolf.cli", *arguments], cwd="/",
+            env=self.environment, text=True, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, check=False,
+        )
+
+    def test_more_than_two_tieoff_cells_fails_immediately(self):
+        result = self.wolf("env", "set", "demo-env", "add_tieoffs_cells", '["A", "B", "C"]')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("at most two cells", result.stderr)
+        setup = yaml.safe_load(self.setup_path.read_text(encoding="utf-8")) or {}
+        self.assertNotIn("add_tieoffs_cells", setup)
+
+    def test_an_invalid_cts_target_keyword_fails_immediately(self):
+        result = self.wolf("env", "set", "demo-env", "cts_target_skew", '"bogus"')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("cts_target_skew must be a number or one of", result.stderr)
+
+    def test_an_undeclared_active_view_fails_immediately(self):
+        result = self.wolf("env", "set", "demo-env", "active_views.setup", '["not_a_real_view"]')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("undeclared view", result.stderr)
+
+    def test_a_declared_active_view_succeeds(self):
+        result = self.wolf("env", "set", "demo-env", "active_views.setup", '["wcl"]')
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        setup = yaml.safe_load(self.setup_path.read_text(encoding="utf-8"))
+        self.assertEqual(setup["active_views"], {"setup": ["wcl"]})
+
+    def test_a_valid_value_still_succeeds(self):
+        result = self.wolf("env", "set", "demo-env", "add_tieoffs_cells", '["A", "B"]')
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        setup = yaml.safe_load(self.setup_path.read_text(encoding="utf-8"))
+        self.assertEqual(setup["add_tieoffs_cells"], ["A", "B"])
+
+
 class EnvSetUnsetFlowDesignSetupKeysTests(unittest.TestCase):
     """A flow package's own declared design-setup keys (handoff:
     workspace/handoff/wolf-agent-design-setup-template.md) are routed

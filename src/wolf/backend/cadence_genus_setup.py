@@ -137,6 +137,21 @@ def _split_and_check(dotted_key: str, extra_keys: frozenset[str]) -> list[str]:
     return parts
 
 
+def preview_design_setup_value(
+    path: Path, dotted_key: str, value: Any, *, extra_keys: frozenset[str] = frozenset(),
+) -> dict[str, Any]:
+    """The design-setup dict `set_design_setup_value`/
+    `set_design_setup_value_preserving_comments` would end up writing,
+    computed without writing anything -- for a caller (`wolf env set`)
+    that wants to validate the new *value*'s shape against the real
+    `cadence_genus.py` validators before committing it to disk, not
+    only after."""
+    parts = _split_and_check(dotted_key, extra_keys)
+    data = load_design_setup(path, extra_keys=extra_keys)
+    _apply_dotted_value(data, dotted_key, parts, value)
+    return data
+
+
 def _apply_dotted_value(data: dict, dotted_key: str, parts: list[str], value: Any) -> None:
     if value is None:
         _prune(data, parts)

@@ -15,7 +15,7 @@ import yaml
 
 from wolf.backend.cadence_genus_setup import (
     DESIGN_SETUP_ALLOWED_KEYS, design_setup_path, flow_design_setup_keys,
-    set_design_setup_value_preserving_comments,
+    preview_design_setup_value, set_design_setup_value_preserving_comments,
 )
 from wolf.commands.common import resolve_environment_name
 from wolf.environment import (
@@ -182,6 +182,23 @@ def _extra_design_setup_keys(manifest: Path, name: str) -> frozenset[str]:
         return frozenset()
 
 
+def _resolved_technology_for_profile(profile):
+    """This profile's own technology, resolved standalone (no design/
+    flow/workspace needed) -- None whenever it isn't resolvable yet,
+    never raises."""
+    from wolf.environment import resolve_technology_reference
+
+    if not profile.technology:
+        return None
+    try:
+        return resolve_technology_reference(
+            profile.technology.package, profile.technology.track,
+            profile.technology.vths, profile.technology.metal_stack,
+        )
+    except Exception:
+        return None
+
+
 def _generate_or_refresh_design_setup(manifest: Path, name: str) -> None:
     """Write (or refresh) this environment's setup.<design>.yaml from
     WOLF's own template plus its flow package's own section, if any --
@@ -193,7 +210,6 @@ def _generate_or_refresh_design_setup(manifest: Path, name: str) -> None:
     yet, never a failed `env create`/`set`/`unset`."""
     try:
         from wolf.backend.design_setup_template import generate_or_refresh
-        from wolf.environment import resolve_technology_reference
 
         project_root, design_name = _project_root_and_design_name(manifest, name)
         profile = load_environment(manifest, expected_name=name)
@@ -201,19 +217,75 @@ def _generate_or_refresh_design_setup(manifest: Path, name: str) -> None:
         template_path, _source = resolve_flow_design_setup_template(
             flow_package, override=profile.env_vars.get("DESIGN_SETUP_TEMPLATE"),
         )
-        technology = None
-        if profile.technology:
-            technology = resolve_technology_reference(
-                profile.technology.package, profile.technology.track,
-                profile.technology.vths, profile.technology.metal_stack,
-            )
         generate_or_refresh(
             design_setup_path(project_root, design_name),
-            technology=technology, flow_template_path=template_path,
+            technology=_resolved_technology_for_profile(profile),
+            flow_template_path=template_path,
             flow_name=(profile.flow.name if profile.flow else None) or flow_package,
         )
     except Exception:
         pass
+
+
+# Which cadence_genus.py validator a design-setup top-level key's
+# value shape is checked by -- see _eager_validate_design_setup_key.
+# A key with no entry here (a flow's own extra key) has no eager
+# check: WOLF doesn't know its shape, same as today.
+_DESIGN_SETUP_VALIDATOR_KEYS: dict[str, tuple[str, ...]] = {
+    "_genus_set_db_overrides": ("genus_set_db",),
+    "_active_views_overrides": ("active_views",),
+    "_cts_overrides": (
+        "cts_buffer_cells", "cts_buffer_cells_top", "cts_buffer_cells_leaf",
+        "cts_inverter_cells", "cts_inverter_cells_top", "cts_inverter_cells_leaf",
+        "cts_clock_gating_cells", "cts_target_skew", "cts_target_max_transition_time",
+        "cts_max_fanout",
+    ),
+    "_tieoff_overrides": (
+        "add_tieoffs_cells", "add_tieoffs_honor_dont_use",
+        "add_tieoffs_max_fanout", "add_tieoffs_max_distance",
+    ),
+    "_filler_overrides": ("add_fillers_cells",),
+    "_route_design_overrides": (
+        "design_top_routing_layer", "design_bottom_routing_layer",
+        "route_design_antenna_cell_name",
+    ),
+    "_export_overrides": ("gds_layermap", "export_spef"),
+    "_clock_routing_overrides": (
+        "clock_routing_width_multiplier", "clock_routing_spacing_multiplier", "clock_routing_types",
+    ),
+    "_postsyn_netlists": ("postsyn_netlists",),
+    "_inject_snippets": ("inject",),
+}
+
+
+def _eager_validate_design_setup_key(
+    manifest: Path, name: str, setup_path: Path, dotted_key: str, value, *,
+    extra_keys: frozenset[str],
+) -> None:
+    """Run the same `cadence_genus.py` validator a render would use
+    against the key being set/unset, before it's written -- so a shape
+    or PDK-choice error (an undeclared active_views name, more than
+    two add_tieoffs_cells, ...) surfaces immediately, not only the
+    next time a run tries to render setup.yaml (handoff point 7). A
+    flow's own extra key has no known shape and gets no eager check
+    here, same as today. Resolving this environment's technology is
+    best-effort -- an unresolvable one just skips the one check
+    (active_views) that needs it, never blocks the set/unset itself."""
+    key_root = dotted_key.split(".", 1)[0]
+    validator_name = next(
+        (name_ for name_, keys in _DESIGN_SETUP_VALIDATOR_KEYS.items() if key_root in keys), None,
+    )
+    if validator_name is None:
+        return
+    import wolf.backend.cadence_genus as cadence_genus
+
+    validator = getattr(cadence_genus, validator_name)
+    data = preview_design_setup_value(setup_path, dotted_key, value, extra_keys=extra_keys)
+    if validator_name == "_active_views_overrides":
+        profile = load_environment(manifest, expected_name=name)
+        validator(data, _resolved_technology_for_profile(profile))
+    else:
+        validator(data)
 
 
 def _sync_reproducibility_link(manifest: Path, name: str) -> None:
@@ -264,8 +336,12 @@ def command_set(args: argparse.Namespace) -> int:
         if key_root in DESIGN_SETUP_ALLOWED_KEYS or key_root in extra_keys:
             _generate_or_refresh_design_setup(manifest, name)
             setup_path = _design_setup_path_for_environment(manifest, name)
+            value = yaml.safe_load(args.value)
+            _eager_validate_design_setup_key(
+                manifest, name, setup_path, args.key, value, extra_keys=extra_keys,
+            )
             set_design_setup_value_preserving_comments(
-                setup_path, args.key, yaml.safe_load(args.value), extra_keys=extra_keys,
+                setup_path, args.key, value, extra_keys=extra_keys,
             )
             _sync_reproducibility_link(manifest, name)
             ui.success(f"Set {args.key} in {setup_path}")
