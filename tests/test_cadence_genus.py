@@ -5,7 +5,7 @@ import subprocess
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import yaml
 
@@ -66,6 +66,36 @@ def _write_fake_flow_root(directory: Path, *, tag: str = "custom") -> None:
         "flow_current: block\n",
         encoding="utf-8",
     )
+
+
+def _write_project_flow_with_extra_stages(custom: Path) -> Path:
+    """A project flow package extending `implementation` past
+    `postroute`, real enough to exercise derive_stage_order end to end
+    (through _flow_root/_resolve_stage_range), not WOLF's own bundled
+    flow -- the handoff's own reported shape."""
+    custom.mkdir(parents=True, exist_ok=True)
+    (custom / "common_flows.tcl").write_text(
+        "create_flow -name syn_generic {block_start}\n"
+        "create_flow -name syn_map {block_start}\n"
+        "create_flow -name syn_opt {block_start}\n"
+        "create_flow -name synthesis -skip_metric {syn_generic syn_map syn_opt}\n"
+        "create_flow -name floorplan {block_start}\n"
+        "create_flow -name prects {block_start}\n"
+        "create_flow -name cts {block_start}\n"
+        "create_flow -name postcts {block_start}\n"
+        "create_flow -name route {block_start}\n"
+        "create_flow -name postroute {block_start}\n"
+        "create_flow -name design_finishing {block_start}\n"
+        "create_flow -name implementation -skip_metric "
+        "{floorplan prects cts postcts route postroute design_finishing}\n"
+        "create_flow -name export {block_start}\n"
+        "create_flow -name block -skip_metric {synthesis implementation export}\n",
+        encoding="utf-8",
+    )
+    for name in _FLOW_SCRIPT_NAMES:
+        if name != "common_flows.tcl":
+            (custom / name).write_text(f"# {name}\n", encoding="utf-8")
+    return custom
 
 
 def _flowtool_overrides(root: Path) -> dict:
@@ -977,34 +1007,7 @@ class GenusSynthesisFlowTests(GenusFixtureTestCase):
             )
 
     def _project_flow_with_extra_stages(self) -> Path:
-        """A project flow package extending `implementation` past
-        `postroute`, real enough to exercise derive_stage_order end to
-        end (through _flow_root/_resolve_stage_range), not WOLF's own
-        bundled flow -- the handoff's own reported shape."""
-        custom = self.root / "project-flow"
-        custom.mkdir(parents=True, exist_ok=True)
-        (custom / "common_flows.tcl").write_text(
-            "create_flow -name syn_generic {block_start}\n"
-            "create_flow -name syn_map {block_start}\n"
-            "create_flow -name syn_opt {block_start}\n"
-            "create_flow -name synthesis -skip_metric {syn_generic syn_map syn_opt}\n"
-            "create_flow -name floorplan {block_start}\n"
-            "create_flow -name prects {block_start}\n"
-            "create_flow -name cts {block_start}\n"
-            "create_flow -name postcts {block_start}\n"
-            "create_flow -name route {block_start}\n"
-            "create_flow -name postroute {block_start}\n"
-            "create_flow -name design_finishing {block_start}\n"
-            "create_flow -name implementation -skip_metric "
-            "{floorplan prects cts postcts route postroute design_finishing}\n"
-            "create_flow -name export {block_start}\n"
-            "create_flow -name block -skip_metric {synthesis implementation export}\n",
-            encoding="utf-8",
-        )
-        for name in _FLOW_SCRIPT_NAMES:
-            if name != "common_flows.tcl":
-                (custom / name).write_text(f"# {name}\n", encoding="utf-8")
-        return custom
+        return _write_project_flow_with_extra_stages(self.root / "project-flow")
 
     def test_a_project_flows_extra_trailing_stage_is_runnable(self):
         """The handoff's own reported symptom: design_finishing (past
@@ -3914,6 +3917,36 @@ class CadenceFlowtoolBackendStatusTests(unittest.TestCase):
         from wolf.backend.cadence_flowtool import CadenceFlowtoolBackend
         from wolf.backend.cadence_genus import STAGE_ORDER
         self.assertEqual(tuple(CadenceFlowtoolBackend().stages()), STAGE_ORDER)
+
+    def test_an_existing_runs_extra_stage_shows_up_in_stages_and_step_detail(self):
+        """End to end, through a real run_genus call (flowtool itself
+        mocked out): a project flow's own extra stage past postroute
+        is in CadenceFlowtoolBackend.stages(run), infer_stage_results
+        rolls it up without raising, and stage_step_detail reports its
+        real (not bundled) direct members -- the gap bc96e20's own
+        commit message deferred."""
+        from wolf.backend.cadence_flowtool import CadenceFlowtoolBackend
+        from wolf.backend.cadence_genus import GenusValidation, run_genus
+
+        fixture = GenusFixtureTestCase()
+        fixture.setUp()
+        self.addCleanup(fixture.tearDown)
+        custom = _write_project_flow_with_extra_stages(fixture.root / "project-flow")
+        context = fixture._context(package_paths={"flow": custom})
+        with patch(
+            "wolf.backend.cadence_genus.validate_genus",
+            return_value=(GenusValidation("flowtool", True, "/opt/cadence/flowtool"),),
+        ), patch("wolf.backend.cadence_genus.subprocess.run", return_value=Mock(returncode=0)):
+            status, run = run_genus(
+                context, clean=True, from_stage="design_finishing", to_stage="design_finishing",
+            )
+        self.assertEqual(status, 0)
+        backend = CadenceFlowtoolBackend()
+        self.assertIn("design_finishing", backend.stages(run))
+        rolled = backend.infer_stage_results(run)
+        self.assertIsInstance(rolled, dict)
+        detail = backend.stage_step_detail(run, "design_finishing")
+        self.assertEqual([member for member, _, _ in detail], ["block_start"])
 
     def test_infer_stage_results_delegates_to_genus_run_status(self):
         from wolf.backend.cadence_flowtool import CadenceFlowtoolBackend

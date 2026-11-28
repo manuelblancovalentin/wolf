@@ -168,7 +168,13 @@ def _run_flow_root_and_top(run_directory: Path) -> Optional[tuple[Path, str]]:
     `stage_step_detail` can reuse the exact same frozen flow_root for
     an extra (non-STAGE_ORDER) stage's own membership tree, instead of
     the bundled one. Returns None wherever `_run_stage_order` would
-    have degraded to the bundled fallback."""
+    have degraded to the bundled fallback.
+
+    `scripts_directory`/`flow_yaml` are themselves frozen top-level
+    wolf.resolved.yaml keys (prepare_genus_inputs' own manifest,
+    carried through freeze_run_manifest unchanged) -- the run's own
+    real flow identity, not the live project package, which may have
+    moved on since this run started."""
     manifest_path = run_directory / "wolf.resolved.yaml"
     try:
         manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
@@ -176,15 +182,12 @@ def _run_flow_root_and_top(run_directory: Path) -> Optional[tuple[Path, str]]:
         return None
     if not isinstance(manifest, dict):
         return None
-    generated = manifest.get("generated")
-    files = generated.get("files") if isinstance(generated, dict) else None
-    scripts_directory = files.get("flowtool_scripts_directory") if isinstance(files, dict) else None
-    design_name = manifest.get("design_name")
-    if not scripts_directory or not design_name:
+    scripts_directory = manifest.get("scripts_directory")
+    flow_yaml = manifest.get("flow_yaml")
+    if not scripts_directory or not flow_yaml:
         return None
-    flow_yaml = run_directory / f"flow.{design_name}.yaml"
     try:
-        top_flow = flow_current_name(flow_yaml)
+        top_flow = flow_current_name(Path(flow_yaml))
     except OSError:
         return None
     return Path(scripts_directory), top_flow
