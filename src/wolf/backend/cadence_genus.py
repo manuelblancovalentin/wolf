@@ -1934,7 +1934,7 @@ def bundled_flow_digest() -> str:
 
 
 _CREATE_FLOW_STEP_RE = re.compile(r"create_flow_step\s+-name\s+(\S+)[^{]*\{")
-_CREATE_FLOW_RE = re.compile(r"create_flow\s+-name\s+(\S+)[^{]*\{")
+_CREATE_FLOW_RE = re.compile(r"create_flow\s+-name\s+(\S+)([^{]*)\{")
 
 
 def _braced_block(text: str, open_brace_index: int) -> str:
@@ -1979,21 +1979,56 @@ def _extract_flow_members(text: str) -> dict[str, tuple[str, ...]]:
     return members
 
 
-def flow_membership() -> dict[str, tuple[str, ...]]:
-    """Every real create_flow's own member list across the bundled flow
-    (currently all in common_flows.tcl, but scans every flow file in
-    case a project's fork adds more) -- e.g. "syn_generic" -> ("block_start",
-    "avoid_module_renaming", ..., "report_synth"). A member is either a
-    real create_flow_step name (a leaf -- see flow_step_digests) or
-    another flow name (nested, like report_synth inside syn_generic, or
-    synthesis/implementation inside block); the caller expands those
-    recursively with flow_descendant_steps."""
-    flow_root = builtin_flow_root("cadence-genus")
+def _extract_flow_flags(text: str) -> dict[str, str]:
+    """Pull out each create_flow's own flag text (everything between
+    `-name X` and the opening member-list brace), keyed by flow name --
+    `derive_stage_order` below tests this for the real Flowtool/Stylus
+    `-skip_metric` flag, the one generic (not WOLF- or project-specific)
+    signal that a create_flow is a pure orchestration container rather
+    than a selectable stage."""
+    return {match.group(1): match.group(2) for match in _CREATE_FLOW_RE.finditer(text)}
+
+
+def flow_membership(flow_root: Optional[Path] = None) -> dict[str, tuple[str, ...]]:
+    """Every real create_flow's own member list across `flow_root`
+    (defaulting to WOLF's bundled flow; currently all in
+    common_flows.tcl, but scans every flow file in case a fork adds
+    more) -- e.g. "syn_generic" -> ("block_start", "avoid_module_renaming",
+    ..., "report_synth"). A member is either a real create_flow_step name
+    (a leaf -- see flow_step_digests) or another flow name (nested, like
+    report_synth inside syn_generic, or synthesis/implementation inside
+    block); the caller expands those recursively with
+    flow_descendant_steps.
+
+    A caller with a project's own flow package (or a run's own frozen
+    flow-script snapshot) passes its root explicitly; that root is
+    scanned by the same fixed file-name list, skipping any that don't
+    exist there (a project's own package need not define every one of
+    WOLF's bundled file names), rather than failing outright."""
+    root = flow_root if flow_root is not None else builtin_flow_root("cadence-genus")
     members: dict[str, tuple[str, ...]] = {}
     for name in _FLOW_SCRIPT_NAMES:
-        text = (flow_root / name).read_text(encoding="utf-8")
-        members.update(_extract_flow_members(text))
+        path = root / name
+        if not path.is_file():
+            continue
+        members.update(_extract_flow_members(path.read_text(encoding="utf-8")))
     return members
+
+
+def _flow_flags(flow_root: Optional[Path] = None) -> dict[str, str]:
+    """Same scan as `flow_membership`, but returning each flow's own
+    flag text instead of its members -- kept as a separate pass (not
+    folded into `flow_membership`'s return) so every existing caller of
+    `flow_membership()` keeps its exact `dict[str, tuple[str, ...]]`
+    shape."""
+    root = flow_root if flow_root is not None else builtin_flow_root("cadence-genus")
+    flags: dict[str, str] = {}
+    for name in _FLOW_SCRIPT_NAMES:
+        path = root / name
+        if not path.is_file():
+            continue
+        flags.update(_extract_flow_flags(path.read_text(encoding="utf-8")))
+    return flags
 
 
 def flow_descendant_steps(
@@ -2018,6 +2053,109 @@ def flow_descendant_steps(
                 steps.append(step)
                 seen.add(step)
     return tuple(steps)
+
+
+@dataclass(frozen=True)
+class StageSpec:
+    """One selectable `-from`/`-to` stage, as actually declared by a
+    flow (bundled or a project's own) rather than WOLF's own fixed
+    9-name list -- see `derive_stage_order`."""
+    name: str
+    path: str
+    toplevel: str
+    ambiguous: bool
+
+    def selector(self) -> str:
+        """The string a caller should pass as -from/-to: the bare
+        name when it's unique across the whole derived order, the
+        dotted disambiguation path otherwise."""
+        return self.path if self.ambiguous else self.name
+
+
+def flow_current_name(flow_template: Path) -> str:
+    """The literal top-level flow a run actually executes, read out of
+    `flow_template`'s own `flow_current:` key -- WOLF's bundled
+    template says `block`; a project's own override says whatever its
+    own top flow is named (e.g. "flow_current", confusingly reusing the
+    YAML key's own name). This is never a `${TOKEN}` substitution --
+    confirmed real in both the bundled template and every override this
+    was built against -- so reading the template directly (not the
+    run's own rendered flow.<design>.yaml) is safe even before a run
+    exists yet, which `wolf run --plan` and shell completion both need."""
+    text = flow_template.read_text(encoding="utf-8")
+    try:
+        document = yaml.safe_load(text)
+    except yaml.YAMLError:
+        document = None
+    if isinstance(document, dict) and isinstance(document.get("flow_current"), str):
+        return document["flow_current"]
+    match = re.search(r"^flow_current:\s*(\S+)", text, re.MULTILINE)
+    if match:
+        return match.group(1)
+    raise ValueError(f"{flow_template} has no flow_current: entry")
+
+
+def derive_stage_order(
+    flow_root: Path, top_flow: str,
+    membership: Optional[dict[str, tuple[str, ...]]] = None,
+    flags: Optional[dict[str, str]] = None,
+) -> tuple[StageSpec, ...]:
+    """The real, selectable `-from`/`-to` vocabulary for a flow, derived
+    from its own `create_flow` declarations instead of WOLF's fixed
+    9-name STAGE_ORDER.
+
+    Walking every create_flow name reachable from `top_flow` would
+    wrongly surface pure containers (block, synthesis, implementation)
+    and nested reporting sub-flows (report_synth, report_floorplan,
+    ...) alongside real stages -- neither belongs in today's STAGE_ORDER.
+    The real, generic (not WOLF- or project-specific) signal that
+    distinguishes them is Flowtool/Stylus's own `-skip_metric` flag:
+    in the bundled flow it marks exactly the four pure-orchestration
+    containers (synthesis, implementation, block, signoff) and nothing
+    else. So: descend into a member only while it is itself a
+    `-skip_metric` container; the moment a member isn't, emit it as a
+    selectable stage and stop -- do not descend into its own nested
+    sub-flows at all. This reproduces STAGE_ORDER exactly for the
+    bundled flow (verified by `DeriveStageOrderTests`), and generalizes
+    the same way to a project flow with extra trailing stages or its
+    own container sub-flows (e.g. a signoff_checks container exposing
+    physical_verification/extract/sta as siblings).
+
+    A flow that never uses -skip_metric at all (no generic container
+    signal present) falls back to just `top_flow`'s own direct members,
+    emitted in order with no further descent -- a safe, documented
+    degradation, not a crash.
+
+    A bare name reached more than once (two different containers each
+    declaring a stage of the same name) is marked `ambiguous=True` on
+    every one of its occurrences; a caller must then use `StageSpec.path`
+    (e.g. "implementation.design_finishing") to select it, the same
+    dotted-path convention `stage_canonical_paths` already uses one
+    level further down."""
+    membership = membership if membership is not None else flow_membership(flow_root)
+    flags = flags if flags is not None else _flow_flags(flow_root)
+    any_container = any("-skip_metric" in flag.split() for flag in flags.values())
+
+    ordered: list[tuple[str, str, str]] = []  # (name, path, toplevel)
+
+    def walk(prefix: str, name: str, toplevel: str) -> None:
+        for member in membership.get(name, ()):
+            if member not in membership:
+                continue  # a bare create_flow_step leaf, never a selectable stage
+            is_container = any_container and "-skip_metric" in flags.get(member, "").split()
+            if is_container:
+                walk(f"{prefix}.{member}", member, toplevel or member)
+            else:
+                ordered.append((member, f"{prefix}.{member}", toplevel or member))
+
+    walk(top_flow, top_flow, "")
+    counts: dict[str, int] = {}
+    for name, _, _ in ordered:
+        counts[name] = counts.get(name, 0) + 1
+    return tuple(
+        StageSpec(name=name, path=path, toplevel=toplevel, ambiguous=counts[name] > 1)
+        for name, path, toplevel in ordered
+    )
 
 
 _STAGE_TOPLEVEL_FLOW = {

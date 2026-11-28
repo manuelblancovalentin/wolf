@@ -3431,6 +3431,126 @@ class RollupStageStatesTests(unittest.TestCase):
         self.assertNotIn("postcts", result)
 
 
+class DeriveStageOrderTests(unittest.TestCase):
+    """derive_stage_order replaces WOLF's own fixed 9-name STAGE_ORDER
+    with the real vocabulary a flow (bundled or a project's own)
+    actually declares, using the generic Flowtool/Stylus -skip_metric
+    flag (not any WOLF- or project-specific convention) to tell a pure
+    orchestration container apart from a real selectable stage."""
+
+    def _write(self, text: str) -> Path:
+        temporary = tempfile.TemporaryDirectory(prefix="wolf-derive-stage-order-")
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        (root / "common_flows.tcl").write_text(text, encoding="utf-8")
+        return root
+
+    def test_the_bundled_flow_derives_exactly_STAGE_ORDER(self):
+        """The hinge invariant this whole feature protects: for
+        WOLF's own bundled flow, nothing about -from/-to's real
+        behavior may change."""
+        from wolf.backend.cadence_genus import STAGE_ORDER, derive_stage_order
+        from wolf.paths import builtin_flow_root
+
+        derived = derive_stage_order(builtin_flow_root("cadence-genus"), "block")
+        self.assertEqual(tuple(stage.name for stage in derived), STAGE_ORDER)
+        self.assertTrue(all(not stage.ambiguous for stage in derived))
+
+    def test_the_bundled_flow_derives_the_same_toplevel_grouping_as_today(self):
+        from wolf.backend.cadence_genus import (
+            IMPLEMENTATION_STAGES, SYNTHESIS_STAGES, derive_stage_order,
+        )
+        from wolf.paths import builtin_flow_root
+
+        derived = {
+            stage.name: stage.toplevel
+            for stage in derive_stage_order(builtin_flow_root("cadence-genus"), "block")
+        }
+        self.assertTrue(all(derived[stage] == "synthesis" for stage in SYNTHESIS_STAGES))
+        self.assertTrue(all(derived[stage] == "implementation" for stage in IMPLEMENTATION_STAGES))
+
+    def test_extra_trailing_implementation_members_are_derived_in_order(self):
+        """A project flow continuing `implementation` past `postroute`
+        with its own extra stages (design_finishing, in this fixture)
+        must derive them, in order, right after postroute."""
+        from wolf.backend.cadence_genus import derive_stage_order
+
+        root = self._write(
+            "create_flow -name floorplan {block_start}\n"
+            "create_flow -name postroute {block_start}\n"
+            "create_flow -name design_finishing {block_start}\n"
+            "create_flow -name implementation -skip_metric "
+            "{floorplan postroute design_finishing}\n"
+            "create_flow -name block -skip_metric {implementation}\n"
+        )
+        names = [stage.name for stage in derive_stage_order(root, "block")]
+        self.assertEqual(names, ["floorplan", "postroute", "design_finishing"])
+
+    def test_a_container_members_children_are_derived_as_siblings(self):
+        """signoff_checks scheduling physical_verification/extract/sta
+        in parallel still shows up as one row per sub-flow, all sharing
+        signoff_checks as their toplevel."""
+        from wolf.backend.cadence_genus import derive_stage_order
+
+        root = self._write(
+            "create_flow -name physical_verification {block_start}\n"
+            "create_flow -name extract {block_start}\n"
+            "create_flow -name sta {block_start}\n"
+            "create_flow -name signoff_checks -skip_metric "
+            "{physical_verification extract sta}\n"
+            "create_flow -name flow_current -skip_metric {signoff_checks}\n"
+        )
+        derived = derive_stage_order(root, "flow_current")
+        self.assertEqual(
+            [stage.name for stage in derived], ["physical_verification", "extract", "sta"],
+        )
+        self.assertTrue(all(stage.toplevel == "signoff_checks" for stage in derived))
+
+    def test_a_direct_non_container_member_is_its_own_toplevel(self):
+        from wolf.backend.cadence_genus import derive_stage_order
+
+        root = self._write(
+            "create_flow -name export {block_start}\n"
+            "create_flow -name implementation -skip_metric {export}\n"
+            "create_flow -name flow_current -skip_metric {implementation export}\n"
+        )
+        derived = {stage.name: stage.toplevel for stage in derive_stage_order(root, "flow_current")}
+        self.assertEqual(derived["export"], "export")
+
+    def test_a_duplicate_bare_name_is_marked_ambiguous_with_distinct_paths(self):
+        from wolf.backend.cadence_genus import derive_stage_order
+
+        root = self._write(
+            "create_flow -name export {block_start}\n"
+            "create_flow -name synthesis -skip_metric {export}\n"
+            "create_flow -name implementation -skip_metric {export}\n"
+            "create_flow -name flow_current -skip_metric {synthesis implementation}\n"
+        )
+        derived = derive_stage_order(root, "flow_current")
+        exports = [stage for stage in derived if stage.name == "export"]
+        self.assertEqual(len(exports), 2)
+        self.assertTrue(all(stage.ambiguous for stage in exports))
+        self.assertEqual(
+            {stage.path for stage in exports},
+            {"flow_current.synthesis.export", "flow_current.implementation.export"},
+        )
+
+    def test_a_flow_with_no_skip_metric_convention_falls_back_to_direct_members(self):
+        """No generic container signal present at all -- degrade to
+        top_flow's own direct members, no further descent, rather than
+        raising."""
+        from wolf.backend.cadence_genus import derive_stage_order
+
+        root = self._write(
+            "create_flow -name inner {block_start}\n"
+            "create_flow -name top {stage_one stage_two}\n"
+            "create_flow -name stage_one {inner}\n"
+            "create_flow -name stage_two {block_start}\n"
+        )
+        names = [stage.name for stage in derive_stage_order(root, "top")]
+        self.assertEqual(names, ["stage_one", "stage_two"])
+
+
 class StageCanonicalPathsTests(unittest.TestCase):
     """stage_canonical_paths computes the real dotted path flow.status
     itself uses for each STAGE_ORDER name's descendants, keeping every
